@@ -93,6 +93,24 @@ bench --site site1.local migrate
 bench --site site1.local execute per_piece_payroll.api.apply_per_piece_payroll_setup
 ```
 
+### Screenshots
+
+![Per Piece 1](docs/images/Per%20Piece1.png)
+
+![Per Piece 2](docs/images/Per%20Piece2.png)
+
+![Per Piece 3](docs/images/Per%20Piece3.png)
+
+![Per Piece 4](docs/images/Per%20Piece4.png)
+
+![Per Piece 5](docs/images/Per%20Piece5.png)
+
+![Per Piece 6](docs/images/Per%20Piece6.png)
+
+![Per Piece 7](docs/images/Per%20Piece7.png)
+
+![Per Piece 8](docs/images/Per%20Piece8.png)
+
 ### Notes
 
 - App expects `erpnext` and `hrms` to be installed.
@@ -104,8 +122,8 @@ bench --site site1.local execute per_piece_payroll.api.apply_per_piece_payroll_s
 1. If you see `Could not find DocType: Per Piece` during first install:
    - Pull latest `main` and run:
    ```bash
-   bench --site <your-site> migrate
-   bench --site <your-site> execute per_piece_payroll.api.apply_per_piece_payroll_setup
+   bench --site site1.local migrate
+   bench --site site1.local execute per_piece_payroll.api.apply_per_piece_payroll_setup
    ```
    - Latest setup includes fallback creation of core DocTypes (`Per Piece`, `Per Piece Salary`) from fixtures.
 
