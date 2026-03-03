@@ -5,6 +5,7 @@ Per Piece production, salary booking, JV posting, payment JV posting, and report
 ### What this app installs
 
 - Custom DocTypes: `Per Piece Salary`, `Per Piece`
+- Desk Page: `per-piece-payroll` (route: `/app/per-piece-payroll`)
 - Item fields:
   - `custom_process_type` (Select: Cutting, Stitching, Quilting, Packing)
   - `custom_rate_per_piece` (Float)
@@ -40,6 +41,12 @@ Optional safe re-apply:
 
 ```bash
 bench --site site1.local execute per_piece_payroll.api.apply_per_piece_payroll_setup
+```
+
+Open in Desk:
+
+```text
+/app/per-piece-payroll
 ```
 
 ### Notes
