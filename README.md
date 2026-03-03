@@ -53,13 +53,16 @@ cd /home/frappe/frappe-bench
 git -C apps/per_piece_payroll remote -v
 git -C apps/per_piece_payroll pull origin main || git -C apps/per_piece_payroll pull upstream main
 
-# 2) Apply to your site (replace site1.local with your site name)
+# 2) Verify latest features exist in code (for servers without rg)
+grep -nE "pp-po-number|pp-entry-no|pp-search-any|simple_month_amount" apps/per_piece_payroll/per_piece_payroll/per_piece_setup.py
+
+# 3) Apply to your site
 bench --site site1.local migrate
 bench --site site1.local execute per_piece_payroll.api.apply_per_piece_payroll_setup
 bench --site site1.local clear-cache
 bench --site site1.local clear-website-cache
 
-# 3) Rebuild and restart
+# 4) Rebuild and restart
 bench build --app per_piece_payroll
 bench restart
 ```
@@ -72,11 +75,13 @@ Use this on any other ERPNext server where app is already installed:
 
 ```bash
 cd /home/frappe/frappe-bench
+git -C apps/per_piece_payroll remote -v
 git -C apps/per_piece_payroll pull origin main || git -C apps/per_piece_payroll pull upstream main
-bench --site <your-site-name> migrate
-bench --site <your-site-name> execute per_piece_payroll.api.apply_per_piece_payroll_setup
-bench --site <your-site-name> clear-cache
-bench --site <your-site-name> clear-website-cache
+grep -nE "pp-po-number|pp-entry-no|pp-search-any|simple_month_amount" apps/per_piece_payroll/per_piece_payroll/per_piece_setup.py
+bench --site site1.local migrate
+bench --site site1.local execute per_piece_payroll.api.apply_per_piece_payroll_setup
+bench --site site1.local clear-cache
+bench --site site1.local clear-website-cache
 bench build --app per_piece_payroll
 bench restart
 ```
