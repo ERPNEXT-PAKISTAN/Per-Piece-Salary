@@ -23,39 +23,23 @@ Per Piece production, salary booking, JV posting, payment JV posting, and report
 - Print Format: `Per Piece Print`
 - Custom HTML Block: `Advances`
 
-### Installation on another server (start to end)
+### Installation (GitHub, `site1.local`)
 
-1. Copy app folder to target bench:
+Get app from GitHub (ERPNEXT-PAKISTAN repo):
 
 ```bash
-cd /home/frappe/frappe-bench/apps
-rsync -a /path/from/source/per_piece_payroll ./per_piece_payroll
+bench get-app https://github.com/ERPNEXT-PAKISTAN/Per-Piece-Salary.git --branch main
+bench --site site1.local install-app per_piece_payroll
+bench --site site1.local migrate
+bench --site site1.local clear-cache
+bench --site site1.local clear-website-cache
+bench restart
 ```
 
-2. Install python package in bench env:
+Optional safe re-apply:
 
 ```bash
-cd /home/frappe/frappe-bench
-./env/bin/pip install -e apps/per_piece_payroll --no-build-isolation
-```
-
-3. Add app to bench apps list:
-
-```bash
-bench --site <your-site> list-apps
-```
-
-4. Install app on site:
-
-```bash
-bench --site <your-site> install-app per_piece_payroll
-bench --site <your-site> migrate
-```
-
-5. (Optional) Re-apply setup safely:
-
-```bash
-bench --site <your-site> execute per_piece_payroll.api.apply_per_piece_payroll_setup
+bench --site site1.local execute per_piece_payroll.api.apply_per_piece_payroll_setup
 ```
 
 ### Notes
