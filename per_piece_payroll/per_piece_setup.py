@@ -4250,11 +4250,77 @@ def _update_web_page(results: list[str]) -> None:
     )
 
 
+def _ensure_core_doctypes(results: list[str]) -> None:
+    required = ["Per Piece", "Per Piece Salary"]
+    missing = [d for d in required if not frappe.db.exists("DocType", d)]
+    if not missing:
+        return
+
+    fixture_path = frappe.get_app_path("per_piece_payroll", "per_piece_payroll", "fixtures", "doctype.json")
+    try:
+        fixture_rows = json.loads(frappe.safe_decode(open(fixture_path, "rb").read()))
+    except Exception:
+        results.append("Skipped: Could not read doctype fixture for core doctypes")
+        return
+
+    row_map = {}
+    for row in fixture_rows or []:
+        if (row or {}).get("doctype") == "DocType" and (row or {}).get("name") in required:
+            row_map[row.get("name")] = row
+
+    for doctype_name in required:
+        if frappe.db.exists("DocType", doctype_name):
+            continue
+        raw = row_map.get(doctype_name)
+        if not raw:
+            results.append(f"Skipped: Doctype fixture row not found for '{doctype_name}'")
+            continue
+
+        doc = json.loads(json.dumps(raw))
+        for k in ["_user_tags", "_comments", "_assign", "_liked_by", "_last_update", "modified", "modified_by", "creation", "owner"]:
+            if k in doc:
+                del doc[k]
+        doc["name"] = doctype_name
+        doc["module"] = "Per Piece Payroll"
+
+        for table_key in ["fields", "permissions", "links", "actions", "states"]:
+            rows = doc.get(table_key) or []
+            for child in rows:
+                if not isinstance(child, dict):
+                    continue
+                for ck in [
+                    "_user_tags",
+                    "_comments",
+                    "_assign",
+                    "_liked_by",
+                    "_last_update",
+                    "modified",
+                    "modified_by",
+                    "creation",
+                    "owner",
+                    "parent",
+                    "parentfield",
+                    "parenttype",
+                    "idx",
+                    "name",
+                    "docstatus",
+                ]:
+                    if ck in child:
+                        del child[ck]
+
+        try:
+            frappe.get_doc(doc).insert(ignore_permissions=True, ignore_links=True)
+            results.append(f"Created: DocType '{doctype_name}' from fixture")
+        except Exception:
+            results.append(f"Failed: Could not create DocType '{doctype_name}' from fixture")
+
+
 def apply() -> list[str]:
     results: list[str] = []
 
+    _ensure_core_doctypes(results)
     if not frappe.db.exists("DocType", "Per Piece") or not frappe.db.exists("DocType", "Per Piece Salary"):
-        results.append("Skipped: Required DocTypes not available yet (Per Piece, Per Piece Salary)")
+        results.append("Skipped: Required DocTypes are still missing (Per Piece, Per Piece Salary)")
         return results
 
     _ensure_custom_field("jv_status", "JV Status", "Select", "Pending\nPosted", "amount", results, default="Pending")
