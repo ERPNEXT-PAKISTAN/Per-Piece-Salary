@@ -62,6 +62,30 @@ bench --site <your-site> execute per_piece_payroll.api.apply_per_piece_payroll_s
 
 - App expects `erpnext` and `hrms` to be installed.
 - If `Item.custom_process_type` already exists as `Link`, setup auto-converts it to `Select` to avoid install failure.
+- In container/cloud setups without `supervisorctl`, `bench get-app` may end with a restart error. This does not always mean app fetch/install failed.
+
+### Troubleshooting (new server)
+
+1. If you see `Could not find DocType: Per Piece` during first install:
+   - Pull latest `main` and run:
+   ```bash
+   bench --site <your-site> migrate
+   bench --site <your-site> execute per_piece_payroll.api.apply_per_piece_payroll_setup
+   ```
+   - Latest setup includes fallback creation of core DocTypes (`Per Piece`, `Per Piece Salary`) from fixtures.
+
+2. If you see `ModuleNotFoundError: No module named 'per_piece_payroll'`:
+   - Reinstall package link in bench env:
+   ```bash
+   ./env/bin/pip uninstall -y per_piece_payroll || true
+   ./env/bin/pip install -e ./apps/per_piece_payroll --no-build-isolation
+   ```
+   - Then run migrate and restart your platform/container process.
+
+3. If app remote is `upstream` (common with `bench get-app`), use:
+   ```bash
+   git -C apps/per_piece_payroll pull upstream main
+   ```
 
 ### Contributing
 
