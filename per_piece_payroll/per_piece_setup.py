@@ -4253,6 +4253,10 @@ def _update_web_page(results: list[str]) -> None:
 def apply() -> list[str]:
     results: list[str] = []
 
+    if not frappe.db.exists("DocType", "Per Piece") or not frappe.db.exists("DocType", "Per Piece Salary"):
+        results.append("Skipped: Required DocTypes not available yet (Per Piece, Per Piece Salary)")
+        return results
+
     _ensure_custom_field("jv_status", "JV Status", "Select", "Pending\nPosted", "amount", results, default="Pending")
     _ensure_custom_field("jv_entry_no", "JV Entry No", "Link", "Journal Entry", "jv_status", results)
     _ensure_custom_field("jv_line_remark", "JV Line Remark", "Small Text", None, "jv_entry_no", results, in_list_view=0)
