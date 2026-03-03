@@ -44,20 +44,22 @@ bench --site site1.local execute per_piece_payroll.api.apply_per_piece_payroll_s
 
 ### Update on Existing Client Server
 
-If app is already installed, update like this:
+If app is already installed, use:
 
 ```bash
 cd /home/frappe/frappe-bench
 
-# Pull latest code (use remote that exists in your bench)
+# 1) Pull latest app code from GitHub
 git -C apps/per_piece_payroll remote -v
 git -C apps/per_piece_payroll pull origin main || git -C apps/per_piece_payroll pull upstream main
 
-# Apply updates to site
+# 2) Apply to your site (replace site1.local with your site name)
 bench --site site1.local migrate
 bench --site site1.local execute per_piece_payroll.api.apply_per_piece_payroll_setup
 bench --site site1.local clear-cache
 bench --site site1.local clear-website-cache
+
+# 3) Rebuild and restart
 bench build --app per_piece_payroll
 bench restart
 ```
