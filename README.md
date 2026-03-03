@@ -5,7 +5,6 @@ Per Piece production, salary booking, JV posting, payment JV posting, and report
 ### What this app installs
 
 - Custom DocTypes: `Per Piece Salary`, `Per Piece`
-- Desk Page: `per-piece-payroll` (route: `/app/per-piece-payroll`)
 - Item fields:
   - `custom_process_type` (Select: Cutting, Stitching, Quilting, Packing)
   - `custom_rate_per_piece` (Float)
@@ -43,11 +42,27 @@ Optional safe re-apply:
 bench --site site1.local execute per_piece_payroll.api.apply_per_piece_payroll_setup
 ```
 
-Open in Desk:
+### Update on Existing Client Server
 
-```text
-/app/per-piece-payroll
+If app is already installed, update like this:
+
+```bash
+cd /home/frappe/frappe-bench
+
+# Pull latest code (use remote that exists in your bench)
+git -C apps/per_piece_payroll remote -v
+git -C apps/per_piece_payroll pull origin main || git -C apps/per_piece_payroll pull upstream main
+
+# Apply updates to site
+bench --site site1.local migrate
+bench --site site1.local execute per_piece_payroll.api.apply_per_piece_payroll_setup
+bench --site site1.local clear-cache
+bench --site site1.local clear-website-cache
+bench build --app per_piece_payroll
+bench restart
 ```
+
+If `bench restart` is not available on your hosting platform, restart services from your platform panel/container instead.
 
 ### Notes
 

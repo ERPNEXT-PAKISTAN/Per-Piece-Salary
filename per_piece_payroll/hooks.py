@@ -11,13 +11,15 @@ app_license = "mit"
 required_apps = ["erpnext", "hrms"]
 
 # Each item in the list will be shown as an app in the apps page
-add_to_apps_screen = [
-	{
-		"name": "per_piece_payroll",
-		"title": "Per Piece Payroll",
-		"route": "/app/per-piece-payroll",
-	}
-]
+# add_to_apps_screen = [
+# 	{
+# 		"name": "per_piece_payroll",
+# 		"logo": "/assets/per_piece_payroll/logo.png",
+# 		"title": "Per Piece Payroll",
+# 		"route": "/per_piece_payroll",
+# 		"has_permission": "per_piece_payroll.api.permission.has_app_permission"
+# 	}
+# ]
 
 # Includes in <head>
 # ------------------

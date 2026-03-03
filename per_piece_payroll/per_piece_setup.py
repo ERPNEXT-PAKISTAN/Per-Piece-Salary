@@ -2035,6 +2035,9 @@ WEB_PAGE_HTML = """
     <label>Employee <select id="pp-employee"><option value="">All</option></select></label>
     <label>Product <select id="pp-product"><option value="">All</option></select></label>
     <label>Process Type <select id="pp-process-type"><option value="">All</option></select></label>
+    <label>PO Number <select id="pp-po-number"><option value="">All</option></select></label>
+    <label>Entry No <select id="pp-entry-no"><option value="">All</option></select></label>
+    <label>Search <input type="text" id="pp-search-any" placeholder="Type any word..." /></label>
     <button id="pp-load-btn" class="btn btn-primary" type="button">Load Report</button>
   </div>
 
@@ -2046,6 +2049,8 @@ WEB_PAGE_HTML = """
     <button type="button" class="pp-tab" data-tab="payment_manage">Payment Entry Create</button>
     <button type="button" class="pp-tab" data-tab="advances">Advances</button>
     <button type="button" class="pp-tab" data-tab="employee_summary">Employee Summary</button>
+    <button type="button" class="pp-tab" data-tab="month_year_salary">Month/Year Salary</button>
+    <button type="button" class="pp-tab" data-tab="simple_month_amount">Simple Month Wise</button>
     <button type="button" class="pp-tab" data-tab="product">Product Summary</button>
     <button type="button" class="pp-tab" data-tab="process_product">Process/Product Summary</button>
     <button type="button" class="pp-tab" data-tab="per_piece_salary">Per Piece Salary</button>
@@ -2127,8 +2132,16 @@ WEB_PAGE_HTML = """
   .pp-table-wrap { overflow: auto; background: #fff; border: 1px solid #dbeafe; border-radius: 8px; }
   .pp-table { width: 100%; border-collapse: collapse; font-size: 12px; }
   .pp-table th, .pp-table td { border: 1px solid #e2e8f0; padding: 7px 9px; }
-  .pp-table th { background: #eff6ff; color: #1e3a8a; }
+  .pp-table th { background: #eff6ff; color: #1e3a8a; position: sticky; top: 0; z-index: 2; }
+  .pp-table tr.pp-year-total td { background: #f1f5f9; font-weight: 700; color: #0f172a; }
+  .pp-table tbody tr:hover td { background: #f8fafc; }
   .pp-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .pp-table td.pp-amt-col { font-weight: 700; color: #0f172a; }
+  .pp-status-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; border: 1px solid transparent; }
+  .pp-status-good { background: #dcfce7; color: #166534; border-color: #86efac; }
+  .pp-status-warn { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+  .pp-status-bad { background: #fee2e2; color: #991b1b; border-color: #fecaca; }
+  .pp-status-neutral { background: #e2e8f0; color: #334155; border-color: #cbd5e1; }
   .pp-table input.pp-adj-input { width: 120px; border: 1px solid #cbd5e1; border-radius: 6px; padding: 4px 6px; font-size: 12px; }
   .pp-totals { margin-top: 8px; font-size: 13px; font-weight: 600; color: #0f766e; display: flex; gap: 16px; }
   .pp-jv-card { margin-top: 14px; background: #fff; border: 1px solid #dbeafe; border-radius: 10px; padding: 12px; }
@@ -2177,6 +2190,73 @@ WEB_PAGE_HTML = """
   function num(v) { var n = Number(v || 0); return isNaN(n) ? 0 : n; }
   function whole(v) { return Math.max(0, Math.round(num(v))); }
   function fmt(v) { return num(v).toLocaleString(undefined, { maximumFractionDigits: 2 }); }
+  function isStatusField(fieldname) {
+    var f = String(fieldname || "");
+    return f === "jv_status" || f === "booking_status" || f === "payment_status";
+  }
+  function isAmountField(fieldname) {
+    var f = String(fieldname || "");
+    if (!f) return false;
+    if (f === "qty" || f === "rate" || f === "_row_count" || f === "month_no") return false;
+    if (f.indexOf("m_") === 0) return true;
+    if (f.indexOf("amount") >= 0) return true;
+    if (f === "opening_balance" || f === "closing_balance" || f === "advance_balance") return true;
+    return false;
+  }
+  function statusBadgeHtml(value) {
+    var txt = String(value || "").trim();
+    if (!txt) return "";
+    var k = txt.toLowerCase();
+    var cls = "pp-status-neutral";
+    if (k === "paid" || k === "posted" || k === "booked") cls = "pp-status-good";
+    else if (k === "partly paid" || k === "partly booked") cls = "pp-status-warn";
+    else if (k === "unpaid" || k === "unbooked" || k === "pending") cls = "pp-status-bad";
+    else if (k === "cancelled" || k === "canceled") cls = "pp-status-neutral";
+    return "<span class='pp-status-badge " + cls + "'>" + esc(txt) + "</span>";
+  }
+  function getSearchTerm() {
+    var input = el("pp-search-any");
+    return String((input && input.value) || "").trim().toLowerCase();
+  }
+  function filterRowsByColumns(rows, columns) {
+    var term = getSearchTerm();
+    if (!term) return rows || [];
+    return (rows || []).filter(function (r) {
+      var parts = [];
+      (columns || []).forEach(function (c) {
+        var v = r[c.fieldname];
+        if (v === undefined || v === null) return;
+        parts.push(String(v));
+      });
+      return parts.join(" ").toLowerCase().indexOf(term) >= 0;
+    });
+  }
+  function filterRowsByKeys(rows, keys) {
+    var term = getSearchTerm();
+    if (!term) return rows || [];
+    return (rows || []).filter(function (r) {
+      var parts = [];
+      (keys || []).forEach(function (k) {
+        var v = r[k];
+        if (v === undefined || v === null) return;
+        parts.push(String(v));
+      });
+      return parts.join(" ").toLowerCase().indexOf(term) >= 0;
+    });
+  }
+  function filterRenderedTablesBySearch() {
+    var term = getSearchTerm();
+    var wrap = el("pp-table-wrap");
+    if (!wrap) return;
+    wrap.querySelectorAll("table.pp-table tbody tr").forEach(function (tr) {
+      if (!term) {
+        tr.style.display = "";
+        return;
+      }
+      var txt = String(tr.textContent || "").toLowerCase();
+      tr.style.display = txt.indexOf(term) >= 0 ? "" : "none";
+    });
+  }
   function avgRate(q, a) { q = num(q); a = num(a); return q ? (a / q) : 0; }
   function employeeLabel(row) {
     if (!row) return "";
@@ -2323,8 +2403,42 @@ WEB_PAGE_HTML = """
       to_date: toVal,
       employee: el("pp-employee").value || "",
       product: el("pp-product").value || "",
-      process_type: el("pp-process-type").value || ""
+      process_type: el("pp-process-type").value || "",
+      po_number: el("pp-po-number") ? (el("pp-po-number").value || "") : "",
+      entry_no: el("pp-entry-no") ? (el("pp-entry-no").value || "") : ""
     };
+  }
+
+  function refreshHeaderFilterOptions() {
+    var poSelect = el("pp-po-number");
+    var entrySelect = el("pp-entry-no");
+    if (!poSelect || !entrySelect) return;
+    var currentPo = poSelect.value || "";
+    var currentEntry = entrySelect.value || "";
+    var poMap = {};
+    var entryMap = {};
+    (state.rows || []).forEach(function (r) {
+      var po = String(r.po_number || "").trim();
+      var entry = String(r.per_piece_salary || "").trim();
+      if (po) poMap[po] = true;
+      if (entry) entryMap[entry] = true;
+    });
+    var poRows = Object.keys(poMap).sort().map(function (v) { return { value: v, label: v }; });
+    var entryRows = Object.keys(entryMap).sort().map(function (v) { return { value: v, label: v }; });
+    setOptions(poSelect, poRows, "value", "label", "All");
+    setOptions(entrySelect, entryRows, "value", "label", "All");
+    if (currentPo && poMap[currentPo]) poSelect.value = currentPo;
+    if (currentEntry && entryMap[currentEntry]) entrySelect.value = currentEntry;
+  }
+
+  function getRowsByHeaderFilters(rows) {
+    var po = el("pp-po-number") ? String(el("pp-po-number").value || "").trim() : "";
+    var entry = el("pp-entry-no") ? String(el("pp-entry-no").value || "").trim() : "";
+    return (rows || []).filter(function (r) {
+      if (po && String(r.po_number || "") !== po) return false;
+      if (entry && String(r.per_piece_salary || "") !== entry) return false;
+      return true;
+    });
   }
 
   function parseDateOnly(value) {
@@ -2479,6 +2593,8 @@ WEB_PAGE_HTML = """
       setOptions(el("pp-employee"), emps, "value", "label", "All");
       setOptions(el("pp-product"), prods, "value", "label", "All");
       setOptions(el("pp-process-type"), ptypes, "value", "label", "All");
+      setOptions(el("pp-po-number"), [], "value", "label", "All");
+      setOptions(el("pp-entry-no"), [], "value", "label", "All");
       rebuildEntryMetaLookups();
     });
   }
@@ -2566,10 +2682,45 @@ WEB_PAGE_HTML = """
 
   function groupRows(rows, keys, builder) {
     var map = {};
+    function cleanGroupAmount(v) {
+      var out = Math.round(num(v) * 100) / 100;
+      return Math.abs(out) < 0.005 ? 0 : out;
+    }
+    function resolveBookedPaidUnpaid(row) {
+      var amount = num(row.amount);
+      var bookingStatus = String(row.booking_status || "");
+      var jvPosted = !!((row.jv_entry_no || "") && String(row.jv_status || "") === "Posted");
+      var isBooked = bookingStatus === "Booked" || jvPosted;
+      var bookedVal = isBooked ? amount : 0;
+
+      if (bookingStatus === "Partly Booked") {
+        var rawBooked = num(row.booked_amount);
+        if (rawBooked < 0) rawBooked = 0;
+        if (rawBooked > amount) rawBooked = amount;
+        bookedVal = rawBooked;
+      }
+
+      var paidVal = num(row.paid_amount);
+      if (paidVal < 0) paidVal = 0;
+      if (paidVal > bookedVal) paidVal = bookedVal;
+
+      var unpaidVal = num(row.unpaid_amount);
+      if (unpaidVal <= 0 || unpaidVal > bookedVal) {
+        unpaidVal = Math.max(bookedVal - paidVal, 0);
+      }
+
+      return {
+        booked: cleanGroupAmount(bookedVal),
+        paid: cleanGroupAmount(paidVal),
+        unpaid: cleanGroupAmount(unpaidVal),
+        is_booked: isBooked
+      };
+    }
     (rows || []).forEach(function (r) {
       var key = keys.map(function (k) { return (r[k] || ""); }).join("||");
       if (!map[key]) map[key] = builder(r);
       if (map[key].booked_amount === undefined) map[key].booked_amount = 0;
+      if (map[key].unbooked_amount === undefined) map[key].unbooked_amount = 0;
       if (map[key].paid_amount === undefined) map[key].paid_amount = 0;
       if (map[key].unpaid_amount === undefined) map[key].unpaid_amount = 0;
       if (map[key]._row_count === undefined) map[key]._row_count = 0;
@@ -2581,20 +2732,17 @@ WEB_PAGE_HTML = """
       map[key]._row_count += 1;
       map[key].qty = num(map[key].qty) + num(r.qty);
       map[key].amount = num(map[key].amount) + num(r.amount);
-      var bookedVal = num(r.booked_amount);
-      var paidVal = num(r.paid_amount);
-      var unpaidVal = num(r.unpaid_amount);
-      var postedRow = (String(r.booking_status || "") === "Booked") || ((r.jv_entry_no || "") && String(r.jv_status || "") === "Posted");
-      if (bookedVal <= 0 && postedRow) bookedVal = num(r.amount);
-      if (paidVal < 0) paidVal = 0;
-      if (bookedVal > 0 && paidVal > bookedVal) paidVal = bookedVal;
-      if (unpaidVal <= 0) unpaidVal = Math.max(bookedVal - paidVal, 0);
+      var amounts = resolveBookedPaidUnpaid(r);
+      var bookedVal = amounts.booked;
+      var paidVal = amounts.paid;
+      var unpaidVal = amounts.unpaid;
 
       map[key].booked_amount = num(map[key].booked_amount) + bookedVal;
+      map[key].unbooked_amount = cleanGroupAmount(num(map[key].unbooked_amount) + Math.max(num(r.amount) - bookedVal, 0));
       map[key].paid_amount = num(map[key].paid_amount) + paidVal;
       map[key].unpaid_amount = num(map[key].unpaid_amount) + unpaidVal;
 
-      var isBooked = (String(r.booking_status || "") === "Booked") || ((r.jv_entry_no || "") && String(r.jv_status || "") === "Posted");
+      var isBooked = amounts.is_booked;
       if (isBooked) map[key]._booked_count += 1;
       var payStatus = String(r.payment_status || "Unpaid");
       if (payStatus === "Paid") map[key]._paid_count += 1;
@@ -2602,7 +2750,12 @@ WEB_PAGE_HTML = """
       else map[key]._unpaid_count += 1;
     });
     return Object.keys(map).sort().map(function (k) {
+      map[k].amount = cleanGroupAmount(map[k].amount);
+      map[k].booked_amount = cleanGroupAmount(map[k].booked_amount);
+      map[k].paid_amount = cleanGroupAmount(map[k].paid_amount);
+      map[k].unpaid_amount = cleanGroupAmount(map[k].unpaid_amount);
       map[k].rate = avgRate(map[k].qty, map[k].amount);
+      map[k].unbooked_amount = cleanGroupAmount(Math.max(num(map[k].amount) - num(map[k].booked_amount), 0));
       if (map[k]._booked_count === map[k]._row_count) map[k].booking_status = "Booked";
       else if (map[k]._booked_count === 0) map[k].booking_status = "UnBooked";
       else map[k].booking_status = "Partly Booked";
@@ -2618,6 +2771,284 @@ WEB_PAGE_HTML = """
     return groupRows(rows, ["employee", "name1"], function (r) {
       return { employee: r.employee || "", name1: r.name1 || "", qty: 0, amount: 0, rate: 0 };
     });
+  }
+
+  function monthFieldFromKey(key) {
+    return "m_" + String(key || "").replace("-", "_");
+  }
+
+  function monthLabelFromKey(key) {
+    var monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    var k = String(key || "");
+    if (!k || k.length < 7) return k;
+    var yy = k.slice(2, 4);
+    var mm = parseInt(k.slice(5, 7), 10) || 0;
+    return (monthNames[mm - 1] || k.slice(5, 7)) + "-" + yy;
+  }
+
+  function monthsInFilterRange() {
+    var args = getReportArgs();
+    var fromDate = parseDateOnly(args.from_date || "");
+    var toDate = parseDateOnly(args.to_date || "");
+    if (!fromDate || !toDate) return [];
+    if (fromDate > toDate) {
+      var temp = fromDate;
+      fromDate = toDate;
+      toDate = temp;
+    }
+    var out = [];
+    var y = fromDate.getFullYear();
+    var m = fromDate.getMonth();
+    var ey = toDate.getFullYear();
+    var em = toDate.getMonth();
+    while (y < ey || (y === ey && m <= em)) {
+      var key = String(y) + "-" + pad2(m + 1);
+      out.push({ key: key, label: monthLabelFromKey(key) });
+      m += 1;
+      if (m > 11) {
+        m = 0;
+        y += 1;
+      }
+    }
+    return out;
+  }
+
+  function buildSimpleMonthColumns(rows) {
+    var map = {};
+    (monthsInFilterRange() || []).forEach(function (m) {
+      map[m.key] = { key: m.key, label: m.label };
+    });
+    (rows || []).forEach(function (r) {
+      var dt = parseDateOnly(r.to_date || r.from_date);
+      if (!dt) return;
+      var key = String(dt.getFullYear()) + "-" + pad2(dt.getMonth() + 1);
+      if (!map[key]) map[key] = { key: key, label: monthLabelFromKey(key) };
+    });
+    return Object.keys(map).sort().map(function (k) { return map[k]; });
+  }
+
+  function buildSimpleMonthRows(rows, monthCols) {
+    var map = {};
+    function clean(v) {
+      var out = Math.round(num(v) * 100) / 100;
+      return Math.abs(out) < 0.005 ? 0 : out;
+    }
+
+    (rows || []).forEach(function (r) {
+      var emp = String(r.employee || "").trim();
+      var name = String(r.name1 || "").trim() || emp;
+      if (!emp && !name) return;
+      var keyEmp = emp || name;
+      if (!map[keyEmp]) {
+        map[keyEmp] = { employee: emp, name1: name || keyEmp };
+        (monthCols || []).forEach(function (m) {
+          map[keyEmp][monthFieldFromKey(m.key)] = 0;
+        });
+      }
+      var dt = parseDateOnly(r.to_date || r.from_date);
+      if (!dt) return;
+      var monthKey = String(dt.getFullYear()) + "-" + pad2(dt.getMonth() + 1);
+      var field = monthFieldFromKey(monthKey);
+      if (map[keyEmp][field] === undefined) map[keyEmp][field] = 0;
+      map[keyEmp][field] = clean(num(map[keyEmp][field]) + num(r.amount));
+    });
+
+    return Object.keys(map).sort(function (a, b) {
+      var an = String(map[a].name1 || a);
+      var bn = String(map[b].name1 || b);
+      if (an < bn) return -1;
+      if (an > bn) return 1;
+      return 0;
+    }).map(function (k) { return map[k]; });
+  }
+
+  function buildEmployeeMonthYearRows(rows) {
+    var monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    var monthMap = {};
+    var subtotalMap = {};
+    function cleanAmount(v) {
+      var out = Math.round(num(v) * 100) / 100;
+      return Math.abs(out) < 0.005 ? 0 : out;
+    }
+
+    function ensureStats(target) {
+      if (target._row_count === undefined) target._row_count = 0;
+      if (target._booked_count === undefined) target._booked_count = 0;
+      if (target._paid_count === undefined) target._paid_count = 0;
+      if (target._unpaid_count === undefined) target._unpaid_count = 0;
+      if (target._partly_count === undefined) target._partly_count = 0;
+    }
+
+    function resolveAmounts(row) {
+      var amount = num(row.amount);
+      var bookingStatus = String(row.booking_status || "");
+      var jvPosted = !!((row.jv_entry_no || "") && String(row.jv_status || "") === "Posted");
+      var isBooked = bookingStatus === "Booked" || jvPosted;
+      var bookedVal = isBooked ? amount : 0;
+
+      if (bookingStatus === "Partly Booked") {
+        var rawBooked = num(row.booked_amount);
+        if (rawBooked < 0) rawBooked = 0;
+        if (rawBooked > amount) rawBooked = amount;
+        bookedVal = rawBooked;
+      }
+
+      var paidVal = num(row.paid_amount);
+      if (paidVal < 0) paidVal = 0;
+      if (paidVal > bookedVal) paidVal = bookedVal;
+
+      var unpaidVal = num(row.unpaid_amount);
+      if (unpaidVal <= 0 || unpaidVal > bookedVal) {
+        unpaidVal = Math.max(bookedVal - paidVal, 0);
+      }
+
+      return {
+        booked: cleanAmount(bookedVal),
+        paid: cleanAmount(paidVal),
+        unpaid: cleanAmount(unpaidVal),
+        is_booked: isBooked
+      };
+    }
+
+    function addStats(target, row, bookedVal, paidVal, unpaidVal) {
+      ensureStats(target);
+      target._row_count += 1;
+      target.qty = num(target.qty) + num(row.qty);
+      target.amount = num(target.amount) + num(row.amount);
+      target.booked_amount = num(target.booked_amount) + bookedVal;
+      var unbookedVal = num(row.amount) - bookedVal;
+      if (unbookedVal < 0) unbookedVal = 0;
+      target.unbooked_amount = cleanAmount(num(target.unbooked_amount) + unbookedVal);
+      target.paid_amount = num(target.paid_amount) + paidVal;
+      target.unpaid_amount = num(target.unpaid_amount) + unpaidVal;
+
+      var isBooked = (String(row.booking_status || "") === "Booked") || ((row.jv_entry_no || "") && String(row.jv_status || "") === "Posted");
+      if (isBooked) target._booked_count += 1;
+
+      var payStatus = String(row.payment_status || "Unpaid");
+      if (payStatus === "Paid") target._paid_count += 1;
+      else if (payStatus === "Partly Paid") target._partly_count += 1;
+      else target._unpaid_count += 1;
+    }
+
+    function finalizeStats(target) {
+      target.amount = cleanAmount(target.amount);
+      target.booked_amount = cleanAmount(target.booked_amount);
+      target.paid_amount = cleanAmount(target.paid_amount);
+      target.unpaid_amount = cleanAmount(target.unpaid_amount);
+      target.rate = avgRate(target.qty, target.amount);
+      var unbooked = num(target.amount) - num(target.booked_amount);
+      if (unbooked < 0) unbooked = 0;
+      target.unbooked_amount = cleanAmount(unbooked);
+      if (target._booked_count === target._row_count) target.booking_status = "Booked";
+      else if (target._booked_count === 0) target.booking_status = "UnBooked";
+      else target.booking_status = "Partly Booked";
+
+      if (target._paid_count === target._row_count) target.payment_status = "Paid";
+      else if (target._unpaid_count === target._row_count) target.payment_status = "Unpaid";
+      else target.payment_status = "Partly Paid";
+    }
+
+    (rows || []).forEach(function (r) {
+      var emp = String(r.employee || "").trim();
+      if (!emp) return;
+      var name = String(r.name1 || "").trim() || emp;
+      var dt = parseDateOnly(r.to_date || r.from_date);
+      if (!dt) return;
+      var yy = String(dt.getFullYear());
+      var mmNo = dt.getMonth() + 1;
+      var mm = pad2(mmNo);
+      var mmLabel = monthNames[mmNo - 1] + "-" + yy.slice(-2);
+
+      var resolved = resolveAmounts(r);
+      var bookedVal = resolved.booked;
+      var paidVal = resolved.paid;
+      var unpaidVal = resolved.unpaid;
+
+      var monthKey = emp + "||" + name + "||" + yy + "||" + mm;
+      if (!monthMap[monthKey]) {
+        monthMap[monthKey] = {
+          employee: emp,
+          name1: name,
+          year: yy,
+          month: mmLabel,
+          month_year: mmLabel,
+          month_no: mmNo,
+          period_key: yy + "-" + mm,
+          period_type: "Month",
+          qty: 0,
+          rate: 0,
+          amount: 0,
+          booked_amount: 0,
+          unbooked_amount: 0,
+          paid_amount: 0,
+          unpaid_amount: 0,
+        };
+      }
+      addStats(monthMap[monthKey], r, bookedVal, paidVal, unpaidVal);
+
+      var subtotalKey = yy + "||" + mm;
+      if (!subtotalMap[subtotalKey]) {
+        subtotalMap[subtotalKey] = {
+          employee: "",
+          name1: "Month Sub Total",
+          year: yy,
+          month: mmLabel,
+          month_year: mmLabel + " Sub Total",
+          month_no: mmNo,
+          period_key: yy + "-" + mm,
+          period_type: "Subtotal",
+          qty: 0,
+          rate: 0,
+          amount: 0,
+          booked_amount: 0,
+          unbooked_amount: 0,
+          paid_amount: 0,
+          unpaid_amount: 0,
+        };
+      }
+      addStats(subtotalMap[subtotalKey], r, bookedVal, paidVal, unpaidVal);
+    });
+
+    var monthRows = Object.keys(monthMap).map(function (k) {
+      finalizeStats(monthMap[k]);
+      return monthMap[k];
+    });
+
+    monthRows.sort(function (a, b) {
+      if (String(a.year || "") < String(b.year || "")) return -1;
+      if (String(a.year || "") > String(b.year || "")) return 1;
+      if (num(a.month_no) < num(b.month_no)) return -1;
+      if (num(a.month_no) > num(b.month_no)) return 1;
+      var an = String(a.name1 || a.employee || "");
+      var bn = String(b.name1 || b.employee || "");
+      if (an < bn) return -1;
+      if (an > bn) return 1;
+      return 0;
+    });
+
+    var subtotalByPeriod = {};
+    Object.keys(subtotalMap).forEach(function (k) {
+      finalizeStats(subtotalMap[k]);
+      var row = subtotalMap[k];
+      subtotalByPeriod[row.period_key] = row;
+    });
+
+    var out = [];
+    var lastPeriodKey = "";
+    monthRows.forEach(function (r) {
+      var key = r.period_key;
+      if (lastPeriodKey && key !== lastPeriodKey && subtotalByPeriod[lastPeriodKey]) {
+        out.push(subtotalByPeriod[lastPeriodKey]);
+      }
+      out.push(r);
+      lastPeriodKey = key;
+    });
+    if (lastPeriodKey && subtotalByPeriod[lastPeriodKey]) {
+      out.push(subtotalByPeriod[lastPeriodKey]);
+    }
+
+    return out;
   }
 
   function buildAdvanceRows(rows) {
@@ -2665,7 +3096,7 @@ WEB_PAGE_HTML = """
   }
 
   function getUnpostedRows() {
-    return (state.rows || []).filter(function (r) {
+    return getRowsByHeaderFilters(state.rows || []).filter(function (r) {
       var status = r && r.jv_status ? String(r.jv_status) : "Pending";
       var hasJV = !!(r && r.jv_entry_no);
       return !hasJV && status !== "Posted";
@@ -2673,7 +3104,7 @@ WEB_PAGE_HTML = """
   }
 
   function getBookedRows() {
-    return (state.rows || []).filter(function (r) {
+    return getRowsByHeaderFilters(state.rows || []).filter(function (r) {
       var status = r && r.jv_status ? String(r.jv_status) : "Pending";
       var hasJV = !!(r && r.jv_entry_no);
       return hasJV && status === "Posted";
@@ -2886,20 +3317,62 @@ WEB_PAGE_HTML = """
     columns.forEach(function (c) { html += "<th>" + esc(c.label) + "</th>"; });
     html += "</tr></thead><tbody>";
     rows.forEach(function (r) {
-      html += "<tr>";
+      var ptype = String(r.period_type || "");
+      var rowClass = (ptype === "Subtotal" || ptype === "Year" || !!r._is_total) ? " class='pp-year-total'" : "";
+      html += "<tr" + rowClass + ">";
       columns.forEach(function (c) {
         var val = r[c.fieldname];
         if ((c.fieldname === "jv_entry_no" || c.fieldname === "payment_jv_no") && val) {
           html += "<td><a target='_blank' href='/app/journal-entry/" + encodeURIComponent(val) + "'>" + esc(val) + "</a></td>";
         } else if (c.summary_link && val) {
           html += "<td><button type='button' class='btn btn-xs btn-default pp-doc-summary' data-doc='" + encodeURIComponent(String(val)) + "'>" + esc(val) + "</button></td>";
+        } else if (isStatusField(c.fieldname)) {
+          html += "<td>" + statusBadgeHtml(val || "") + "</td>";
         } else {
-          var cls = c.numeric ? " class='num'" : "";
+          var classes = [];
+          if (c.numeric) classes.push("num");
+          if (isAmountField(c.fieldname)) classes.push("pp-amt-col");
+          var cls = classes.length ? " class='" + classes.join(" ") + "'" : "";
           html += "<td" + cls + ">" + esc(c.numeric ? fmt(val) : (val || "")) + "</td>";
         }
       });
       html += "</tr>";
     });
+    var hasExistingTotal = (rows || []).some(function (r) { return !!(r && r._is_total); });
+    if (!hasExistingTotal) {
+      var sums = {};
+      var firstLabelDone = false;
+      columns.forEach(function (c) { if (c && c.fieldname) sums[c.fieldname] = 0; });
+      (rows || []).forEach(function (r) {
+        if (!r) return;
+        var ptype = String(r.period_type || "");
+        if (ptype === "Subtotal" || ptype === "Year") return;
+        columns.forEach(function (c) {
+          if (!c || !c.numeric) return;
+          sums[c.fieldname] = num(sums[c.fieldname]) + num(r[c.fieldname]);
+        });
+      });
+      html += "<tr class='pp-year-total'>";
+      columns.forEach(function (c) {
+        if (!c) {
+          html += "<td></td>";
+          return;
+        }
+        if (!firstLabelDone && !c.numeric) {
+          html += "<td>Total</td>";
+          firstLabelDone = true;
+          return;
+        }
+        if (c.numeric) {
+          var cls = "num";
+          if (isAmountField(c.fieldname)) cls += " pp-amt-col";
+          html += "<td class='" + cls + "'>" + esc(fmt(sums[c.fieldname])) + "</td>";
+          return;
+        }
+        html += "<td></td>";
+      });
+      html += "</tr>";
+    }
     html += "</tbody></table>";
     wrap.innerHTML = html;
 
@@ -2927,14 +3400,37 @@ WEB_PAGE_HTML = """
         + "<td>" + esc(label) + "</td>"
         + "<td class='num'>" + esc(fmt(r.qty)) + "</td>"
         + "<td class='num'>" + esc(fmt(r.rate)) + "</td>"
-        + "<td class='num'>" + esc(fmt(r.amount)) + "</td>"
-        + "<td class='num'>" + esc(fmt(r.advance_balance)) + "</td>"
+        + "<td class='num pp-amt-col'>" + esc(fmt(r.amount)) + "</td>"
+        + "<td class='num pp-amt-col'>" + esc(fmt(r.advance_balance)) + "</td>"
         + "<td><input class='pp-adj-input' type='number' min='0' step='1' inputmode='numeric' data-employee='" + esc(emp) + "' data-field='advance_deduction' value='" + esc(whole(r.advance_deduction)) + "'></td>"
         + "<td><input class='pp-adj-input' type='number' min='0' step='1' inputmode='numeric' data-employee='" + esc(emp) + "' data-field='allowance' value='" + esc(whole(r.allowance)) + "'></td>"
         + "<td><input class='pp-adj-input' type='number' min='0' step='1' inputmode='numeric' data-employee='" + esc(emp) + "' data-field='other_deduction' value='" + esc(whole(r.other_deduction)) + "'></td>"
-        + "<td class='num pp-net-cell' data-employee='" + esc(emp) + "'>" + esc(fmt(r.net_amount)) + "</td>"
+        + "<td class='num pp-net-cell pp-amt-col' data-employee='" + esc(emp) + "'>" + esc(fmt(r.net_amount)) + "</td>"
         + "</tr>";
     });
+    var tQty = 0, tRate = 0, tAmount = 0, tAdvanceBal = 0, tAdvanceDed = 0, tAllowance = 0, tOtherDed = 0, tNet = 0;
+    rows.forEach(function (r) {
+      tQty += num(r.qty);
+      tRate += num(r.rate);
+      tAmount += num(r.amount);
+      tAdvanceBal += num(r.advance_balance);
+      tAdvanceDed += num(r.advance_deduction);
+      tAllowance += num(r.allowance);
+      tOtherDed += num(r.other_deduction);
+      tNet += num(r.net_amount);
+    });
+    html += "<tr class='pp-year-total'>"
+      + "<td></td>"
+      + "<td>Total</td>"
+      + "<td class='num'>" + esc(fmt(tQty)) + "</td>"
+      + "<td class='num'>" + esc(fmt(tRate)) + "</td>"
+      + "<td class='num pp-amt-col'>" + esc(fmt(tAmount)) + "</td>"
+      + "<td class='num pp-amt-col'>" + esc(fmt(tAdvanceBal)) + "</td>"
+      + "<td class='num pp-amt-col'>" + esc(fmt(tAdvanceDed)) + "</td>"
+      + "<td class='num pp-amt-col'>" + esc(fmt(tAllowance)) + "</td>"
+      + "<td class='num pp-amt-col'>" + esc(fmt(tOtherDed)) + "</td>"
+      + "<td class='num pp-amt-col'>" + esc(fmt(tNet)) + "</td>"
+      + "</tr>";
     html += "</tbody></table>";
     wrap.innerHTML = html;
 
@@ -2987,13 +3483,29 @@ WEB_PAGE_HTML = """
       html += "<tr>"
         + "<td><input class='pp-pay-include' type='checkbox' data-employee='" + esc(emp) + "'" + checked + "></td>"
         + "<td>" + esc(employeeLabel(r) || emp || "(Blank)") + "</td>"
-        + "<td class='num'>" + esc(fmt(r.booked_amount)) + "</td>"
-        + "<td class='num'>" + esc(fmt(r.paid_amount)) + "</td>"
-        + "<td class='num'>" + esc(fmt(r.unpaid_amount)) + "</td>"
+        + "<td class='num pp-amt-col'>" + esc(fmt(r.booked_amount)) + "</td>"
+        + "<td class='num pp-amt-col'>" + esc(fmt(r.paid_amount)) + "</td>"
+        + "<td class='num pp-amt-col'>" + esc(fmt(r.unpaid_amount)) + "</td>"
         + "<td><input class='pp-pay-amount pp-pay-input' type='number' min='0' step='1' inputmode='numeric' data-employee='" + esc(emp) + "' value='" + esc(whole(r.payment_amount)) + "'></td>"
-        + "<td>" + esc(r.payment_status || "") + "</td>"
+        + "<td>" + statusBadgeHtml(r.payment_status || "") + "</td>"
         + "</tr>";
     });
+    var tBooked = 0, tPaid = 0, tUnpaid = 0, tPay = 0;
+    rows.forEach(function (r) {
+      tBooked += num(r.booked_amount);
+      tPaid += num(r.paid_amount);
+      tUnpaid += num(r.unpaid_amount);
+      tPay += num(r.payment_amount);
+    });
+    html += "<tr class='pp-year-total'>"
+      + "<td></td>"
+      + "<td>Total</td>"
+      + "<td class='num pp-amt-col'>" + esc(fmt(tBooked)) + "</td>"
+      + "<td class='num pp-amt-col'>" + esc(fmt(tPaid)) + "</td>"
+      + "<td class='num pp-amt-col'>" + esc(fmt(tUnpaid)) + "</td>"
+      + "<td class='num pp-amt-col'>" + esc(fmt(tPay)) + "</td>"
+      + "<td></td>"
+      + "</tr>";
     html += "</tbody></table>";
     wrap.innerHTML = html;
 
@@ -3220,6 +3732,19 @@ WEB_PAGE_HTML = """
         + "<td><button class='btn btn-xs btn-danger pp-entry-del' data-idx='" + idx + "' type='button'>Delete</button></td>"
         + "</tr>";
     });
+    var eQty = 0, eRate = 0, eAmount = 0;
+    state.entryRows.forEach(function (r) {
+      eQty += num(r.qty);
+      eRate += num(r.rate);
+      eAmount += entryAmount(r);
+    });
+    html += "<tr class='pp-year-total'>"
+      + "<td>Total</td><td></td><td></td><td></td>"
+      + "<td class='num'>" + esc(fmt(eQty)) + "</td>"
+      + "<td class='num'>" + esc(fmt(eRate)) + "</td>"
+      + "<td class='num pp-amt-col'>" + esc(fmt(eAmount)) + "</td>"
+      + "<td></td>"
+      + "</tr>";
     html += "</tbody></table>";
     if (docs.length) {
       html += "<div class='pp-entry-list'><strong>Recent Docs:</strong></div>";
@@ -3411,9 +3936,10 @@ WEB_PAGE_HTML = """
   }
 
   function renderCurrentTab() {
-    var rows = state.rows || [];
+    var rows = getRowsByHeaderFilters(state.rows || []);
     var cols = [];
     var outRows = [];
+    var skipColumnSearch = false;
     toggleWorkflowCards();
 
     if (state.currentTab === "all") {
@@ -3439,6 +3965,7 @@ WEB_PAGE_HTML = """
       outRows = rows;
     } else if (state.currentTab === "data_entry") {
       renderDataEntryTab();
+      filterRenderedTablesBySearch();
       el("pp-totals").innerHTML = "";
       el("pp-msg").textContent = "Enter and save Per Piece Salary here";
       refreshJVAmountsFromAdjustments();
@@ -3447,6 +3974,7 @@ WEB_PAGE_HTML = """
     } else if (state.currentTab === "salary_creation") {
       outRows = getAdjustedEmployeeRows();
       renderSalaryTable(outRows);
+      filterRenderedTablesBySearch();
       var t = getAdjustedTotals();
       el("pp-totals").innerHTML = "<span>Gross: " + fmt(t.gross_amount) + "</span>"
         + "<span>Advance Deduction: " + fmt(t.advance_deduction_amount) + "</span>"
@@ -3468,6 +3996,7 @@ WEB_PAGE_HTML = """
     } else if (state.currentTab === "payment_manage") {
       outRows = getPaymentActiveRows();
       renderPaymentTable(outRows);
+      filterRenderedTablesBySearch();
       var p = getPaymentTotals();
       el("pp-totals").innerHTML = "<span>Booked: " + fmt(p.booked) + "</span>"
         + "<span>Paid: " + fmt(p.paid) + "</span>"
@@ -3497,14 +4026,54 @@ WEB_PAGE_HTML = """
         { fieldname: "rate", label: "Rate", numeric: true },
         { fieldname: "amount", label: "Amount", numeric: true },
         { fieldname: "booked_amount", label: "Booked", numeric: true },
+        { fieldname: "unbooked_amount", label: "UnBooked", numeric: true },
         { fieldname: "paid_amount", label: "Paid", numeric: true },
         { fieldname: "unpaid_amount", label: "Unpaid", numeric: true },
         { fieldname: "booking_status", label: "Booking Status" },
         { fieldname: "payment_status", label: "Payment Status" }
       ];
       outRows = groupRows(rows, ["employee", "name1"], function (r) {
-        return { employee: r.employee, name1: r.name1, qty: 0, amount: 0, rate: 0, booked_amount: 0, paid_amount: 0, unpaid_amount: 0 };
+        return { employee: r.employee, name1: r.name1, qty: 0, amount: 0, rate: 0, booked_amount: 0, unbooked_amount: 0, paid_amount: 0, unpaid_amount: 0 };
       });
+    } else if (state.currentTab === "month_year_salary") {
+      cols = [
+        { fieldname: "name1", label: "Employee" },
+        { fieldname: "month_year", label: "Month / Year" },
+        { fieldname: "qty", label: "Qty", numeric: true },
+        { fieldname: "rate", label: "Rate", numeric: true },
+        { fieldname: "amount", label: "Amount", numeric: true },
+        { fieldname: "booked_amount", label: "Booked", numeric: true },
+        { fieldname: "unbooked_amount", label: "UnBooked", numeric: true },
+        { fieldname: "paid_amount", label: "Paid", numeric: true },
+        { fieldname: "unpaid_amount", label: "Unpaid", numeric: true }
+      ];
+      outRows = buildEmployeeMonthYearRows(rows);
+    } else if (state.currentTab === "simple_month_amount") {
+      var simpleMonths = buildSimpleMonthColumns(rows);
+      cols = [{ fieldname: "name1", label: "Employee" }];
+      simpleMonths.forEach(function (m) {
+        cols.push({ fieldname: monthFieldFromKey(m.key), label: m.label, numeric: true });
+      });
+      cols.push({ fieldname: "total_amount", label: "Total", numeric: true });
+      outRows = buildSimpleMonthRows(rows, simpleMonths);
+      outRows = filterRowsByColumns(outRows, cols);
+      skipColumnSearch = true;
+      var totalRow = { name1: "Total", total_amount: 0, _is_total: 1 };
+      simpleMonths.forEach(function (m) {
+        totalRow[monthFieldFromKey(m.key)] = 0;
+      });
+      outRows.forEach(function (r) {
+        var rowTotal = 0;
+        simpleMonths.forEach(function (m) {
+          var f = monthFieldFromKey(m.key);
+          var val = num(r[f]);
+          rowTotal += val;
+          totalRow[f] += val;
+        });
+        r.total_amount = rowTotal;
+        totalRow.total_amount += rowTotal;
+      });
+      outRows.push(totalRow);
     } else if (state.currentTab === "product") {
       cols = [
         { fieldname: "product", label: "Product" },
@@ -3542,13 +4111,14 @@ WEB_PAGE_HTML = """
         { fieldname: "rate", label: "Rate", numeric: true },
         { fieldname: "amount", label: "Amount", numeric: true },
         { fieldname: "booked_amount", label: "Booked", numeric: true },
+        { fieldname: "unbooked_amount", label: "UnBooked", numeric: true },
         { fieldname: "paid_amount", label: "Paid", numeric: true },
         { fieldname: "unpaid_amount", label: "Unpaid", numeric: true },
         { fieldname: "booking_status", label: "Booking Status" },
         { fieldname: "payment_status", label: "Payment Status" }
       ];
       outRows = groupRows(rows, ["per_piece_salary"], function (r) {
-        return { per_piece_salary: r.per_piece_salary, qty: 0, amount: 0, rate: 0, booked_amount: 0, paid_amount: 0, unpaid_amount: 0 };
+        return { per_piece_salary: r.per_piece_salary, qty: 0, amount: 0, rate: 0, booked_amount: 0, unbooked_amount: 0, paid_amount: 0, unpaid_amount: 0 };
       });
     } else if (state.currentTab === "po_number") {
       cols = [
@@ -3557,16 +4127,20 @@ WEB_PAGE_HTML = """
         { fieldname: "rate", label: "Rate", numeric: true },
         { fieldname: "amount", label: "Amount", numeric: true },
         { fieldname: "booked_amount", label: "Booked", numeric: true },
+        { fieldname: "unbooked_amount", label: "UnBooked", numeric: true },
         { fieldname: "paid_amount", label: "Paid", numeric: true },
         { fieldname: "unpaid_amount", label: "Unpaid", numeric: true },
         { fieldname: "booking_status", label: "Booking Status" },
         { fieldname: "payment_status", label: "Payment Status" }
       ];
       outRows = groupRows(rows, ["po_number"], function (r) {
-        return { po_number: r.po_number || "(Blank)", qty: 0, amount: 0, rate: 0, booked_amount: 0, paid_amount: 0, unpaid_amount: 0 };
+        return { po_number: r.po_number || "(Blank)", qty: 0, amount: 0, rate: 0, booked_amount: 0, unbooked_amount: 0, paid_amount: 0, unpaid_amount: 0 };
       });
     }
 
+    if (!skipColumnSearch) {
+      outRows = filterRowsByColumns(outRows, cols);
+    }
     renderTable(cols, outRows);
 
     if (state.currentTab === "jv_created") {
@@ -3610,6 +4184,42 @@ WEB_PAGE_HTML = """
     }
 
     var totalQty = 0, totalAmount = 0;
+    if (state.currentTab === "month_year_salary") {
+      outRows.forEach(function (r) {
+        if (String(r.period_type || "") !== "Month") return;
+        totalQty += num(r.qty);
+        totalAmount += num(r.amount);
+      });
+      el("pp-totals").innerHTML = "<span>Monthly Qty Total: " + fmt(totalQty) + "</span><span>Monthly Amount Total: " + fmt(totalAmount) + "</span>";
+      el("pp-msg").textContent = outRows.length + " row(s) including month-wise and yearly totals";
+      refreshJVAmountsFromAdjustments();
+      refreshPaymentAmounts();
+      return;
+    }
+    if (state.currentTab === "simple_month_amount") {
+      var simpleCols = buildSimpleMonthColumns(rows);
+      var monthTotals = {};
+      var grand = 0;
+      simpleCols.forEach(function (m) { monthTotals[m.key] = 0; });
+      outRows.forEach(function (r) {
+        if (r && r._is_total) return;
+        simpleCols.forEach(function (m) {
+          var amount = num(r[monthFieldFromKey(m.key)]);
+          monthTotals[m.key] += amount;
+          grand += amount;
+        });
+      });
+      var totalsHtml = "";
+      simpleCols.forEach(function (m) {
+        totalsHtml += "<span>" + esc(m.label) + ": " + fmt(monthTotals[m.key]) + "</span>";
+      });
+      totalsHtml += "<span>Total Amount: " + fmt(grand) + "</span>";
+      el("pp-totals").innerHTML = totalsHtml;
+      el("pp-msg").textContent = outRows.length + " employee row(s) in simple month-wise amount report";
+      refreshJVAmountsFromAdjustments();
+      refreshPaymentAmounts();
+      return;
+    }
     outRows.forEach(function (r) { totalQty += num(r.qty); totalAmount += num(r.amount); });
     el("pp-totals").innerHTML = "<span>Total Qty: " + fmt(totalQty) + "</span><span>Total Amount: " + fmt(totalAmount) + "</span>";
     el("pp-msg").textContent = outRows.length + " row(s)";
@@ -3622,6 +4232,7 @@ WEB_PAGE_HTML = """
     callApi("get_per_piece_salary_report", getReportArgs()).then(function (msg) {
       state.rows = (msg && msg.data) || [];
       state.columns = (msg && msg.columns) || [];
+      refreshHeaderFilterOptions();
       return loadAdvancesFromGL().catch(function (e) {
         console.error(e);
         state.advanceBalances = (msg && msg.advance_balances) || {};
@@ -4012,6 +4623,15 @@ WEB_PAGE_HTML = """
     if (value) el("pp-pay-payable-account").value = value;
   });
   el("pp-load-btn").addEventListener("click", loadReport);
+  if (el("pp-po-number")) {
+    el("pp-po-number").addEventListener("change", renderCurrentTab);
+  }
+  if (el("pp-entry-no")) {
+    el("pp-entry-no").addEventListener("change", renderCurrentTab);
+  }
+  if (el("pp-search-any")) {
+    el("pp-search-any").addEventListener("input", renderCurrentTab);
+  }
   el("pp-jv-preview-btn").addEventListener("click", previewJV);
   el("pp-jv-create-btn").addEventListener("click", createJV);
   el("pp-jv-cancel-btn").addEventListener("click", cancelJVEntry);
