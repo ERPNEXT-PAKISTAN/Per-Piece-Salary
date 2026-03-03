@@ -64,6 +64,28 @@ bench restart
 
 If `bench restart` is not available on your hosting platform, restart services from your platform panel/container instead.
 
+### Update Other Server from GitHub (Quick Copy)
+
+Use this on any other ERPNext server where app is already installed:
+
+```bash
+cd /home/frappe/frappe-bench
+git -C apps/per_piece_payroll pull origin main || git -C apps/per_piece_payroll pull upstream main
+bench --site <your-site-name> migrate
+bench --site <your-site-name> execute per_piece_payroll.api.apply_per_piece_payroll_setup
+bench --site <your-site-name> clear-cache
+bench --site <your-site-name> clear-website-cache
+bench build --app per_piece_payroll
+bench restart
+```
+
+Example:
+
+```bash
+bench --site site1.local migrate
+bench --site site1.local execute per_piece_payroll.api.apply_per_piece_payroll_setup
+```
+
 ### Notes
 
 - App expects `erpnext` and `hrms` to be installed.
