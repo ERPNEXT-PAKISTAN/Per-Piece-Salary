@@ -114,6 +114,7 @@ bench --site site1.local execute per_piece_payroll.api.apply_per_piece_payroll_s
 ### Notes
 
 - App expects `erpnext` and `hrms` to be installed.
+- `appe` is **not** required by `per_piece_payroll`.
 - If `Item.custom_process_type` already exists as `Link`, setup auto-converts it to `Select` to avoid install failure.
 - In container/cloud setups without `supervisorctl`, `bench get-app` may end with a restart error. This does not always mean app fetch/install failed.
 
@@ -139,6 +140,20 @@ bench --site site1.local execute per_piece_payroll.api.apply_per_piece_payroll_s
    ```bash
    git -C apps/per_piece_payroll pull upstream main
    ```
+
+4. If you want to remove `appe` from a site/bench:
+   - First remove it from site installed apps:
+   ```bash
+   bench --site site1.local remove-from-installed-apps appe
+   bench --site site1.local migrate
+   bench --site site1.local clear-cache
+   bench --site site1.local clear-website-cache
+   ```
+   - Then remove app from bench:
+   ```bash
+   bench remove-app appe
+   ```
+   - If your host blocks `bench restart`, restart services from hosting panel/container supervisor.
 
 ### Contributing
 
