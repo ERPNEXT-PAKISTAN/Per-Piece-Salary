@@ -2512,14 +2512,10 @@ frappe.ui.form.on("Per Piece Salary", {
     item_group(frm) {
         setProductQuery(frm);
         if (frm.doc.item) {
-            frappe.db.get_value("Item", frm.doc.item, "item_group")
-                .then((response) => {
-                    const rowGroup = ((response && response.message && response.message.item_group) || "").trim();
-                    if (rowGroup !== (frm.doc.item_group || "").trim()) {
-                        frm.set_value("item", "");
-                    }
-                }, () => {});
+            frm.set_value("item", "");
         }
+        frm.__per_piece_item_process_map = {};
+        frm.refresh_field("item");
         loadItemsForGroup(frm).then(() => {
             populateRowsFromGroup(frm, true);
             frm.refresh_field(CHILD_TABLE_FIELD);
@@ -6225,23 +6221,11 @@ def apply() -> list[str]:
 		allow_fieldtype_override=1,
 	)
 	_ensure_custom_field(
-		"pp_filters_section_break",
-		"Filters",
-		"Section Break",
-		None,
-		"po_number",
-		results,
-		doctype="Per Piece Salary",
-		read_only=0,
-		in_list_view=0,
-		no_copy=0,
-	)
-	_ensure_custom_field(
 		"load_by_item",
 		"Load By Item",
 		"Check",
 		None,
-		"pp_filters_section_break",
+		"po_number",
 		results,
 		doctype="Per Piece Salary",
 		read_only=0,
@@ -6251,7 +6235,7 @@ def apply() -> list[str]:
 	)
 	_ensure_custom_field(
 		"pp_filters_col_break_1",
-		"Filter Col 1",
+		"",
 		"Column Break",
 		None,
 		"load_by_item",
@@ -6275,7 +6259,7 @@ def apply() -> list[str]:
 	)
 	_ensure_custom_field(
 		"pp_filters_col_break_2",
-		"Filter Col 2",
+		"",
 		"Column Break",
 		None,
 		"item_group",
@@ -6299,7 +6283,7 @@ def apply() -> list[str]:
 	)
 	_ensure_custom_field(
 		"pp_filters_col_break_3",
-		"Filter Col 3",
+		"",
 		"Column Break",
 		None,
 		"item",
@@ -6326,6 +6310,7 @@ def apply() -> list[str]:
 	_delete_custom_field("Item", "custom_rate_per_piece", results)
 	_delete_custom_field("Per Piece Salary", "selected_items", results)
 	_delete_custom_field("Per Piece Salary", "pp_filter_col_break", results)
+	_delete_custom_field("Per Piece Salary", "pp_filters_section_break", results)
 	_ensure_field_property_setter("Per Piece Salary", "po_number", "reqd", "1", "Check", results)
 	_migrate_jv_status(results)
 
