@@ -2726,6 +2726,7 @@ WEB_PAGE_HTML = """
   <div id="pp-msg" class="pp-msg"></div>
   <div id="pp-table-wrap" class="pp-table-wrap"></div>
   <div id="pp-totals" class="pp-totals"></div>
+  <div id="pp-pagination" class="pp-pagination"></div>
   <div id="pp-created-list-wrap" class="pp-entry-list"></div>
 
   <div class="pp-jv-card" id="pp-salary-jv-card">
@@ -2821,6 +2822,8 @@ WEB_PAGE_HTML = """
   .pp-entry-card .pp-table th, .pp-entry-card .pp-table td { vertical-align: middle; }
   .pp-entry-card .pp-table .pp-pay-input { width: 100%; min-width: 0; max-width: none; box-sizing: border-box; }
   .pp-entry-card .pp-table .pp-entry-view { background: #f8fafc; color: #334155; }
+  .pp-pagination { margin-top: 10px; display: flex; gap: 8px; align-items: center; justify-content: flex-end; font-size: 12px; color: #334155; }
+  .pp-pagination .btn[disabled] { opacity: 0.5; cursor: not-allowed; }
   .pp-jv-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; }
   .pp-jv-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #334155; }
   .pp-jv-grid input, .pp-jv-grid select { border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px 10px; font-size: 13px; }
@@ -2853,7 +2856,9 @@ WEB_PAGE_HTML = """
     paymentAdjustments: {},
     paymentExcludedEmployees: {},
     entryRows: [],
-    entryMeta: {}
+    entryMeta: {},
+    pageSize: 20,
+    pageByTab: {}
   };
 
   function el(id) { return document.getElementById(id); }
@@ -4404,6 +4409,63 @@ WEB_PAGE_HTML = """
     return Object.keys(map).sort().map(function (k) { return map[k]; });
   }
 
+  function setPageForCurrentTab(page) {
+    var tab = String(state.currentTab || "all");
+    var p = parseInt(page || 1, 10);
+    if (!p || p < 1) p = 1;
+    state.pageByTab[tab] = p;
+  }
+
+  function paginateRows(rows) {
+    var allRows = rows || [];
+    var tab = String(state.currentTab || "all");
+    var pageSize = Math.max(parseInt(state.pageSize || 20, 10) || 20, 1);
+    var totalPages = Math.max(1, Math.ceil(allRows.length / pageSize));
+    var page = parseInt(state.pageByTab[tab] || 1, 10);
+    if (!page || page < 1) page = 1;
+    if (page > totalPages) page = totalPages;
+    state.pageByTab[tab] = page;
+    var start = (page - 1) * pageSize;
+    var end = Math.min(start + pageSize, allRows.length);
+    return {
+      rows: allRows.slice(start, end),
+      total: allRows.length,
+      page: page,
+      totalPages: totalPages,
+      start: start + 1,
+      end: end
+    };
+  }
+
+  function renderPagination(meta) {
+    var wrap = el("pp-pagination");
+    if (!wrap) return;
+    if (!meta || meta.total <= 0) {
+      wrap.innerHTML = "";
+      return;
+    }
+    var prevDisabled = meta.page <= 1 ? " disabled" : "";
+    var nextDisabled = meta.page >= meta.totalPages ? " disabled" : "";
+    wrap.innerHTML = "<span>Rows " + esc(meta.start) + "-" + esc(meta.end) + " of " + esc(meta.total) + "</span>"
+      + "<button type='button' class='btn btn-default btn-xs' id='pp-page-prev'" + prevDisabled + ">Previous</button>"
+      + "<span>Page " + esc(meta.page) + " / " + esc(meta.totalPages) + "</span>"
+      + "<button type='button' class='btn btn-default btn-xs' id='pp-page-next'" + nextDisabled + ">Next</button>";
+    var prev = el("pp-page-prev");
+    var next = el("pp-page-next");
+    if (prev) {
+      prev.addEventListener("click", function () {
+        setPageForCurrentTab((meta.page || 1) - 1);
+        renderCurrentTab();
+      });
+    }
+    if (next) {
+      next.addEventListener("click", function () {
+        setPageForCurrentTab((meta.page || 1) + 1);
+        renderCurrentTab();
+      });
+    }
+  }
+
   function showPerPieceSummary(docName) {
     var rows = (state.rows || []).filter(function (r) {
       return String(r.per_piece_salary || "") === String(docName || "");
@@ -5226,6 +5288,7 @@ WEB_PAGE_HTML = """
     var rows = getRowsByHeaderFilters(state.rows || []);
     var cols = [];
     var outRows = [];
+    var paged = null;
     var skipColumnSearch = false;
     toggleWorkflowCards();
 
@@ -5256,6 +5319,7 @@ WEB_PAGE_HTML = """
       renderDataEntryTab();
       filterRenderedTablesBySearch();
       el("pp-totals").innerHTML = "";
+      renderPagination(null);
       el("pp-msg").textContent = "Enter and save Per Piece Salary here";
       renderCreatedEntriesPanel("data_entry");
       refreshJVAmountsFromAdjustments();
@@ -5263,7 +5327,8 @@ WEB_PAGE_HTML = """
       return;
     } else if (state.currentTab === "salary_creation") {
       outRows = getAdjustedEmployeeRows();
-      renderSalaryTable(outRows);
+      paged = paginateRows(outRows);
+      renderSalaryTable(paged.rows);
       filterRenderedTablesBySearch();
       var t = getAdjustedTotals();
       el("pp-totals").innerHTML = "<span>Gross: " + fmt(t.gross_amount) + "</span>"
@@ -5271,6 +5336,7 @@ WEB_PAGE_HTML = """
         + "<span>Other Deduction: " + fmt(t.other_deduction_amount) + "</span>"
         + "<span>Net Payable: " + fmt(t.net_payable_amount) + "</span>";
       el("pp-msg").textContent = outRows.length + " employee row(s) for salary creation";
+      renderPagination(paged);
       renderCreatedEntriesPanel("salary_creation");
       refreshJVAmountsFromAdjustments();
       refreshPaymentAmounts();
@@ -5286,7 +5352,8 @@ WEB_PAGE_HTML = """
       outRows = buildPaymentEmployeeRows(getBookedRows());
     } else if (state.currentTab === "payment_manage") {
       outRows = getPaymentActiveRows();
-      renderPaymentTable(outRows);
+      paged = paginateRows(outRows);
+      renderPaymentTable(paged.rows);
       filterRenderedTablesBySearch();
       var p = getPaymentTotals();
       el("pp-totals").innerHTML = "<span>Booked: " + fmt(p.booked) + "</span>"
@@ -5294,6 +5361,7 @@ WEB_PAGE_HTML = """
         + "<span>Unpaid: " + fmt(p.unpaid) + "</span>"
         + "<span>Payment This JV: " + fmt(p.payment) + "</span>";
       el("pp-msg").textContent = outRows.length + " employee row(s) pending payment (paid rows hidden)";
+      renderPagination(paged);
       renderCreatedEntriesPanel("payment_manage");
       refreshPaymentAmounts();
       refreshJVAmountsFromAdjustments();
@@ -5433,7 +5501,9 @@ WEB_PAGE_HTML = """
     if (!skipColumnSearch) {
       outRows = filterRowsByColumns(outRows, cols);
     }
-    renderTable(cols, outRows);
+    paged = paginateRows(outRows);
+    renderTable(cols, paged.rows);
+    renderPagination(paged);
 
     if (state.currentTab === "jv_created") {
       var jb = 0, jp = 0, ju = 0;
@@ -5525,6 +5595,7 @@ WEB_PAGE_HTML = """
   }
 
   function loadReport() {
+    setPageForCurrentTab(1);
     el("pp-msg").textContent = "Loading...";
     callApi("get_per_piece_salary_report", getReportArgs()).then(function (msg) {
       state.rows = (msg && msg.data) || [];
@@ -5569,8 +5640,9 @@ WEB_PAGE_HTML = """
         posted[r.jv_entry_no] = true;
       }
     });
-    var options = Object.keys(posted).sort().map(function (name) { return { name: name }; });
+    var options = Object.keys(posted).sort().reverse().map(function (name) { return { name: name }; });
     setOptions(select, options, "name", "name", "Select Posted JV");
+    if (options.length) select.value = options[0].name;
   }
 
   function loadPaymentJVEntryOptions() {
@@ -5580,8 +5652,9 @@ WEB_PAGE_HTML = """
     (state.rows || []).forEach(function (r) {
       if (r && r.payment_jv_no) posted[r.payment_jv_no] = true;
     });
-    var options = Object.keys(posted).sort().map(function (name) { return { name: name }; });
+    var options = Object.keys(posted).sort().reverse().map(function (name) { return { name: name }; });
     setOptions(select, options, "name", "name", "Select Payment JV");
+    if (options.length) select.value = options[0].name;
   }
 
   function selectPreferred(selectEl, rows, preferredKeywords) {
@@ -5664,7 +5737,7 @@ WEB_PAGE_HTML = """
     callGetList("Account", ["name"], { company: company, is_group: 0, root_type: "Liability" }).then(function (rows) {
       rows = rows || [];
       setOptions(el("pp-jv-deduction-account"), rows, "name", "name", "Select Deduction Account");
-      selectPreferred(el("pp-jv-deduction-account"), rows, ["salary", "deduction", "payable", "employee"]);
+      selectPreferred(el("pp-jv-deduction-account"), rows, ["allowance", "salary", "deduction", "payable", "employee"]);
     }).catch(function (e) { console.error(e); });
   }
 
@@ -5908,6 +5981,7 @@ WEB_PAGE_HTML = """
         document.querySelectorAll(".pp-tab").forEach(function (x) { x.classList.remove("active"); });
         btn.classList.add("active");
         state.currentTab = btn.getAttribute("data-tab");
+        setPageForCurrentTab(1);
         renderCurrentTab();
       });
     });
@@ -5952,7 +6026,7 @@ WEB_PAGE_HTML = """
     var value = el("pp-jv-payable-account").value || "";
     if (value) el("pp-pay-payable-account").value = value;
   });
-  el("pp-load-btn").addEventListener("click", loadReport);
+  el("pp-load-btn").addEventListener("click", function () { setPageForCurrentTab(1); loadReport(); });
   if (el("pp-item-group")) {
     el("pp-item-group").addEventListener("change", function () {
       refreshTopProductOptions();
@@ -5960,13 +6034,13 @@ WEB_PAGE_HTML = """
     });
   }
   if (el("pp-po-number")) {
-    el("pp-po-number").addEventListener("change", renderCurrentTab);
+    el("pp-po-number").addEventListener("change", function () { setPageForCurrentTab(1); renderCurrentTab(); });
   }
   if (el("pp-entry-no")) {
-    el("pp-entry-no").addEventListener("change", renderCurrentTab);
+    el("pp-entry-no").addEventListener("change", function () { setPageForCurrentTab(1); renderCurrentTab(); });
   }
   if (el("pp-search-any")) {
-    el("pp-search-any").addEventListener("input", renderCurrentTab);
+    el("pp-search-any").addEventListener("input", function () { setPageForCurrentTab(1); renderCurrentTab(); });
   }
   el("pp-jv-preview-btn").addEventListener("click", previewJV);
   el("pp-jv-create-btn").addEventListener("click", createJV);
