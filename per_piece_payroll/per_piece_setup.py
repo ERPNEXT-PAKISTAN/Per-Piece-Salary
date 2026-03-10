@@ -884,6 +884,7 @@ def parse_adjustments(raw_value):
             "allowance": round_amount(parts[1]),
             "advance_deduction": round_amount(parts[2]),
             "other_deduction": round_amount(parts[3]),
+            "advance_balance": round_amount(parts[4]) if len(parts) > 4 else 0.0,
         }
     return out
 
@@ -1076,7 +1077,10 @@ for emp in employee_totals:
     entry = employee_totals[emp]
     adj = adjustments.get(emp) or {}
     allowance = max(round_amount(adj.get("allowance")), 0.0)
+    advance_balance_override = max(round_amount(adj.get("advance_balance")), 0.0)
     advance_balance = max(to_float(employee_advance_balances.get(emp)), 0.0)
+    if advance_balance_override > 0:
+        advance_balance = advance_balance_override
     advance_deduction = max(round_amount(adj.get("advance_deduction")), 0.0)
     other_deduction = max(round_amount(adj.get("other_deduction")), 0.0)
 
@@ -4436,12 +4440,34 @@ WEB_PAGE_HTML = """
           to_date: r.to_date || "",
           po_number: r.po_number || "",
           item_group: r.item_group || "",
-          total_amount: 0
+          total_amount: 0,
+          _row_count: 0,
+          _booked_count: 0,
+          _paid_count: 0,
+          _unpaid_count: 0,
+          booking_status: "UnBooked",
+          payment_status: "Unpaid"
         };
       }
       map[key].total_amount += num(r.amount);
+      map[key]._row_count += 1;
+      var isBooked = String(r.booking_status || "") === "Booked" || (!!r.jv_entry_no && String(r.jv_status || "") === "Posted");
+      if (isBooked) map[key]._booked_count += 1;
+      var pay = String(r.payment_status || "Unpaid");
+      if (pay === "Paid") map[key]._paid_count += 1;
+      else if (pay === "Unpaid") map[key]._unpaid_count += 1;
     });
-    return Object.keys(map).sort().map(function (k) { return map[k]; });
+    return Object.keys(map).sort().map(function (k) {
+      var d = map[k];
+      if (d._booked_count === d._row_count) d.booking_status = "Booked";
+      else if (d._booked_count > 0) d.booking_status = "Partly Booked";
+      else d.booking_status = "UnBooked";
+
+      if (d._paid_count === d._row_count) d.payment_status = "Paid";
+      else if (d._paid_count > 0 && d._unpaid_count > 0) d.payment_status = "Partly Paid";
+      else d.payment_status = "Unpaid";
+      return d;
+    });
   }
 
   function setPageForCurrentTab(page) {
@@ -5067,9 +5093,9 @@ WEB_PAGE_HTML = """
     html += "</tbody></table>";
     if (docs.length) {
       html += "<div class='pp-entry-list'><strong>Recent Docs:</strong></div>";
-      html += "<table class='pp-table' style='margin-top:6px;'><thead><tr><th>Per Piece Salary</th><th>From Date</th><th>To Date</th><th>Item Group</th><th>PO Number</th><th>Total Amount</th><th>Edit</th><th>Open</th></tr></thead><tbody>";
+      html += "<table class='pp-table' style='margin-top:6px;'><thead><tr><th>Per Piece Salary</th><th>From Date</th><th>To Date</th><th>Item Group</th><th>PO Number</th><th>JV Status</th><th>Pay Status</th><th>Total Amount</th><th>Edit</th><th>Open</th></tr></thead><tbody>";
       docs.slice(0, 10).forEach(function (d) {
-        html += "<tr><td>" + esc(d.name) + "</td><td>" + esc(d.from_date) + "</td><td>" + esc(d.to_date) + "</td><td>" + esc(d.item_group || "") + "</td><td>" + esc(d.po_number) + "</td><td class='num pp-amt-col'>" + esc(fmt(d.total_amount)) + "</td><td><button type='button' class='btn btn-xs btn-default pp-entry-edit-doc' data-name='" + esc(d.name) + "'>Edit</button></td><td><a target='_blank' href='/app/per-piece-salary/" + encodeURIComponent(d.name) + "'>Open</a></td></tr>";
+        html += "<tr><td>" + esc(d.name) + "</td><td>" + esc(d.from_date) + "</td><td>" + esc(d.to_date) + "</td><td>" + esc(d.item_group || "") + "</td><td>" + esc(d.po_number) + "</td><td>" + statusBadgeHtml(d.booking_status || "UnBooked") + "</td><td>" + statusBadgeHtml(d.payment_status || "Unpaid") + "</td><td class='num pp-amt-col'>" + esc(fmt(d.total_amount)) + "</td><td><button type='button' class='btn btn-xs btn-default pp-entry-edit-doc' data-name='" + esc(d.name) + "'>Edit</button></td><td><a target='_blank' href='/app/per-piece-salary/" + encodeURIComponent(d.name) + "'>Open</a></td></tr>";
       });
       html += "</tbody></table>";
     }
@@ -5833,13 +5859,20 @@ WEB_PAGE_HTML = """
     args.deduction_account = el("pp-jv-deduction-account").value || "";
     args.header_remark = el("pp-jv-remark").value || "";
     var lines = [];
+    var adjustedRows = getAdjustedEmployeeRows();
+    var adjustedMap = {};
+    adjustedRows.forEach(function (r) {
+      adjustedMap[String(r.employee || "")] = r;
+    });
     Object.keys(state.adjustments || {}).sort().forEach(function (emp) {
       var a = state.adjustments[emp] || {};
+      var ar = adjustedMap[emp] || {};
       lines.push([
         String(emp || "").trim(),
         whole(a.allowance),
         whole(a.advance_deduction),
-        whole(a.other_deduction)
+        whole(a.other_deduction),
+        whole(ar.advance_balance || a.advance_balance || 0)
       ].join("::"));
     });
     args.employee_adjustments = lines.join(";;");
