@@ -979,7 +979,7 @@ adjustments = parse_adjustments(args.get("employee_adjustments"))
 if not company and not dry_run:
     frappe.throw("Company is required.")
 if not expense_account and not dry_run:
-    frappe.throw("Expense Account is required.")
+    frappe.throw("Salary Account is required.")
 if not payable_account and not dry_run:
     frappe.throw("Payable Account is required.")
 
@@ -2734,7 +2734,7 @@ WEB_PAGE_HTML = """
     <div class="pp-jv-grid">
       <label>Company <select id="pp-jv-company"><option value="">Select Company</option></select></label>
       <label>Posting Date <input type="date" id="pp-jv-posting-date" /></label>
-      <label>Expense Account <select id="pp-jv-expense-account"><option value="">Select Expense Account</option></select></label>
+      <label>Salary Account <select id="pp-jv-expense-account"><option value="">Select Salary Account</option></select></label>
       <label>Allowance Account <select id="pp-jv-allowance-account"><option value="">Select Allowance Account</option></select></label>
       <label>Payable Account <select id="pp-jv-payable-account"><option value="">Select Payable Account</option></select></label>
       <label>Advance Account <select id="pp-jv-advance-account"><option value="">Select Advance Account</option></select></label>
@@ -4633,7 +4633,7 @@ WEB_PAGE_HTML = """
       setCreatedListHtml("");
       return;
     }
-    if (tab === "salary_creation" || tab === "jv_created") {
+    if (tab === "salary_creation") {
       var jvRows = uniqueJournalEntries("jv_entry_no");
       if (!jvRows.length) {
         setCreatedListHtml("<div style='margin-top:8px;color:#64748b;'>No booking JV created in selected filter.</div>");
@@ -5710,7 +5710,7 @@ WEB_PAGE_HTML = """
   function loadAccountsForCompany() {
     var company = el("pp-jv-company").value || "";
     if (!company) {
-      setOptions(el("pp-jv-expense-account"), [], "name", "name", "Select Expense Account");
+      setOptions(el("pp-jv-expense-account"), [], "name", "name", "Select Salary Account");
       setOptions(el("pp-jv-allowance-account"), [], "name", "name", "Select Allowance Account");
       setOptions(el("pp-jv-payable-account"), [], "name", "name", "Select Payable Account");
       setOptions(el("pp-jv-advance-account"), [], "name", "name", "Select Advance Account");
@@ -5719,8 +5719,8 @@ WEB_PAGE_HTML = """
     }
     callGetList("Account", ["name"], { company: company, is_group: 0, root_type: "Expense" }).then(function (rows) {
       rows = rows || [];
-      setOptions(el("pp-jv-expense-account"), rows, "name", "name", "Select Expense Account");
-      selectPreferred(el("pp-jv-expense-account"), rows, ["allowance", "salary", "wages", "expense"]);
+      setOptions(el("pp-jv-expense-account"), rows, "name", "name", "Select Salary Account");
+      selectPreferred(el("pp-jv-expense-account"), rows, ["salary", "wages", "expense", "allowance"]);
       setOptions(el("pp-jv-allowance-account"), rows, "name", "name", "Select Allowance Account");
       selectPreferred(el("pp-jv-allowance-account"), rows, ["allowance", "salary", "expense"]);
     }).catch(function (e) { console.error(e); });
