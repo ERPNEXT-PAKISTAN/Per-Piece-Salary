@@ -2306,11 +2306,15 @@ function applyParentEmployeeToRows(frm) {
     });
 }
 
-function populateRowsFromGroup(frm) {
+function populateRowsFromGroup(frm, forceReload = false) {
     const items = frm.__per_piece_group_items || [];
-    const rows = frm.doc[CHILD_TABLE_FIELD] || [];
+    let rows = frm.doc[CHILD_TABLE_FIELD] || [];
     if (!items.length) return Promise.resolve();
 
+    if (forceReload && rows.length) {
+        frm.clear_table(CHILD_TABLE_FIELD);
+        rows = frm.doc[CHILD_TABLE_FIELD] || [];
+    }
     const hasMeaningfulRows = rows.some((row) => !isBlankChildRow(row));
     if (hasMeaningfulRows) return Promise.resolve();
 
@@ -2517,7 +2521,7 @@ frappe.ui.form.on("Per Piece Salary", {
                 }, () => {});
         }
         loadItemsForGroup(frm).then(() => {
-            populateRowsFromGroup(frm);
+            populateRowsFromGroup(frm, true);
             frm.refresh_field(CHILD_TABLE_FIELD);
             return syncRowsToItemGroup(frm);
         });
@@ -2526,7 +2530,7 @@ frappe.ui.form.on("Per Piece Salary", {
     item(frm) {
         setProductQuery(frm);
         loadItemsForGroup(frm).then(() => {
-            populateRowsFromGroup(frm);
+            populateRowsFromGroup(frm, true);
             frm.refresh_field(CHILD_TABLE_FIELD);
             return syncRowsToItemGroup(frm);
         });
@@ -2535,7 +2539,7 @@ frappe.ui.form.on("Per Piece Salary", {
     load_by_item(frm) {
         setProductQuery(frm);
         loadItemsForGroup(frm).then(() => {
-            populateRowsFromGroup(frm);
+            populateRowsFromGroup(frm, true);
             frm.refresh_field(CHILD_TABLE_FIELD);
             return syncRowsToItemGroup(frm);
         });
@@ -4549,9 +4553,12 @@ WEB_PAGE_HTML = """
     });
   }
 
-  function populateEntryRowsFromItemGroup() {
+  function populateEntryRowsFromItemGroup(forceReload) {
     var groupItems = getCurrentGroupItems();
     if (!groupItems.length) return;
+    if (forceReload) {
+      state.entryRows = [];
+    }
     ensureEntryRows();
     var hasMeaningfulRows = (state.entryRows || []).some(function (row) {
       return !entryRowIsBlank(row);
@@ -4623,7 +4630,9 @@ WEB_PAGE_HTML = """
     var employeeNameMap = state.entryMeta.employeeNameMap || {};
     var itemOptions = [];
     (state.entryMeta.masterProcessRows || []).forEach(function (r) {
-      if (String((r && r.item_group) || "").trim() !== String(state.entryMeta.item_group || "").trim()) return;
+      var rowGroup = String((r && r.item_group) || "").trim();
+      var selectedGroup = String(state.entryMeta.item_group || "").trim();
+      if (selectedGroup && rowGroup !== selectedGroup) return;
       var itemName = String((r && r.item) || "").trim();
       if (itemName) itemOptions.push(itemName);
     });
@@ -4815,7 +4824,7 @@ WEB_PAGE_HTML = """
         });
         if (!itemOk) state.entryMeta.item = "";
         rebuildEntryMetaLookups();
-        populateEntryRowsFromItemGroup();
+        populateEntryRowsFromItemGroup(true);
         syncEntryRowsToItemGroup();
         renderDataEntryTab();
       });
@@ -4825,7 +4834,7 @@ WEB_PAGE_HTML = """
       loadByItemInput.addEventListener("change", function () {
         state.entryMeta.load_by_item = !!loadByItemInput.checked;
         rebuildEntryMetaLookups();
-        populateEntryRowsFromItemGroup();
+        populateEntryRowsFromItemGroup(true);
         syncEntryRowsToItemGroup();
         renderDataEntryTab();
       });
@@ -4835,7 +4844,7 @@ WEB_PAGE_HTML = """
       itemInput.addEventListener("change", function () {
         state.entryMeta.item = itemInput.value || "";
         rebuildEntryMetaLookups();
-        populateEntryRowsFromItemGroup();
+        populateEntryRowsFromItemGroup(true);
         syncEntryRowsToItemGroup();
         renderDataEntryTab();
       });
