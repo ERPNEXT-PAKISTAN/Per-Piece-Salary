@@ -708,6 +708,8 @@ from_date = normalize_date(args.get("from_date"))
 to_date = normalize_date(args.get("to_date"))
 po_number = normalize_param(args.get("po_number"))
 item_group = normalize_param(args.get("item_group"))
+item = normalize_param(args.get("item"))
+selected_items = normalize_param(args.get("selected_items"))
 employee = normalize_param(args.get("employee"))
 entry_name = normalize_param(args.get("entry_name"))
 rows = parse_rows(args.get("rows"))
@@ -744,6 +746,10 @@ doc.from_date = from_date
 doc.to_date = to_date
 doc.po_number = po_number
 doc.item_group = item_group
+if frappe.get_meta("Per Piece Salary").has_field("item"):
+    doc.item = item
+if frappe.get_meta("Per Piece Salary").has_field("selected_items"):
+    doc.selected_items = selected_items
 if frappe.get_meta("Per Piece Salary").has_field("employee"):
     doc.employee = employee
 doc.set("perpiece", [])
@@ -2102,10 +2108,27 @@ function validateDateRange(frm) {
 }
 
 function setProductQuery(frm) {
+    const getSelectedItems = () => {
+        const raw = (frm.doc.selected_items || "").trim();
+        const parts = raw
+            .split(/[\n,;]+/)
+            .map((v) => (v || "").trim())
+            .filter(Boolean);
+        const map = {};
+        parts.forEach((v) => { map[v] = true; });
+        if (frm.doc.item) map[(frm.doc.item || "").trim()] = true;
+        return Object.keys(map);
+    };
     const getQuery = () => {
         const filters = { disabled: 0 };
         if (frm.doc.item_group) {
             filters.item_group = frm.doc.item_group;
+        }
+        const selected = getSelectedItems();
+        if (selected.length === 1) {
+            filters.name = selected[0];
+        } else if (selected.length > 1) {
+            filters.name = ["in", selected];
         }
         return { filters };
     };
@@ -2124,40 +2147,85 @@ function setProductQuery(frm) {
 
 function loadItemsForGroup(frm) {
     const itemGroup = (frm.doc.item_group || "").trim();
-    const selectedItem = (frm.doc.item || "").trim();
     if (!itemGroup) {
         frm.__per_piece_group_items = [];
         return Promise.resolve([]);
     }
 
-    if (selectedItem) {
-        return Promise.resolve(frappe.call({
-                method: "per_piece_payroll.api.get_item_process_rows",
-                args: { item: selectedItem },
-            }))
-            .then((response) => {
-                const rows = (response && response.message) || [];
-                frm.__per_piece_group_items = rows.filter((row) => (row.item_group || "") === itemGroup);
-                return frm.__per_piece_group_items;
-            })
-            .catch(() => {
-                frm.__per_piece_group_items = [];
-                return [];
-            });
+    const selectedMap = {};
+    ((frm.doc.selected_items || "").split(/[\n,;]+/) || [])
+        .map((v) => (v || "").trim())
+        .filter(Boolean)
+        .forEach((v) => { selectedMap[v] = true; });
+    if (frm.doc.item) {
+        selectedMap[(frm.doc.item || "").trim()] = true;
     }
+    const selectedItems = Object.keys(selectedMap);
 
     return Promise.resolve(frappe.call({
             method: "per_piece_payroll.api.get_item_process_rows",
             args: { item_group: itemGroup },
         }))
         .then((response) => {
-            frm.__per_piece_group_items = (response && response.message) || [];
+            const rows = (response && response.message) || [];
+            frm.__per_piece_group_items = selectedItems.length
+                ? rows.filter((row) => selectedMap[(row.item || "").trim()])
+                : rows;
             return frm.__per_piece_group_items;
         })
         .catch(() => {
             frm.__per_piece_group_items = [];
             return [];
         });
+}
+
+function openItemPicker(frm) {
+    const itemGroup = (frm.doc.item_group || "").trim();
+    if (!itemGroup) {
+        frappe.msgprint(__("Select Item Group first."));
+        return;
+    }
+    frappe.call({
+        method: "per_piece_payroll.api.get_item_process_rows",
+        args: { item_group: itemGroup },
+    }).then((response) => {
+        const rows = (response && response.message) || [];
+        const items = [...new Set(rows.map((row) => (row.item || "").trim()).filter(Boolean))].sort();
+        const pre = {};
+        ((frm.doc.selected_items || "").split(/[\n,;]+/) || []).map((v) => (v || "").trim()).filter(Boolean).forEach((v) => { pre[v] = true; });
+        if (frm.doc.item) pre[(frm.doc.item || "").trim()] = true;
+        const d = new frappe.ui.Dialog({
+            title: __("Select Items"),
+            fields: [{ fieldname: "items_html", fieldtype: "HTML" }],
+            primary_action_label: __("Apply"),
+            primary_action() {
+                const root = d.fields_dict.items_html.$wrapper && d.fields_dict.items_html.$wrapper.get(0);
+                const selected = [];
+                if (root) {
+                    root.querySelectorAll("input[type='checkbox'][data-item]").forEach((inp) => {
+                        if (inp.checked) selected.push(inp.getAttribute("data-item") || "");
+                    });
+                }
+                const clean = selected.map((v) => (v || "").trim()).filter(Boolean);
+                frm.set_value("selected_items", clean.join(", "));
+                if (clean.length === 1) {
+                    frm.set_value("item", clean[0]);
+                } else if (frm.doc.item && clean.indexOf((frm.doc.item || "").trim()) < 0) {
+                    frm.set_value("item", "");
+                }
+                d.hide();
+                frm.trigger("selected_items");
+            },
+        });
+        let html = "<div style='max-height:320px;overflow:auto;padding:4px 2px;'>";
+        items.forEach((it) => {
+            const checked = pre[it] ? " checked" : "";
+            html += "<label style='display:block;margin:4px 0;'><input type='checkbox' data-item='" + frappe.utils.escape_html(it) + "'" + checked + "> " + frappe.utils.escape_html(it) + "</label>";
+        });
+        html += "</div>";
+        d.fields_dict.items_html.$wrapper.html(html);
+        d.show();
+    });
 }
 
 function loadProcessRowsForItem(frm, itemName) {
@@ -2440,6 +2508,9 @@ frappe.ui.form.on("Per Piece Salary", {
             window.open(REPORT_ROUTE, "_blank");
         });
         btn.addClass("btn-primary");
+        frm.add_custom_button(__("Pick Items"), () => {
+            openItemPicker(frm);
+        });
     },
 
     validate(frm) {
@@ -2471,6 +2542,9 @@ frappe.ui.form.on("Per Piece Salary", {
 
     item_group(frm) {
         setProductQuery(frm);
+        if (frm.doc.selected_items) {
+            frm.set_value("selected_items", "");
+        }
         if (frm.doc.item) {
             frappe.db.get_value("Item", frm.doc.item, "item_group")
                 .then((response) => {
@@ -2488,6 +2562,24 @@ frappe.ui.form.on("Per Piece Salary", {
     },
 
     item(frm) {
+        setProductQuery(frm);
+        if (frm.doc.item) {
+            const current = ((frm.doc.selected_items || "").split(/[\n,;]+/) || [])
+                .map((v) => (v || "").trim())
+                .filter(Boolean);
+            if (current.indexOf((frm.doc.item || "").trim()) < 0) {
+                current.push((frm.doc.item || "").trim());
+                frm.set_value("selected_items", current.join(", "));
+            }
+        }
+        loadItemsForGroup(frm).then(() => {
+            populateRowsFromGroup(frm);
+            frm.refresh_field(CHILD_TABLE_FIELD);
+            return syncRowsToItemGroup(frm);
+        });
+    },
+
+    selected_items(frm) {
         setProductQuery(frm);
         loadItemsForGroup(frm).then(() => {
             populateRowsFromGroup(frm);
@@ -3281,6 +3373,12 @@ WEB_PAGE_HTML = """
     var productMetaMap = {};
     var productProcessMap = {};
     var currentItemGroup = String(state.entryMeta.item_group || "").trim();
+    var selectedMap = {};
+    (state.entryMeta.selected_items || []).forEach(function (v) {
+      var key = String(v || "").trim();
+      if (key) selectedMap[key] = true;
+    });
+    var hasSelected = Object.keys(selectedMap).length > 0;
 
     (state.entryMeta.masterEmployeeOptions || []).forEach(function (opt) {
       if (opt && opt.value) {
@@ -3329,7 +3427,7 @@ WEB_PAGE_HTML = """
           rate: rate,
         };
       }
-      if (!currentItemGroup || itemGroup === currentItemGroup) {
+      if ((!currentItemGroup || itemGroup === currentItemGroup) && (!hasSelected || selectedMap[itemName])) {
         productSet[itemName] = true;
       }
       if (processType) processSet[processType] = true;
@@ -3362,7 +3460,7 @@ WEB_PAGE_HTML = """
         if (name1) employeeNameMap[emp] = name1;
       }
       if (itemGroup) itemGroupSet[itemGroup] = true;
-      if (product && (!currentItemGroup || !itemGroup || itemGroup === currentItemGroup)) productSet[product] = true;
+      if (product && (!currentItemGroup || !itemGroup || itemGroup === currentItemGroup) && (!hasSelected || selectedMap[product])) productSet[product] = true;
       if (processType) processSet[processType] = true;
       if (processSize) processSizeSet[processSize] = true;
       if (product) {
@@ -4376,9 +4474,18 @@ WEB_PAGE_HTML = """
 
   function getCurrentGroupItems() {
     var currentItemGroup = String(state.entryMeta.item_group || "").trim();
+    var selectedMap = {};
+    (state.entryMeta.selected_items || []).forEach(function (v) {
+      var key = String(v || "").trim();
+      if (key) selectedMap[key] = true;
+    });
     return (state.entryMeta.masterProcessRows || []).filter(function (item) {
       if (!currentItemGroup) return false;
-      return String((item && item.item_group) || "").trim() === currentItemGroup;
+      var itemName = String((item && item.item) || "").trim();
+      if (!itemName) return false;
+      if (String((item && item.item_group) || "").trim() !== currentItemGroup) return false;
+      if (Object.keys(selectedMap).length && !selectedMap[itemName]) return false;
+      return true;
     });
   }
 
@@ -4551,12 +4658,25 @@ WEB_PAGE_HTML = """
     if (state.entryMeta.po_number === undefined) state.entryMeta.po_number = "";
     if (state.entryMeta.item_group === undefined) state.entryMeta.item_group = el("pp-item-group") ? (el("pp-item-group").value || "") : "";
     if (state.entryMeta.employee === undefined) state.entryMeta.employee = el("pp-employee") ? (el("pp-employee").value || "") : "";
+    if (!Array.isArray(state.entryMeta.selected_items)) state.entryMeta.selected_items = [];
     if (state.entryMeta.edit_name === undefined) state.entryMeta.edit_name = "";
     var employeeOptions = state.entryMeta.employeeOptions || [];
     var itemGroupOptions = state.entryMeta.itemGroupOptions || [];
     var productOptions = state.entryMeta.productOptions || [];
     var processOptions = state.entryMeta.processOptions || [];
     var employeeNameMap = state.entryMeta.employeeNameMap || {};
+    var itemOptions = [];
+    (state.entryMeta.masterProcessRows || []).forEach(function (r) {
+      if (String((r && r.item_group) || "").trim() !== String(state.entryMeta.item_group || "").trim()) return;
+      var itemName = String((r && r.item) || "").trim();
+      if (itemName) itemOptions.push(itemName);
+    });
+    var itemMap = {};
+    itemOptions.forEach(function (name) {
+      var key = String(name || "").trim();
+      if (key) itemMap[key] = true;
+    });
+    itemOptions = Object.keys(itemMap).sort().map(function (name) { return { value: name, label: name }; });
     var editing = !!(state.entryMeta.edit_name || "");
     syncEntryEmployeeToRows();
     syncEntryRowsToItemGroup();
@@ -4633,6 +4753,23 @@ WEB_PAGE_HTML = """
       return parts.join("");
     }
 
+    function selectedItemsSelectHtml(selectedValues) {
+      var map = {};
+      (selectedValues || []).forEach(function (v) {
+        var key = String(v || "").trim();
+        if (key) map[key] = true;
+      });
+      var parts = [];
+      parts.push("<select id='pp-entry-selected-items' multiple size='5' style='min-height:110px;'>");
+      (itemOptions || []).forEach(function (opt) {
+        var val = String((opt && opt.value) || "");
+        var selected = map[val] ? " selected" : "";
+        parts.push("<option value='" + esc(val) + "'" + selected + ">" + esc((opt && opt.label) || val) + "</option>");
+      });
+      parts.push("</select>");
+      return parts.join("");
+    }
+
     var html = "<div class='pp-entry-card'>"
       + "<strong>Data Enter (" + (editing ? "Edit Existing Per Piece Salary" : "Create Per Piece Salary") + ")</strong>"
       + "<div style='margin-top:6px;color:#475569;font-size:12px;'>PO Number is mandatory. Use Edit controls to fix draft entry mistakes.</div>"
@@ -4642,6 +4779,7 @@ WEB_PAGE_HTML = """
       + "<label>To Date <input type='date' id='pp-entry-to-date' value='" + esc(state.entryMeta.to_date || "") + "'></label>"
       + "<label>Employee " + employeeSelectHtml(state.entryMeta.employee || "") + "</label>"
       + "<label>Item Group " + itemGroupSelectHtml(state.entryMeta.item_group || "") + "</label>"
+      + "<label>Selected Items " + selectedItemsSelectHtml(state.entryMeta.selected_items || []) + "</label>"
       + "<label>PO Number * <input type='text' id='pp-entry-po-number' required placeholder='Required' value='" + esc(state.entryMeta.po_number || "") + "'></label>"
       + "</div>"
       + "<div class='pp-entry-actions'>"
@@ -4712,6 +4850,22 @@ WEB_PAGE_HTML = """
     if (itemGroupInput) {
       itemGroupInput.addEventListener("change", function () {
         state.entryMeta.item_group = itemGroupInput.value || "";
+        state.entryMeta.selected_items = [];
+        rebuildEntryMetaLookups();
+        populateEntryRowsFromItemGroup();
+        syncEntryRowsToItemGroup();
+        renderDataEntryTab();
+      });
+    }
+    var selectedItemsInput = el("pp-entry-selected-items");
+    if (selectedItemsInput) {
+      selectedItemsInput.addEventListener("change", function () {
+        var selected = [];
+        Array.prototype.slice.call(selectedItemsInput.selectedOptions || []).forEach(function (opt) {
+          var value = String((opt && opt.value) || "").trim();
+          if (value) selected.push(value);
+        });
+        state.entryMeta.selected_items = selected;
         rebuildEntryMetaLookups();
         populateEntryRowsFromItemGroup();
         syncEntryRowsToItemGroup();
@@ -4730,6 +4884,7 @@ WEB_PAGE_HTML = """
       state.entryMeta.to_date = el("pp-to-date").value || "";
       state.entryMeta.employee = el("pp-employee") ? (el("pp-employee").value || "") : "";
       state.entryMeta.item_group = el("pp-item-group") ? (el("pp-item-group").value || "") : "";
+      state.entryMeta.selected_items = [];
       state.entryMeta.po_number = "";
       rebuildEntryMetaLookups();
       state.entryRows = [];
@@ -4810,6 +4965,13 @@ WEB_PAGE_HTML = """
       state.entryMeta.to_date = doc.to_date || "";
       state.entryMeta.employee = doc.employee || "";
       state.entryMeta.item_group = doc.item_group || "";
+      state.entryMeta.selected_items = String(doc.selected_items || "")
+        .split(/[\\n,;]+/)
+        .map(function (v) { return String(v || "").trim(); })
+        .filter(function (v) { return !!v; });
+      if ((!state.entryMeta.selected_items || !state.entryMeta.selected_items.length) && doc.item) {
+        state.entryMeta.selected_items = [String(doc.item)];
+      }
       state.entryMeta.po_number = doc.po_number || "";
       state.entryRows = (doc.perpiece || []).map(function (r) {
         return {
@@ -4837,6 +4999,8 @@ WEB_PAGE_HTML = """
     var toDate = (el("pp-entry-to-date").value || state.entryMeta.to_date || "");
     var employee = (el("pp-entry-employee") && el("pp-entry-employee").value) || state.entryMeta.employee || "";
     var itemGroup = (el("pp-entry-item-group") && el("pp-entry-item-group").value) || state.entryMeta.item_group || "";
+    var selectedItems = state.entryMeta.selected_items || [];
+    var selectedItemSingle = selectedItems.length === 1 ? selectedItems[0] : "";
     var po = (el("pp-entry-po-number").value || state.entryMeta.po_number || "");
     var editName = state.entryMeta.edit_name || "";
     if (!po) {
@@ -4869,6 +5033,8 @@ WEB_PAGE_HTML = """
       to_date: toDate,
       employee: employee,
       item_group: itemGroup,
+      item: selectedItemSingle,
+      selected_items: (selectedItems || []).join(", "),
       po_number: po,
       rows: lines.join(";;")
     }).then(function (msg) {
@@ -6105,11 +6271,23 @@ def apply() -> list[str]:
 		no_copy=0,
 	)
 	_ensure_custom_field(
+		"selected_items",
+		"Selected Items",
+		"Small Text",
+		None,
+		"item",
+		results,
+		doctype="Per Piece Salary",
+		read_only=0,
+		in_list_view=0,
+		no_copy=0,
+	)
+	_ensure_custom_field(
 		"pp_filter_col_break",
 		"Filter Column",
 		"Column Break",
 		None,
-		"item",
+		"selected_items",
 		results,
 		doctype="Per Piece Salary",
 		read_only=0,
