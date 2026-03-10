@@ -23,6 +23,12 @@ def to_float(value):
     except Exception:
         return 0.0
 
+def to_int(value, default_value):
+    try:
+        return int(value or default_value)
+    except Exception:
+        return int(default_value)
+
 def cleanup_canceled_jv_links():
     linked_rows = frappe.get_all(
         "Per Piece",
@@ -411,7 +417,22 @@ employee = normalize_param(args.get("employee"))
 product = normalize_param(args.get("product"))
 process_type = normalize_param(args.get("process_type"))
 item_group = normalize_param(args.get("item_group"))
+max_rows = to_int(args.get("max_rows"), 2000)
+if max_rows < 100:
+    max_rows = 100
+if max_rows > 20000:
+    max_rows = 20000
+max_days = to_int(args.get("max_days"), 0)
+if max_days < 0:
+    max_days = 0
+if max_days > 3650:
+    max_days = 3650
 get_options = str(args.get("get_options") or "").lower() in ("1", "true", "yes")
+
+if to_date and max_days > 0:
+    min_from = frappe.utils.add_days(to_date, -max_days + 1)
+    if (not from_date) or (from_date < min_from):
+        from_date = min_from
 
 all_advance_result = get_all_employee_advance_rows(to_date)
 all_advance_rows = all_advance_result.get("rows") or []
@@ -436,6 +457,7 @@ parents = frappe.get_all(
     filters=parent_filters,
     fields=["name", "from_date", "to_date", "po_number", "item_group", "total_qty", "total_amount"],
     order_by="from_date desc, creation desc",
+    limit_page_length=max(max_rows * 2, 1000),
 )
 
 if not parents:
@@ -535,6 +557,7 @@ else:
                 "payment_line_remark",
             ],
             order_by="parent asc, idx asc",
+            limit_page_length=max_rows,
         )
 
         parent_map = {p["name"]: p for p in parents}
@@ -636,6 +659,9 @@ else:
             "advance_balances": advance_balances,
             "advance_rows": all_advance_rows,
             "advance_months": all_advance_months,
+            "max_rows": max_rows,
+            "max_days": max_days,
+            "truncated": 1 if len(children) >= max_rows else 0,
         }
 """
 
@@ -937,6 +963,7 @@ if from_date > to_date:
 company = normalize_param(args.get("company"))
 posting_date = normalize_date(args.get("posting_date")) or to_date
 expense_account = normalize_param(args.get("expense_account"))
+allowance_account = normalize_param(args.get("allowance_account"))
 payable_account = normalize_param(args.get("payable_account"))
 advance_account = normalize_param(args.get("advance_account"))
 deduction_account = normalize_param(args.get("deduction_account"))
@@ -1122,6 +1149,8 @@ if dry_run:
         "employee_summary": preview_items,
     }
 else:
+    if total_allowance > 0 and not allowance_account:
+        allowance_account = expense_account
     if total_advance_deduction > 0 and not advance_account:
         frappe.throw("Advance Account is required when Advance Deduction is entered.")
     if total_other_deduction > 0 and not deduction_account:
@@ -1148,14 +1177,25 @@ else:
     remarks.append("Gross " + str(round(total_gross_amount, 2)) + ", Net " + str(round(total_net_payable, 2)))
     je.user_remark = " | ".join(remarks)
 
-    je.append(
-        "accounts",
-        {
-            "account": expense_account,
-            "debit_in_account_currency": total_gross_amount,
-            "user_remark": "Gross Salary (Base + Allowance)",
-        },
-    )
+    if total_base_amount > 0:
+        je.append(
+            "accounts",
+            {
+                "account": expense_account,
+                "debit_in_account_currency": total_base_amount,
+                "user_remark": "Base Salary",
+            },
+        )
+
+    if total_allowance > 0:
+        je.append(
+            "accounts",
+            {
+                "account": allowance_account or expense_account,
+                "debit_in_account_currency": total_allowance,
+                "user_remark": "Allowance",
+            },
+        )
 
     if employee_wise:
         for emp in sorted(employee_totals.keys()):
@@ -2655,6 +2695,15 @@ WEB_PAGE_HTML = """
     <label>PO Number <select id="pp-po-number"><option value="">All</option></select></label>
     <label>Entry No <select id="pp-entry-no"><option value="">All</option></select></label>
     <label>Search <input type="text" id="pp-search-any" placeholder="Type any word..." /></label>
+    <label>Max Rows
+      <select id="pp-max-rows">
+        <option value="1000">1,000</option>
+        <option value="2000" selected>2,000</option>
+        <option value="5000">5,000</option>
+        <option value="10000">10,000</option>
+      </select>
+    </label>
+    <label>Max Days (0=All) <input type="number" id="pp-max-days" min="0" step="1" value="0" /></label>
     <button id="pp-load-btn" class="btn btn-primary" type="button">Load Report</button>
   </div>
 
@@ -2677,6 +2726,7 @@ WEB_PAGE_HTML = """
   <div id="pp-msg" class="pp-msg"></div>
   <div id="pp-table-wrap" class="pp-table-wrap"></div>
   <div id="pp-totals" class="pp-totals"></div>
+  <div id="pp-created-list-wrap" class="pp-entry-list"></div>
 
   <div class="pp-jv-card" id="pp-salary-jv-card">
     <h4>Salary Creation Tab (Book Salary To Payable)</h4>
@@ -2684,6 +2734,7 @@ WEB_PAGE_HTML = """
       <label>Company <select id="pp-jv-company"><option value="">Select Company</option></select></label>
       <label>Posting Date <input type="date" id="pp-jv-posting-date" /></label>
       <label>Expense Account <select id="pp-jv-expense-account"><option value="">Select Expense Account</option></select></label>
+      <label>Allowance Account <select id="pp-jv-allowance-account"><option value="">Select Allowance Account</option></select></label>
       <label>Payable Account <select id="pp-jv-payable-account"><option value="">Select Payable Account</option></select></label>
       <label>Advance Account <select id="pp-jv-advance-account"><option value="">Select Advance Account</option></select></label>
       <label>Deduction Account <select id="pp-jv-deduction-account"><option value="">Select Deduction Account</option></select></label>
@@ -3081,7 +3132,9 @@ WEB_PAGE_HTML = """
       product: el("pp-product").value || "",
       process_type: el("pp-process-type").value || "",
       po_number: el("pp-po-number") ? (el("pp-po-number").value || "") : "",
-      entry_no: el("pp-entry-no") ? (el("pp-entry-no").value || "") : ""
+      entry_no: el("pp-entry-no") ? (el("pp-entry-no").value || "") : "",
+      max_rows: el("pp-max-rows") ? (el("pp-max-rows").value || "2000") : "2000",
+      max_days: el("pp-max-days") ? (el("pp-max-days").value || "0") : "0"
     };
   }
 
@@ -4421,6 +4474,136 @@ WEB_PAGE_HTML = """
     if (modal) modal.style.display = "none";
   }
 
+  function setCreatedListHtml(html) {
+    var wrap = el("pp-created-list-wrap");
+    if (!wrap) return;
+    wrap.innerHTML = html || "";
+    wrap.querySelectorAll(".pp-view-jv").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var jv = btn.getAttribute("data-jv") || "";
+        if (!jv) return;
+        showJournalEntrySummary(jv);
+      });
+    });
+  }
+
+  function uniqueJournalEntries(fieldname) {
+    var map = {};
+    (state.rows || []).forEach(function (r) {
+      var jv = String((r && r[fieldname]) || "").trim();
+      if (!jv) return;
+      if (!map[jv]) map[jv] = { name: jv, amount: 0, rows: 0 };
+      map[jv].amount += num(fieldname === "payment_jv_no" ? r.paid_amount : r.booked_amount);
+      map[jv].rows += 1;
+    });
+    return Object.keys(map).sort().map(function (k) { return map[k]; });
+  }
+
+  function showJournalEntrySummary(jvName) {
+    var modal = el("pp-summary-modal");
+    var subtitle = el("pp-summary-subtitle");
+    var content = el("pp-summary-content");
+    if (!modal || !subtitle || !content || !jvName) return;
+    subtitle.textContent = "Journal Entry: " + jvName;
+    content.innerHTML = "<div style='color:#334155;'>Loading JV detail...</div>";
+    modal.style.display = "flex";
+    callApi("frappe.client.get", { doctype: "Journal Entry", name: jvName }).then(function (doc) {
+      if (!doc) {
+        content.innerHTML = "<div style='color:#b91c1c;'>JV not found.</div>";
+        return;
+      }
+      var totalDr = 0;
+      var totalCr = 0;
+      var html = "<div class='pp-summary-chips'>"
+        + "<span class='pp-summary-chip'>Voucher: " + esc(doc.voucher_type || "Journal Entry") + "</span>"
+        + "<span class='pp-summary-chip'>Posting Date: " + esc(doc.posting_date || "-") + "</span>"
+        + "<span class='pp-summary-chip'>Company: " + esc(doc.company || "-") + "</span>"
+        + "<span class='pp-summary-chip'>Docstatus: " + esc(String(doc.docstatus || 0)) + "</span>"
+        + "</div>";
+      html += "<table class='pp-table'><thead><tr><th>Account</th><th>Party</th><th>Debit</th><th>Credit</th><th>Remark</th></tr></thead><tbody>";
+      (doc.accounts || []).forEach(function (a) {
+        var dr = num(a.debit_in_account_currency || a.debit || 0);
+        var cr = num(a.credit_in_account_currency || a.credit || 0);
+        totalDr += dr;
+        totalCr += cr;
+        var party = "";
+        if (a.party_type || a.party) party = String(a.party_type || "") + (a.party ? (": " + a.party) : "");
+        html += "<tr>"
+          + "<td>" + esc(a.account || "") + "</td>"
+          + "<td>" + esc(party) + "</td>"
+          + "<td class='num pp-amt-col'>" + esc(fmt(dr)) + "</td>"
+          + "<td class='num pp-amt-col'>" + esc(fmt(cr)) + "</td>"
+          + "<td>" + esc(a.user_remark || "") + "</td>"
+          + "</tr>";
+      });
+      html += "<tr class='pp-year-total'><td>Total</td><td></td><td class='num pp-amt-col'>" + esc(fmt(totalDr)) + "</td><td class='num pp-amt-col'>" + esc(fmt(totalCr)) + "</td><td></td></tr>";
+      html += "</tbody></table>";
+      content.innerHTML = html;
+    }).catch(function (e) {
+      content.innerHTML = "<div style='color:#b91c1c;'>Unable to load JV detail: " + esc(prettyError(errText(e))) + "</div>";
+    });
+  }
+
+  function renderJournalEntryInline(resultEl, jvName) {
+    if (!resultEl || !jvName) return;
+    callApi("frappe.client.get", { doctype: "Journal Entry", name: jvName }).then(function (doc) {
+      if (!doc) return;
+      var totalDr = 0;
+      var totalCr = 0;
+      var html = "<br><br><strong>Posted JV Quick Preview</strong>";
+      html += "<table class='pp-table' style='margin-top:6px;'><thead><tr><th>Account</th><th>Party</th><th>Debit</th><th>Credit</th></tr></thead><tbody>";
+      (doc.accounts || []).forEach(function (a) {
+        var dr = num(a.debit_in_account_currency || a.debit || 0);
+        var cr = num(a.credit_in_account_currency || a.credit || 0);
+        totalDr += dr;
+        totalCr += cr;
+        var party = "";
+        if (a.party_type || a.party) party = String(a.party_type || "") + (a.party ? (": " + a.party) : "");
+        html += "<tr><td>" + esc(a.account || "") + "</td><td>" + esc(party) + "</td><td class='num pp-amt-col'>" + esc(fmt(dr)) + "</td><td class='num pp-amt-col'>" + esc(fmt(cr)) + "</td></tr>";
+      });
+      html += "<tr class='pp-year-total'><td>Total</td><td></td><td class='num pp-amt-col'>" + esc(fmt(totalDr)) + "</td><td class='num pp-amt-col'>" + esc(fmt(totalCr)) + "</td></tr></tbody></table>";
+      resultEl.innerHTML += html;
+    }).catch(function (_e) {});
+  }
+
+  function renderCreatedEntriesPanel(tab) {
+    if (tab === "data_entry") {
+      setCreatedListHtml("");
+      return;
+    }
+    if (tab === "salary_creation" || tab === "jv_created") {
+      var jvRows = uniqueJournalEntries("jv_entry_no");
+      if (!jvRows.length) {
+        setCreatedListHtml("<div style='margin-top:8px;color:#64748b;'>No booking JV created in selected filter.</div>");
+        return;
+      }
+      var html = "<div style='margin-top:10px;'><strong>Created Booking JV Entries</strong></div>"
+        + "<table class='pp-table' style='margin-top:6px;'><thead><tr><th>JV Entry</th><th>Booked Amount</th><th>Rows</th><th>View</th><th>Open</th></tr></thead><tbody>";
+      jvRows.forEach(function (r) {
+        html += "<tr><td>" + esc(r.name) + "</td><td class='num pp-amt-col'>" + esc(fmt(r.amount)) + "</td><td class='num'>" + esc(r.rows) + "</td><td><button type='button' class='btn btn-xs btn-default pp-view-jv' data-jv='" + esc(r.name) + "'>View Debit/Credit</button></td><td><a target='_blank' href='/app/journal-entry/" + encodeURIComponent(r.name) + "'>Open</a></td></tr>";
+      });
+      html += "</tbody></table>";
+      setCreatedListHtml(html);
+      return;
+    }
+    if (tab === "payment_manage") {
+      var payRows = uniqueJournalEntries("payment_jv_no");
+      if (!payRows.length) {
+        setCreatedListHtml("<div style='margin-top:8px;color:#64748b;'>No payment JV created in selected filter.</div>");
+        return;
+      }
+      var phtml = "<div style='margin-top:10px;'><strong>Created Payment JV Entries</strong></div>"
+        + "<table class='pp-table' style='margin-top:6px;'><thead><tr><th>Payment JV</th><th>Paid Amount</th><th>Rows</th><th>View</th><th>Open</th></tr></thead><tbody>";
+      payRows.forEach(function (r) {
+        phtml += "<tr><td>" + esc(r.name) + "</td><td class='num pp-amt-col'>" + esc(fmt(r.amount)) + "</td><td class='num'>" + esc(r.rows) + "</td><td><button type='button' class='btn btn-xs btn-default pp-view-jv' data-jv='" + esc(r.name) + "'>View Debit/Credit</button></td><td><a target='_blank' href='/app/journal-entry/" + encodeURIComponent(r.name) + "'>Open</a></td></tr>";
+      });
+      phtml += "</tbody></table>";
+      setCreatedListHtml(phtml);
+      return;
+    }
+    setCreatedListHtml("");
+  }
+
   function getAutoEntryProduct() {
     var productOptions = state.entryMeta.productOptions || [];
     return productOptions.length === 1 ? String((productOptions[0] && productOptions[0].value) || "").trim() : "";
@@ -5074,6 +5257,7 @@ WEB_PAGE_HTML = """
       filterRenderedTablesBySearch();
       el("pp-totals").innerHTML = "";
       el("pp-msg").textContent = "Enter and save Per Piece Salary here";
+      renderCreatedEntriesPanel("data_entry");
       refreshJVAmountsFromAdjustments();
       refreshPaymentAmounts();
       return;
@@ -5087,6 +5271,7 @@ WEB_PAGE_HTML = """
         + "<span>Other Deduction: " + fmt(t.other_deduction_amount) + "</span>"
         + "<span>Net Payable: " + fmt(t.net_payable_amount) + "</span>";
       el("pp-msg").textContent = outRows.length + " employee row(s) for salary creation";
+      renderCreatedEntriesPanel("salary_creation");
       refreshJVAmountsFromAdjustments();
       refreshPaymentAmounts();
       return;
@@ -5109,6 +5294,7 @@ WEB_PAGE_HTML = """
         + "<span>Unpaid: " + fmt(p.unpaid) + "</span>"
         + "<span>Payment This JV: " + fmt(p.payment) + "</span>";
       el("pp-msg").textContent = outRows.length + " employee row(s) pending payment (paid rows hidden)";
+      renderCreatedEntriesPanel("payment_manage");
       refreshPaymentAmounts();
       refreshJVAmountsFromAdjustments();
       return;
@@ -5258,6 +5444,7 @@ WEB_PAGE_HTML = """
       });
       el("pp-totals").innerHTML = "<span>Total Booked: " + fmt(jb) + "</span><span>Total Paid: " + fmt(jp) + "</span><span>Total Unpaid: " + fmt(ju) + "</span>";
       el("pp-msg").textContent = outRows.length + " employee row(s) in booked JV";
+      renderCreatedEntriesPanel("jv_created");
       refreshJVAmountsFromAdjustments();
       refreshPaymentAmounts();
       return;
@@ -5284,6 +5471,7 @@ WEB_PAGE_HTML = """
       totalsHtml += "<span>Closing: " + fmt(totalAdvance) + "</span>";
       el("pp-totals").innerHTML = totalsHtml;
       el("pp-msg").textContent = outRows.length + " employee row(s) in advances as on selected To Date (from Employee Advance/GL closing)";
+      renderCreatedEntriesPanel(state.currentTab);
       refreshJVAmountsFromAdjustments();
       refreshPaymentAmounts();
       return;
@@ -5298,6 +5486,7 @@ WEB_PAGE_HTML = """
       });
       el("pp-totals").innerHTML = "<span>Monthly Qty Total: " + fmt(totalQty) + "</span><span>Monthly Amount Total: " + fmt(totalAmount) + "</span>";
       el("pp-msg").textContent = outRows.length + " row(s) including month-wise and yearly totals";
+      renderCreatedEntriesPanel(state.currentTab);
       refreshJVAmountsFromAdjustments();
       refreshPaymentAmounts();
       return;
@@ -5322,6 +5511,7 @@ WEB_PAGE_HTML = """
       totalsHtml += "<span>Total Amount: " + fmt(grand) + "</span>";
       el("pp-totals").innerHTML = totalsHtml;
       el("pp-msg").textContent = outRows.length + " employee row(s) in simple month-wise amount report";
+      renderCreatedEntriesPanel(state.currentTab);
       refreshJVAmountsFromAdjustments();
       refreshPaymentAmounts();
       return;
@@ -5329,6 +5519,7 @@ WEB_PAGE_HTML = """
     outRows.forEach(function (r) { totalQty += num(r.qty); totalAmount += num(r.amount); });
     el("pp-totals").innerHTML = "<span>Total Qty: " + fmt(totalQty) + "</span><span>Total Amount: " + fmt(totalAmount) + "</span>";
     el("pp-msg").textContent = outRows.length + " row(s)";
+    renderCreatedEntriesPanel(state.currentTab);
     refreshJVAmountsFromAdjustments();
     refreshPaymentAmounts();
   }
@@ -5354,6 +5545,9 @@ WEB_PAGE_HTML = """
         renderCurrentTab();
         loadJVEntryOptions();
         loadPaymentJVEntryOptions();
+        if (msg && Number(msg.truncated || 0) === 1) {
+          el("pp-msg").textContent = (el("pp-msg").textContent || "") + " | Showing first " + esc(msg.max_rows || 0) + " rows (increase Max Rows or narrow date range).";
+        }
       });
     }).catch(function (e) {
       el("pp-msg").textContent = "Error loading report";
@@ -5405,6 +5599,15 @@ WEB_PAGE_HTML = """
         rows.forEach(function (r) {
           if (target) return;
           var lower = String(r.name || "").toLowerCase();
+          if (lower.indexOf(keyword) === 0) target = r.name;
+        });
+      });
+      preferredKeywords.forEach(function (k) {
+        if (target) return;
+        var keyword = String(k || "").toLowerCase();
+        rows.forEach(function (r) {
+          if (target) return;
+          var lower = String(r.name || "").toLowerCase();
           if (lower.indexOf(keyword) >= 0) target = r.name;
         });
       });
@@ -5414,7 +5617,7 @@ WEB_PAGE_HTML = """
   }
 
   function selectPreferredPayable(selectEl, rows) {
-    selectPreferred(selectEl, rows, ["payroll payable", "salary payable", "salary", "payable", "employee"]);
+    selectPreferred(selectEl, rows, ["payroll payable", "salary payable", "payable", "salary", "employee"]);
   }
 
   function loadCompanies() {
@@ -5435,6 +5638,7 @@ WEB_PAGE_HTML = """
     var company = el("pp-jv-company").value || "";
     if (!company) {
       setOptions(el("pp-jv-expense-account"), [], "name", "name", "Select Expense Account");
+      setOptions(el("pp-jv-allowance-account"), [], "name", "name", "Select Allowance Account");
       setOptions(el("pp-jv-payable-account"), [], "name", "name", "Select Payable Account");
       setOptions(el("pp-jv-advance-account"), [], "name", "name", "Select Advance Account");
       setOptions(el("pp-jv-deduction-account"), [], "name", "name", "Select Deduction Account");
@@ -5443,7 +5647,9 @@ WEB_PAGE_HTML = """
     callGetList("Account", ["name"], { company: company, is_group: 0, root_type: "Expense" }).then(function (rows) {
       rows = rows || [];
       setOptions(el("pp-jv-expense-account"), rows, "name", "name", "Select Expense Account");
-      selectPreferred(el("pp-jv-expense-account"), rows, ["salary", "wages", "expense"]);
+      selectPreferred(el("pp-jv-expense-account"), rows, ["allowance", "salary", "wages", "expense"]);
+      setOptions(el("pp-jv-allowance-account"), rows, "name", "name", "Select Allowance Account");
+      selectPreferred(el("pp-jv-allowance-account"), rows, ["allowance", "salary", "expense"]);
     }).catch(function (e) { console.error(e); });
     callGetList("Account", ["name"], { company: company, is_group: 0, account_type: "Payable" }).then(function (rows) {
       rows = rows || [];
@@ -5453,12 +5659,12 @@ WEB_PAGE_HTML = """
     callGetList("Account", ["name"], { company: company, is_group: 0, root_type: "Asset" }).then(function (rows) {
       rows = rows || [];
       setOptions(el("pp-jv-advance-account"), rows, "name", "name", "Select Advance Account");
-      selectPreferred(el("pp-jv-advance-account"), rows, ["advance", "employee", "receivable"]);
+      selectPreferred(el("pp-jv-advance-account"), rows, ["employee advance", "advance", "employee", "receivable"]);
     }).catch(function (e) { console.error(e); });
     callGetList("Account", ["name"], { company: company, is_group: 0, root_type: "Liability" }).then(function (rows) {
       rows = rows || [];
       setOptions(el("pp-jv-deduction-account"), rows, "name", "name", "Select Deduction Account");
-      selectPreferred(el("pp-jv-deduction-account"), rows, ["deduction", "payable", "employee"]);
+      selectPreferred(el("pp-jv-deduction-account"), rows, ["salary", "deduction", "payable", "employee"]);
     }).catch(function (e) { console.error(e); });
   }
 
@@ -5491,6 +5697,7 @@ WEB_PAGE_HTML = """
     args.company = el("pp-jv-company").value || "";
     args.posting_date = el("pp-jv-posting-date").value || args.to_date || "";
     args.expense_account = el("pp-jv-expense-account").value || "";
+    args.allowance_account = el("pp-jv-allowance-account").value || "";
     args.payable_account = el("pp-jv-payable-account").value || "";
     args.advance_account = el("pp-jv-advance-account").value || "";
     args.deduction_account = el("pp-jv-deduction-account").value || "";
@@ -5609,7 +5816,15 @@ WEB_PAGE_HTML = """
       setPaymentAmounts(msg.debit_amount, msg.credit_amount, 0);
       var link = "<a href='/app/journal-entry/" + encodeURIComponent(msg.journal_entry) + "' target='_blank'>" + esc(msg.journal_entry) + "</a>";
       result.style.color = "#0f766e";
-      result.innerHTML = "Payment JV Posted: " + link + "<br>Amount: " + esc(fmt(msg.payment_amount));
+      result.innerHTML = "Payment JV Posted: " + link + "<br>Amount: " + esc(fmt(msg.payment_amount))
+        + " <button type='button' class='btn btn-xs btn-default pp-view-jv' data-jv='" + esc(msg.journal_entry) + "'>View Debit/Credit</button>";
+      renderJournalEntryInline(result, msg.journal_entry);
+      result.querySelectorAll(".pp-view-jv").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var jv = btn.getAttribute("data-jv") || "";
+          if (jv) showJournalEntrySummary(jv);
+        });
+      });
       loadReport();
     }).catch(function (e) {
       showResult(result, "error", "Payment Post Failed", prettyError(errText(e)));
@@ -5651,7 +5866,15 @@ WEB_PAGE_HTML = """
         + " | Gross: " + esc(fmt(msg.gross_amount))
         + " | Net Payable: " + esc(fmt(msg.net_payable_amount))
         + " | Advance Deduction: " + esc(fmt(msg.advance_deduction_amount))
-        + " | Other Deduction: " + esc(fmt(msg.other_deduction_amount));
+        + " | Other Deduction: " + esc(fmt(msg.other_deduction_amount))
+        + " <button type='button' class='btn btn-xs btn-default pp-view-jv' data-jv='" + esc(msg.journal_entry) + "'>View Debit/Credit</button>";
+      renderJournalEntryInline(result, msg.journal_entry);
+      result.querySelectorAll(".pp-view-jv").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var jv = btn.getAttribute("data-jv") || "";
+          if (jv) showJournalEntrySummary(jv);
+        });
+      });
       loadReport();
     }).catch(function (e) {
       showResult(result, "error", "JV Post Failed", prettyError(errText(e)));
