@@ -710,6 +710,7 @@ po_number = normalize_param(args.get("po_number"))
 item_group = normalize_param(args.get("item_group"))
 item = normalize_param(args.get("item"))
 selected_items = normalize_param(args.get("selected_items"))
+load_by_item = normalize_param(args.get("load_by_item")) or "1"
 employee = normalize_param(args.get("employee"))
 entry_name = normalize_param(args.get("entry_name"))
 rows = parse_rows(args.get("rows"))
@@ -750,6 +751,8 @@ if frappe.get_meta("Per Piece Salary").has_field("item"):
     doc.item = item
 if frappe.get_meta("Per Piece Salary").has_field("selected_items"):
     doc.selected_items = selected_items
+if frappe.get_meta("Per Piece Salary").has_field("load_by_item"):
+    doc.load_by_item = 1 if str(load_by_item) == "1" else 0
 if frappe.get_meta("Per Piece Salary").has_field("employee"):
     doc.employee = employee
 doc.set("perpiece", [])
@@ -2107,125 +2110,84 @@ function validateDateRange(frm) {
     }
 }
 
+function isLoadByItem(frm) {
+    const raw = frm.doc.load_by_item;
+    return raw === undefined || raw === null || raw === 1 || String(raw) === "1";
+}
+
 function setProductQuery(frm) {
-    const getSelectedItems = () => {
-        const raw = (frm.doc.selected_items || "").trim();
-        const parts = raw
-            .split(/[\n,;]+/)
-            .map((v) => (v || "").trim())
-            .filter(Boolean);
-        const map = {};
-        parts.forEach((v) => { map[v] = true; });
-        if (frm.doc.item) map[(frm.doc.item || "").trim()] = true;
-        return Object.keys(map);
-    };
-    const getQuery = () => {
+    const byItem = isLoadByItem(frm);
+    const getProductQuery = () => {
         const filters = { disabled: 0 };
         if (frm.doc.item_group) {
             filters.item_group = frm.doc.item_group;
         }
-        const selected = getSelectedItems();
-        if (selected.length === 1) {
-            filters.name = selected[0];
-        } else if (selected.length > 1) {
-            filters.name = ["in", selected];
+        if (byItem && frm.doc.item) {
+            filters.name = frm.doc.item;
+        }
+        return { filters };
+    };
+    const getItemQuery = () => {
+        const filters = { disabled: 0 };
+        if (frm.doc.item_group) {
+            filters.item_group = frm.doc.item_group;
         }
         return { filters };
     };
 
-    frm.set_query("product", CHILD_TABLE_FIELD, getQuery);
-    frm.set_query("item", () => getQuery());
+    frm.set_query("product", CHILD_TABLE_FIELD, getProductQuery);
+    frm.set_query("item", () => getItemQuery());
 
     if (
         frm.fields_dict &&
         frm.fields_dict[CHILD_TABLE_FIELD] &&
         frm.fields_dict[CHILD_TABLE_FIELD].grid
     ) {
-        frm.fields_dict[CHILD_TABLE_FIELD].grid.get_field("product").get_query = getQuery;
+        frm.fields_dict[CHILD_TABLE_FIELD].grid.get_field("product").get_query = getProductQuery;
     }
 }
 
 function loadItemsForGroup(frm) {
+    const byItem = isLoadByItem(frm);
+    const selectedItem = (frm.doc.item || "").trim();
     const itemGroup = (frm.doc.item_group || "").trim();
+    if (byItem) {
+        if (!selectedItem) {
+            frm.__per_piece_group_items = [];
+            return Promise.resolve([]);
+        }
+        return Promise.resolve(frappe.call({
+                method: "per_piece_payroll.api.get_item_process_rows",
+                args: { item: selectedItem },
+            }))
+            .then((response) => {
+                const rows = (response && response.message) || [];
+                frm.__per_piece_group_items = itemGroup
+                    ? rows.filter((row) => (row.item_group || "").trim() === itemGroup)
+                    : rows;
+                return frm.__per_piece_group_items;
+            })
+            .catch(() => {
+                frm.__per_piece_group_items = [];
+                return [];
+            });
+    }
     if (!itemGroup) {
         frm.__per_piece_group_items = [];
         return Promise.resolve([]);
     }
-
-    const selectedMap = {};
-    ((frm.doc.selected_items || "").split(/[\n,;]+/) || [])
-        .map((v) => (v || "").trim())
-        .filter(Boolean)
-        .forEach((v) => { selectedMap[v] = true; });
-    if (frm.doc.item) {
-        selectedMap[(frm.doc.item || "").trim()] = true;
-    }
-    const selectedItems = Object.keys(selectedMap);
-
     return Promise.resolve(frappe.call({
             method: "per_piece_payroll.api.get_item_process_rows",
             args: { item_group: itemGroup },
         }))
         .then((response) => {
-            const rows = (response && response.message) || [];
-            frm.__per_piece_group_items = selectedItems.length
-                ? rows.filter((row) => selectedMap[(row.item || "").trim()])
-                : rows;
+            frm.__per_piece_group_items = (response && response.message) || [];
             return frm.__per_piece_group_items;
         })
         .catch(() => {
             frm.__per_piece_group_items = [];
             return [];
         });
-}
-
-function openItemPicker(frm) {
-    const itemGroup = (frm.doc.item_group || "").trim();
-    if (!itemGroup) {
-        frappe.msgprint(__("Select Item Group first."));
-        return;
-    }
-    frappe.call({
-        method: "per_piece_payroll.api.get_item_process_rows",
-        args: { item_group: itemGroup },
-    }).then((response) => {
-        const rows = (response && response.message) || [];
-        const items = [...new Set(rows.map((row) => (row.item || "").trim()).filter(Boolean))].sort();
-        const pre = {};
-        ((frm.doc.selected_items || "").split(/[\n,;]+/) || []).map((v) => (v || "").trim()).filter(Boolean).forEach((v) => { pre[v] = true; });
-        if (frm.doc.item) pre[(frm.doc.item || "").trim()] = true;
-        const d = new frappe.ui.Dialog({
-            title: __("Select Items"),
-            fields: [{ fieldname: "items_html", fieldtype: "HTML" }],
-            primary_action_label: __("Apply"),
-            primary_action() {
-                const root = d.fields_dict.items_html.$wrapper && d.fields_dict.items_html.$wrapper.get(0);
-                const selected = [];
-                if (root) {
-                    root.querySelectorAll("input[type='checkbox'][data-item]").forEach((inp) => {
-                        if (inp.checked) selected.push(inp.getAttribute("data-item") || "");
-                    });
-                }
-                const clean = selected.map((v) => (v || "").trim()).filter(Boolean);
-                frm.set_value("selected_items", clean.join(", "));
-                if (clean.length === 1) {
-                    frm.set_value("item", clean[0]);
-                } else if (frm.doc.item && clean.indexOf((frm.doc.item || "").trim()) < 0) {
-                    frm.set_value("item", "");
-                }
-                d.hide();
-                frm.trigger("selected_items");
-            },
-        });
-        let html = "<div style='max-height:320px;overflow:auto;padding:4px 2px;'>";
-        items.forEach((it) => {
-            const checked = pre[it] ? " checked" : "";
-            html += "<label style='display:block;margin:4px 0;'><input type='checkbox' data-item='" + frappe.utils.escape_html(it) + "'" + checked + "> " + frappe.utils.escape_html(it) + "</label>";
-        });
-        html += "</div>";
-        d.fields_dict.items_html.$wrapper.html(html);
-        d.show();
-    });
 }
 
 function loadProcessRowsForItem(frm, itemName) {
@@ -2273,6 +2235,11 @@ function isBlankChildRow(row) {
 
 function isGroupProductAllowed(frm, product) {
     const productName = (product || "").trim();
+    const byItem = isLoadByItem(frm);
+    const selectedItem = (frm.doc.item || "").trim();
+    if (byItem && selectedItem) {
+        return !productName || productName === selectedItem;
+    }
     const itemGroup = (frm.doc.item_group || "").trim();
     if (!productName || !itemGroup) return true;
     const rows = frm.__per_piece_group_items || [];
@@ -2340,11 +2307,9 @@ function applyParentEmployeeToRows(frm) {
 }
 
 function populateRowsFromGroup(frm) {
-    const itemGroup = (frm.doc.item_group || "").trim();
     const items = frm.__per_piece_group_items || [];
     const rows = frm.doc[CHILD_TABLE_FIELD] || [];
-
-    if (!itemGroup || !items.length) return Promise.resolve();
+    if (!items.length) return Promise.resolve();
 
     const hasMeaningfulRows = rows.some((row) => !isBlankChildRow(row));
     if (hasMeaningfulRows) return Promise.resolve();
@@ -2492,6 +2457,9 @@ function applyItemDefaults(frm, cdt, cdn) {
 
 frappe.ui.form.on("Per Piece Salary", {
     onload(frm) {
+        if (frm.doc.load_by_item === undefined || frm.doc.load_by_item === null || frm.doc.load_by_item === "") {
+            frm.set_value("load_by_item", 1);
+        }
         setProductQuery(frm);
         loadParentEmployeeName(frm).then(() => {
             return loadItemsForGroup(frm);
@@ -2508,9 +2476,6 @@ frappe.ui.form.on("Per Piece Salary", {
             window.open(REPORT_ROUTE, "_blank");
         });
         btn.addClass("btn-primary");
-        frm.add_custom_button(__("Pick Items"), () => {
-            openItemPicker(frm);
-        });
     },
 
     validate(frm) {
@@ -2542,9 +2507,6 @@ frappe.ui.form.on("Per Piece Salary", {
 
     item_group(frm) {
         setProductQuery(frm);
-        if (frm.doc.selected_items) {
-            frm.set_value("selected_items", "");
-        }
         if (frm.doc.item) {
             frappe.db.get_value("Item", frm.doc.item, "item_group")
                 .then((response) => {
@@ -2563,15 +2525,6 @@ frappe.ui.form.on("Per Piece Salary", {
 
     item(frm) {
         setProductQuery(frm);
-        if (frm.doc.item) {
-            const current = ((frm.doc.selected_items || "").split(/[\n,;]+/) || [])
-                .map((v) => (v || "").trim())
-                .filter(Boolean);
-            if (current.indexOf((frm.doc.item || "").trim()) < 0) {
-                current.push((frm.doc.item || "").trim());
-                frm.set_value("selected_items", current.join(", "));
-            }
-        }
         loadItemsForGroup(frm).then(() => {
             populateRowsFromGroup(frm);
             frm.refresh_field(CHILD_TABLE_FIELD);
@@ -2579,7 +2532,7 @@ frappe.ui.form.on("Per Piece Salary", {
         });
     },
 
-    selected_items(frm) {
+    load_by_item(frm) {
         setProductQuery(frm);
         loadItemsForGroup(frm).then(() => {
             populateRowsFromGroup(frm);
@@ -3373,11 +3326,10 @@ WEB_PAGE_HTML = """
     var productMetaMap = {};
     var productProcessMap = {};
     var currentItemGroup = String(state.entryMeta.item_group || "").trim();
+    var loadByItem = state.entryMeta.load_by_item !== false;
+    var selectedItem = String(state.entryMeta.item || "").trim();
     var selectedMap = {};
-    (state.entryMeta.selected_items || []).forEach(function (v) {
-      var key = String(v || "").trim();
-      if (key) selectedMap[key] = true;
-    });
+    if (loadByItem && selectedItem) selectedMap[selectedItem] = true;
     var hasSelected = Object.keys(selectedMap).length > 0;
 
     (state.entryMeta.masterEmployeeOptions || []).forEach(function (opt) {
@@ -4473,18 +4425,21 @@ WEB_PAGE_HTML = """
   }
 
   function getCurrentGroupItems() {
+    var loadByItem = state.entryMeta.load_by_item !== false;
+    var selectedItem = String(state.entryMeta.item || "").trim();
     var currentItemGroup = String(state.entryMeta.item_group || "").trim();
-    var selectedMap = {};
-    (state.entryMeta.selected_items || []).forEach(function (v) {
-      var key = String(v || "").trim();
-      if (key) selectedMap[key] = true;
-    });
     return (state.entryMeta.masterProcessRows || []).filter(function (item) {
-      if (!currentItemGroup) return false;
       var itemName = String((item && item.item) || "").trim();
       if (!itemName) return false;
-      if (String((item && item.item_group) || "").trim() !== currentItemGroup) return false;
-      if (Object.keys(selectedMap).length && !selectedMap[itemName]) return false;
+      var itemGroup = String((item && item.item_group) || "").trim();
+      if (loadByItem) {
+        if (!selectedItem) return false;
+        if (itemName !== selectedItem) return false;
+        if (currentItemGroup && itemGroup && itemGroup !== currentItemGroup) return false;
+      } else {
+        if (!currentItemGroup) return false;
+        if (itemGroup !== currentItemGroup) return false;
+      }
       return true;
     });
   }
@@ -4649,17 +4604,18 @@ WEB_PAGE_HTML = """
   function renderDataEntryTab() {
     var wrap = el("pp-table-wrap");
     if (!wrap) return;
-    ensureEntryRows();
-    rebuildEntryMetaLookups();
-    populateEntryRowsFromItemGroup();
-    var docs = uniqueSalaryDocs();
     if (!state.entryMeta.from_date) state.entryMeta.from_date = el("pp-from-date").value || "";
     if (!state.entryMeta.to_date) state.entryMeta.to_date = el("pp-to-date").value || "";
     if (state.entryMeta.po_number === undefined) state.entryMeta.po_number = "";
     if (state.entryMeta.item_group === undefined) state.entryMeta.item_group = el("pp-item-group") ? (el("pp-item-group").value || "") : "";
+    if (state.entryMeta.item === undefined) state.entryMeta.item = "";
     if (state.entryMeta.employee === undefined) state.entryMeta.employee = el("pp-employee") ? (el("pp-employee").value || "") : "";
-    if (!Array.isArray(state.entryMeta.selected_items)) state.entryMeta.selected_items = [];
+    if (state.entryMeta.load_by_item === undefined) state.entryMeta.load_by_item = true;
     if (state.entryMeta.edit_name === undefined) state.entryMeta.edit_name = "";
+    ensureEntryRows();
+    rebuildEntryMetaLookups();
+    populateEntryRowsFromItemGroup();
+    var docs = uniqueSalaryDocs();
     var employeeOptions = state.entryMeta.employeeOptions || [];
     var itemGroupOptions = state.entryMeta.itemGroupOptions || [];
     var productOptions = state.entryMeta.productOptions || [];
@@ -4753,19 +4709,21 @@ WEB_PAGE_HTML = """
       return parts.join("");
     }
 
-    function selectedItemsSelectHtml(selectedValues) {
-      var map = {};
-      (selectedValues || []).forEach(function (v) {
-        var key = String(v || "").trim();
-        if (key) map[key] = true;
-      });
+    function itemSelectHtml(selectedValue) {
+      var current = String(selectedValue || "");
+      var exists = false;
       var parts = [];
-      parts.push("<select id='pp-entry-selected-items' multiple size='5' style='min-height:110px;'>");
+      parts.push("<select id='pp-entry-item'>");
+      parts.push("<option value=''>All Items</option>");
       (itemOptions || []).forEach(function (opt) {
         var val = String((opt && opt.value) || "");
-        var selected = map[val] ? " selected" : "";
+        var selected = val === current ? " selected" : "";
+        if (selected) exists = true;
         parts.push("<option value='" + esc(val) + "'" + selected + ">" + esc((opt && opt.label) || val) + "</option>");
       });
+      if (current && !exists) {
+        parts.push("<option value='" + esc(current) + "' selected>" + esc(current) + "</option>");
+      }
       parts.push("</select>");
       return parts.join("");
     }
@@ -4778,8 +4736,9 @@ WEB_PAGE_HTML = """
       + "<label>From Date <input type='date' id='pp-entry-from-date' value='" + esc(state.entryMeta.from_date || "") + "'></label>"
       + "<label>To Date <input type='date' id='pp-entry-to-date' value='" + esc(state.entryMeta.to_date || "") + "'></label>"
       + "<label>Employee " + employeeSelectHtml(state.entryMeta.employee || "") + "</label>"
+      + "<label><span style='display:block;margin-bottom:6px;'>Load By Item</span><input type='checkbox' id='pp-entry-load-by-item'" + (state.entryMeta.load_by_item ? " checked" : "") + "></label>"
       + "<label>Item Group " + itemGroupSelectHtml(state.entryMeta.item_group || "") + "</label>"
-      + "<label>Selected Items " + selectedItemsSelectHtml(state.entryMeta.selected_items || []) + "</label>"
+      + "<label>Item " + itemSelectHtml(state.entryMeta.item || "") + "</label>"
       + "<label>PO Number * <input type='text' id='pp-entry-po-number' required placeholder='Required' value='" + esc(state.entryMeta.po_number || "") + "'></label>"
       + "</div>"
       + "<div class='pp-entry-actions'>"
@@ -4850,22 +4809,31 @@ WEB_PAGE_HTML = """
     if (itemGroupInput) {
       itemGroupInput.addEventListener("change", function () {
         state.entryMeta.item_group = itemGroupInput.value || "";
-        state.entryMeta.selected_items = [];
+        var itemOk = false;
+        (itemOptions || []).forEach(function (opt) {
+          if (String((opt && opt.value) || "") === String(state.entryMeta.item || "")) itemOk = true;
+        });
+        if (!itemOk) state.entryMeta.item = "";
         rebuildEntryMetaLookups();
         populateEntryRowsFromItemGroup();
         syncEntryRowsToItemGroup();
         renderDataEntryTab();
       });
     }
-    var selectedItemsInput = el("pp-entry-selected-items");
-    if (selectedItemsInput) {
-      selectedItemsInput.addEventListener("change", function () {
-        var selected = [];
-        Array.prototype.slice.call(selectedItemsInput.selectedOptions || []).forEach(function (opt) {
-          var value = String((opt && opt.value) || "").trim();
-          if (value) selected.push(value);
-        });
-        state.entryMeta.selected_items = selected;
+    var loadByItemInput = el("pp-entry-load-by-item");
+    if (loadByItemInput) {
+      loadByItemInput.addEventListener("change", function () {
+        state.entryMeta.load_by_item = !!loadByItemInput.checked;
+        rebuildEntryMetaLookups();
+        populateEntryRowsFromItemGroup();
+        syncEntryRowsToItemGroup();
+        renderDataEntryTab();
+      });
+    }
+    var itemInput = el("pp-entry-item");
+    if (itemInput) {
+      itemInput.addEventListener("change", function () {
+        state.entryMeta.item = itemInput.value || "";
         rebuildEntryMetaLookups();
         populateEntryRowsFromItemGroup();
         syncEntryRowsToItemGroup();
@@ -4884,7 +4852,8 @@ WEB_PAGE_HTML = """
       state.entryMeta.to_date = el("pp-to-date").value || "";
       state.entryMeta.employee = el("pp-employee") ? (el("pp-employee").value || "") : "";
       state.entryMeta.item_group = el("pp-item-group") ? (el("pp-item-group").value || "") : "";
-      state.entryMeta.selected_items = [];
+      state.entryMeta.item = "";
+      state.entryMeta.load_by_item = true;
       state.entryMeta.po_number = "";
       rebuildEntryMetaLookups();
       state.entryRows = [];
@@ -4965,13 +4934,8 @@ WEB_PAGE_HTML = """
       state.entryMeta.to_date = doc.to_date || "";
       state.entryMeta.employee = doc.employee || "";
       state.entryMeta.item_group = doc.item_group || "";
-      state.entryMeta.selected_items = String(doc.selected_items || "")
-        .split(/[\\n,;]+/)
-        .map(function (v) { return String(v || "").trim(); })
-        .filter(function (v) { return !!v; });
-      if ((!state.entryMeta.selected_items || !state.entryMeta.selected_items.length) && doc.item) {
-        state.entryMeta.selected_items = [String(doc.item)];
-      }
+      state.entryMeta.item = doc.item || "";
+      state.entryMeta.load_by_item = doc.load_by_item === undefined ? true : !!Number(doc.load_by_item);
       state.entryMeta.po_number = doc.po_number || "";
       state.entryRows = (doc.perpiece || []).map(function (r) {
         return {
@@ -4999,12 +4963,16 @@ WEB_PAGE_HTML = """
     var toDate = (el("pp-entry-to-date").value || state.entryMeta.to_date || "");
     var employee = (el("pp-entry-employee") && el("pp-entry-employee").value) || state.entryMeta.employee || "";
     var itemGroup = (el("pp-entry-item-group") && el("pp-entry-item-group").value) || state.entryMeta.item_group || "";
-    var selectedItems = state.entryMeta.selected_items || [];
-    var selectedItemSingle = selectedItems.length === 1 ? selectedItems[0] : "";
+    var loadByItem = !!state.entryMeta.load_by_item;
+    var selectedItemSingle = (el("pp-entry-item") && el("pp-entry-item").value) || state.entryMeta.item || "";
     var po = (el("pp-entry-po-number").value || state.entryMeta.po_number || "");
     var editName = state.entryMeta.edit_name || "";
     if (!po) {
       showResult(result, "error", "PO Number Required", "Enter PO Number before saving.");
+      return;
+    }
+    if (loadByItem && !selectedItemSingle) {
+      showResult(result, "error", "Item Required", "Select Item or uncheck Load By Item.");
       return;
     }
     var lines = [];
@@ -5034,7 +5002,8 @@ WEB_PAGE_HTML = """
       employee: employee,
       item_group: itemGroup,
       item: selectedItemSingle,
-      selected_items: (selectedItems || []).join(", "),
+      selected_items: selectedItemSingle ? String(selectedItemSingle) : "",
+      load_by_item: loadByItem ? 1 : 0,
       po_number: po,
       rows: lines.join(";;")
     }).then(function (msg) {
@@ -6271,9 +6240,9 @@ def apply() -> list[str]:
 		no_copy=0,
 	)
 	_ensure_custom_field(
-		"selected_items",
-		"Selected Items",
-		"Small Text",
+		"load_by_item",
+		"Load By Item",
+		"Check",
 		None,
 		"item",
 		results,
@@ -6281,13 +6250,14 @@ def apply() -> list[str]:
 		read_only=0,
 		in_list_view=0,
 		no_copy=0,
+		default="1",
 	)
 	_ensure_custom_field(
 		"pp_filter_col_break",
 		"Filter Column",
 		"Column Break",
 		None,
-		"selected_items",
+		"load_by_item",
 		results,
 		doctype="Per Piece Salary",
 		read_only=0,
@@ -6309,6 +6279,7 @@ def apply() -> list[str]:
 	_delete_custom_field("Item", "custom_process_type", results)
 	_delete_custom_field("Item", "custom_process_size", results)
 	_delete_custom_field("Item", "custom_rate_per_piece", results)
+	_delete_custom_field("Per Piece Salary", "selected_items", results)
 	_ensure_field_property_setter("Per Piece Salary", "po_number", "reqd", "1", "Check", results)
 	_migrate_jv_status(results)
 
