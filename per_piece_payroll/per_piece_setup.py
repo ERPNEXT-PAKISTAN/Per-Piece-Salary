@@ -417,9 +417,11 @@ employee = normalize_param(args.get("employee"))
 product = normalize_param(args.get("product"))
 process_type = normalize_param(args.get("process_type"))
 item_group = normalize_param(args.get("item_group"))
-max_rows = to_int(args.get("max_rows"), 2000)
-if max_rows < 100:
-    max_rows = 100
+max_rows = to_int(args.get("max_rows"), 50)
+if max_rows <= 0:
+    max_rows = 20000
+if max_rows < 50:
+    max_rows = 50
 if max_rows > 20000:
     max_rows = 20000
 max_days = to_int(args.get("max_days"), 0)
@@ -950,7 +952,8 @@ def build_line_remark(row):
     rate = round(to_float(row.get("rate")), 2)
     po = row.get("po_number") or "-"
     process_type = row.get("process_type") or "-"
-    return "Qty " + str(qty) + " x Rate " + str(rate) + ", PO " + str(po) + ", Process " + str(process_type)
+    employee_name = row.get("name1") or row.get("employee") or "-"
+    return "Emp " + str(employee_name) + ", Qty " + str(qty) + " x Rate " + str(rate) + ", PO " + str(po) + ", Process " + str(process_type)
 
 args = dict(frappe.form_dict or {})
 
@@ -1676,10 +1679,11 @@ else:
         amount = max(round2(item.get("to_pay_amount")), 0.0)
         if amount <= 0:
             continue
+        employee_name = item.get("name1") or item.get("employee") or "-"
         debit_row = {
             "account": payable_account,
             "debit_in_account_currency": amount,
-            "user_remark": "Salary Paid - " + str(item.get("employee")),
+            "user_remark": "Salary Paid - " + str(employee_name) + " (" + str(item.get("employee")) + ")",
         }
         if payable_account_type in ("Receivable", "Payable"):
             debit_row["party_type"] = "Employee"
@@ -2701,10 +2705,12 @@ WEB_PAGE_HTML = """
     <label>Search <input type="text" id="pp-search-any" placeholder="Type any word..." /></label>
     <label>Max Rows
       <select id="pp-max-rows">
+        <option value="50" selected>50</option>
+        <option value="100">100</option>
+        <option value="200">200</option>
+        <option value="500">500</option>
         <option value="1000">1,000</option>
-        <option value="2000" selected>2,000</option>
-        <option value="5000">5,000</option>
-        <option value="10000">10,000</option>
+        <option value="0">All</option>
       </select>
     </label>
     <label>Max Days (0=All) <input type="number" id="pp-max-days" min="0" step="1" value="0" /></label>
@@ -2715,7 +2721,7 @@ WEB_PAGE_HTML = """
     <button type="button" class="pp-tab active" data-tab="all">All Report</button>
     <button type="button" class="pp-tab" data-tab="data_entry">Data Enter</button>
     <button type="button" class="pp-tab" data-tab="salary_creation">Salary Creation</button>
-    <button type="button" class="pp-tab" data-tab="jv_created">JV Entry Created</button>
+    <button type="button" class="pp-tab" data-tab="jv_created">Salary Status</button>
     <button type="button" class="pp-tab" data-tab="payment_manage">Payment Entry Create</button>
     <button type="button" class="pp-tab" data-tab="advances">Advances</button>
     <button type="button" class="pp-tab" data-tab="employee_summary">Employee Summary</button>
@@ -2977,7 +2983,7 @@ WEB_PAGE_HTML = """
   function prettyError(msg) {
     var text = String(msg || "");
     if (text.indexOf("No unposted rows found for selected filters.") >= 0) {
-      return "No unbooked salary rows found for current filters. Change date/filter or use JV Entry Created tab.";
+      return "No unbooked salary rows found for current filters. Change date/filter or use Salary Status tab.";
     }
     if (text.indexOf("No booked salary rows found for selected filters.") >= 0) {
       return "No booked salary rows are available for payment in current filters.";
@@ -3135,6 +3141,11 @@ WEB_PAGE_HTML = """
       el("pp-from-date").value = fromVal;
       el("pp-to-date").value = toVal;
     }
+    try {
+      window.localStorage.setItem("pp_last_from_date", fromVal || "");
+      window.localStorage.setItem("pp_last_to_date", toVal || "");
+      window.localStorage.setItem("pp_last_max_rows", (el("pp-max-rows") && (el("pp-max-rows").value || "")) || "50");
+    } catch (e) {}
     return {
       from_date: fromVal,
       to_date: toVal,
@@ -3144,7 +3155,7 @@ WEB_PAGE_HTML = """
       process_type: el("pp-process-type").value || "",
       po_number: el("pp-po-number") ? (el("pp-po-number").value || "") : "",
       entry_no: el("pp-entry-no") ? (el("pp-entry-no").value || "") : "",
-      max_rows: el("pp-max-rows") ? (el("pp-max-rows").value || "2000") : "2000",
+      max_rows: el("pp-max-rows") ? (el("pp-max-rows").value || "50") : "50",
       max_days: el("pp-max-days") ? (el("pp-max-days").value || "0") : "0"
     };
   }
@@ -4922,10 +4933,15 @@ WEB_PAGE_HTML = """
     if (state.entryMeta.item === undefined) state.entryMeta.item = "";
     if (state.entryMeta.employee === undefined) state.entryMeta.employee = el("pp-employee") ? (el("pp-employee").value || "") : "";
     if (state.entryMeta.load_by_item === undefined) state.entryMeta.load_by_item = true;
+    if (state.entryMeta.skip_auto_populate_once === undefined) state.entryMeta.skip_auto_populate_once = false;
     if (state.entryMeta.edit_name === undefined) state.entryMeta.edit_name = "";
     ensureEntryRows();
     rebuildEntryMetaLookups();
-    populateEntryRowsFromItemGroup();
+    if (state.entryMeta.skip_auto_populate_once) {
+      state.entryMeta.skip_auto_populate_once = false;
+    } else {
+      populateEntryRowsFromItemGroup();
+    }
     var docs = uniqueSalaryDocs();
     var employeeOptions = state.entryMeta.employeeOptions || [];
     var itemGroupOptions = state.entryMeta.itemGroupOptions || [];
@@ -5329,6 +5345,7 @@ WEB_PAGE_HTML = """
         state.entryRows = [newEntryRow()];
         state.entryMeta.edit_name = "";
         state.entryMeta.po_number = "";
+        state.entryMeta.skip_auto_populate_once = true;
       }
       loadReport();
     }).catch(function (e) {
@@ -5817,10 +5834,24 @@ WEB_PAGE_HTML = """
       setOptions(el("pp-jv-advance-account"), rows, "name", "name", "Select Advance Account");
       selectPreferred(el("pp-jv-advance-account"), rows, ["employee advance", "advance", "employee", "receivable"]);
     }).catch(function (e) { console.error(e); });
-    callGetList("Account", ["name"], { company: company, is_group: 0, root_type: "Liability" }).then(function (rows) {
-      rows = rows || [];
-      setOptions(el("pp-jv-deduction-account"), rows, "name", "name", "Select Deduction Account");
-      selectPreferred(el("pp-jv-deduction-account"), rows, ["allowance", "salary", "deduction", "payable", "employee"]);
+    Promise.all([
+      callGetList("Account", ["name"], { company: company, is_group: 0, root_type: "Liability" }),
+      callGetList("Account", ["name"], { company: company, is_group: 0, root_type: "Expense" })
+    ]).then(function (parts) {
+      var rows = []
+        .concat((parts && parts[0]) || [])
+        .concat((parts && parts[1]) || []);
+      var seen = {};
+      var merged = [];
+      rows.forEach(function (r) {
+        var name = String((r && r.name) || "").trim();
+        if (!name || seen[name]) return;
+        seen[name] = true;
+        merged.push({ name: name });
+      });
+      merged.sort(function (a, b) { return String(a.name || "").localeCompare(String(b.name || "")); });
+      setOptions(el("pp-jv-deduction-account"), merged, "name", "name", "Select Deduction Account");
+      selectPreferred(el("pp-jv-deduction-account"), merged, ["deduction", "eobi", "payable", "allowance", "salary", "expense", "employee"]);
     }).catch(function (e) { console.error(e); });
   }
 
@@ -5841,10 +5872,24 @@ WEB_PAGE_HTML = """
         selectPreferredPayable(el("pp-pay-payable-account"), rows);
       }
     }).catch(function (e) { console.error(e); });
-    callGetList("Account", ["name"], { company: company, is_group: 0, root_type: "Asset" }).then(function (rows) {
-      rows = rows || [];
-      setOptions(el("pp-pay-paid-from-account"), rows, "name", "name", "Select Bank/Cash Account");
-      selectPreferred(el("pp-pay-paid-from-account"), rows, ["cash", "bank"]);
+    Promise.all([
+      callGetList("Account", ["name"], { company: company, is_group: 0, account_type: "Bank" }),
+      callGetList("Account", ["name"], { company: company, is_group: 0, account_type: "Cash" })
+    ]).then(function (parts) {
+      var rows = []
+        .concat((parts && parts[0]) || [])
+        .concat((parts && parts[1]) || []);
+      var seen = {};
+      var merged = [];
+      rows.forEach(function (r) {
+        var name = String((r && r.name) || "").trim();
+        if (!name || seen[name]) return;
+        seen[name] = true;
+        merged.push({ name: name });
+      });
+      merged.sort(function (a, b) { return String(a.name || "").localeCompare(String(b.name || "")); });
+      setOptions(el("pp-pay-paid-from-account"), merged, "name", "name", "Select Bank/Cash Account");
+      selectPreferred(el("pp-pay-paid-from-account"), merged, ["cash", "bank"]);
     }).catch(function (e) { console.error(e); });
   }
 
@@ -6080,11 +6125,23 @@ WEB_PAGE_HTML = """
   function setDefaultDates() {
     var now = new Date();
     var to = now.toISOString().slice(0, 10);
-    var fromDate = new Date(now);
-    fromDate.setDate(1);
-    var from = fromDate.toISOString().slice(0, 10);
+    var from = to;
+    var storedFrom = "";
+    var storedTo = "";
+    var storedRows = "";
+    try {
+      storedFrom = (window.localStorage.getItem("pp_last_from_date") || "").trim();
+      storedTo = (window.localStorage.getItem("pp_last_to_date") || "").trim();
+      storedRows = (window.localStorage.getItem("pp_last_max_rows") || "").trim();
+    } catch (e) {}
+    if (storedFrom) from = storedFrom;
+    if (storedTo) to = storedTo;
     el("pp-from-date").value = from;
     el("pp-to-date").value = to;
+    if (el("pp-max-rows")) {
+      var allowedRows = { "0": true, "50": true, "100": true, "200": true, "500": true, "1000": true };
+      el("pp-max-rows").value = allowedRows[storedRows] ? storedRows : "50";
+    }
     el("pp-jv-posting-date").value = to;
     el("pp-pay-posting-date").value = to;
     el("pp-jv-employee-wise").checked = true;
@@ -6331,6 +6388,18 @@ def _ensure_per_piece_field_links(results: list[str]) -> None:
 	# Older setups had fetch_from pointing to removed Item fields, which blocks insert/save.
 	changed = False
 	for fieldname in ("process_type", "process_size"):
+		custom_field_name = frappe.db.get_value(
+			"Custom Field",
+			{"dt": "Per Piece", "fieldname": fieldname},
+			"name",
+		)
+		if custom_field_name:
+			custom_fetch_from = frappe.db.get_value("Custom Field", custom_field_name, "fetch_from") or ""
+			if str(custom_fetch_from).strip():
+				frappe.db.set_value(
+					"Custom Field", custom_field_name, "fetch_from", "", update_modified=False
+				)
+				changed = True
 		docfield_name = frappe.db.get_value(
 			"DocField",
 			{"parent": "Per Piece", "parenttype": "DocType", "fieldname": fieldname},
