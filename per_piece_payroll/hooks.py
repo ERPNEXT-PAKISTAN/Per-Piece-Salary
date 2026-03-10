@@ -182,7 +182,7 @@ fixtures = [
 	{
 		"dt": "Custom Field",
 		"filters": [
-			["dt", "in", ["Per Piece", "Item"]],
+			["dt", "in", ["Per Piece", "Per Piece Salary", "Item"]],
 			[
 				"fieldname",
 				"in",
@@ -197,8 +197,9 @@ fixtures = [
 					"payment_jv_no",
 					"payment_refs",
 					"payment_line_remark",
-					"custom_process_type",
-					"custom_rate_per_piece",
+					"process_size",
+					"item_group",
+					"employee",
 				],
 			],
 		],

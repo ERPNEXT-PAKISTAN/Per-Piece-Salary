@@ -5,9 +5,16 @@ Per Piece production, salary booking, JV posting, payment JV posting, and report
 ### What this app installs
 
 - Custom DocTypes: `Per Piece Salary`, `Per Piece`
-- Item fields:
-  - `custom_process_type` (Select: Cutting, Stitching, Quilting, Packing)
-  - `custom_rate_per_piece` (Float)
+- Per Piece Salary fields:
+  - `item_group` (Link: `Item Group`)
+  - `employee` (Link: `Employee`)
+- Per Piece child table fields:
+  - `process_size` (Data, auto-loaded from `Item.custom_prd_process_and_sizes`)
+- Item tables used:
+  - `custom_prd_process_and_sizes` (`PRD Process and Sizes`) with `process_type`, `process_size`, `rate`
+- Desk form and web page:
+  - child `Product` loads only from selected `Item Group`
+  - child rows can auto-load all `Item + Process Type + Process Size + Rate` combinations from the selected `Item Group`
 - API Server Scripts:
   - `get_per_piece_salary_report`
   - `create_per_piece_salary_entry`
@@ -115,7 +122,7 @@ bench --site site1.local execute per_piece_payroll.api.apply_per_piece_payroll_s
 
 - App expects `erpnext` and `hrms` to be installed.
 - `appe` is **not** required by `per_piece_payroll`.
-- If `Item.custom_process_type` already exists as `Link`, setup auto-converts it to `Select` to avoid install failure.
+- The app now uses `Item.custom_prd_process_and_sizes` as the Item-side source of process, size, and rate.
 - In container/cloud setups without `supervisorctl`, `bench get-app` may end with a restart error. This does not always mean app fetch/install failed.
 
 ### Troubleshooting (new server)

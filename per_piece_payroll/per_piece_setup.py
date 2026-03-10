@@ -2,7 +2,6 @@ import json
 
 import frappe
 
-
 GET_REPORT_SERVER_SCRIPT = """# Server Script: API
 # Script Type: API
 # API Method: get_per_piece_salary_report
@@ -411,6 +410,7 @@ if from_date and to_date and from_date > to_date:
 employee = normalize_param(args.get("employee"))
 product = normalize_param(args.get("product"))
 process_type = normalize_param(args.get("process_type"))
+item_group = normalize_param(args.get("item_group"))
 get_options = str(args.get("get_options") or "").lower() in ("1", "true", "yes")
 
 all_advance_result = get_all_employee_advance_rows(to_date)
@@ -434,7 +434,7 @@ if to_date:
 parents = frappe.get_all(
     "Per Piece Salary",
     filters=parent_filters,
-    fields=["name", "from_date", "to_date", "po_number", "total_qty", "total_amount"],
+    fields=["name", "from_date", "to_date", "po_number", "item_group", "total_qty", "total_amount"],
     order_by="from_date desc, creation desc",
 )
 
@@ -445,6 +445,7 @@ if not parents:
         "employees": [],
         "products": [],
         "process_types": [],
+        "item_groups": [],
         "advance_balances": all_advance_balances,
         "advance_rows": all_advance_rows,
         "advance_months": all_advance_months,
@@ -454,13 +455,32 @@ else:
     option_rows = frappe.get_all(
         "Per Piece",
         filters={"parent": ["in", parent_names], "parenttype": "Per Piece Salary", "parentfield": "perpiece"},
-        fields=["employee", "product", "process_type"],
+        fields=["employee", "product", "process_type", "process_size"],
     )
 
     employees = sorted(set((row.get("employee") or "").strip() for row in option_rows if row.get("employee")))
     products = sorted(set((row.get("product") or "").strip() for row in option_rows if row.get("product")))
     process_types = sorted(
         set((row.get("process_type") or "").strip() for row in option_rows if row.get("process_type"))
+    )
+    product_names = [p for p in products if p]
+    item_group_map = {}
+    if product_names:
+        item_rows = frappe.get_all(
+            "Item",
+            filters={"name": ["in", product_names]},
+            fields=["name", "item_group"],
+            limit_page_length=max(len(product_names), 500),
+        )
+        for item_row in item_rows:
+            item_name = item_row.get("name")
+            if item_name:
+                item_group_map[item_name] = item_row.get("item_group") or ""
+    item_groups = sorted(
+        set(
+            [str((p or {}).get("item_group") or "").strip() for p in parents if (p or {}).get("item_group")]
+            + [str(v or "").strip() for v in item_group_map.values() if v]
+        )
     )
     advance_balances = all_advance_balances
 
@@ -471,6 +491,7 @@ else:
             "employees": employees,
             "products": products,
             "process_types": process_types,
+            "item_groups": item_groups,
             "advance_balances": advance_balances,
             "advance_rows": all_advance_rows,
             "advance_months": all_advance_months,
@@ -499,6 +520,7 @@ else:
                 "name1",
                 "product",
                 "process_type",
+                "process_size",
                 "qty",
                 "rate",
                 "amount",
@@ -520,6 +542,9 @@ else:
         for child in children:
             parent = parent_map.get(child["parent"])
             if not parent:
+                continue
+            row_item_group = (parent.get("item_group") or item_group_map.get(child.get("product")) or "").strip()
+            if item_group and row_item_group != item_group:
                 continue
             jv_status_value = "Posted" if child.get("jv_status") == "Accounted" else (child.get("jv_status") or "Pending")
             booking_status_value = "Booked" if ((child.get("jv_entry_no") or "") and ((child.get("jv_status") or "") in ("Posted", "Accounted"))) else "UnBooked"
@@ -549,12 +574,14 @@ else:
                     "from_date": parent.get("from_date"),
                     "to_date": parent.get("to_date"),
                     "po_number": parent.get("po_number"),
+                    "item_group": row_item_group,
                     "total_qty": parent.get("total_qty"),
                     "total_amount": parent.get("total_amount"),
                     "employee": child.get("employee"),
                     "name1": child.get("name1"),
                     "product": child.get("product"),
                     "process_type": child.get("process_type"),
+                    "process_size": child.get("process_size") or "No Size",
                     "qty": child.get("qty"),
                     "rate": child.get("rate"),
                     "amount": child.get("amount"),
@@ -577,10 +604,12 @@ else:
             {"label": "From Date", "fieldname": "from_date", "fieldtype": "Date", "width": 95},
             {"label": "To Date", "fieldname": "to_date", "fieldtype": "Date", "width": 95},
             {"label": "PO Number", "fieldname": "po_number", "fieldtype": "Data", "width": 110},
+            {"label": "Item Group", "fieldname": "item_group", "fieldtype": "Link", "options": "Item Group", "width": 130},
             {"label": "Employee", "fieldname": "employee", "fieldtype": "Link", "options": "Employee", "width": 120},
             {"label": "Employee First Name", "fieldname": "name1", "fieldtype": "Data", "width": 140},
             {"label": "Product", "fieldname": "product", "fieldtype": "Link", "options": "Item", "width": 140},
             {"label": "Process Type", "fieldname": "process_type", "fieldtype": "Data", "width": 120},
+            {"label": "Process Size", "fieldname": "process_size", "fieldtype": "Data", "width": 110},
             {"label": "Qty", "fieldname": "qty", "fieldtype": "Float", "precision": 2, "width": 80},
             {"label": "Rate", "fieldname": "rate", "fieldtype": "Float", "precision": 2, "width": 80},
             {"label": "Amount", "fieldname": "amount", "fieldtype": "Float", "precision": 2, "width": 100},
@@ -603,6 +632,7 @@ else:
             "employees": employees,
             "products": products,
             "process_types": process_types,
+            "item_groups": item_groups,
             "advance_balances": advance_balances,
             "advance_rows": all_advance_rows,
             "advance_months": all_advance_months,
@@ -647,8 +677,15 @@ def parse_rows(raw_value):
         name1 = normalize_param(parts[1]) or ""
         product = normalize_param(parts[2]) or ""
         process_type = normalize_param(parts[3]) or ""
-        qty = max(round2(parts[4]), 0.0)
-        rate = max(round2(parts[5]), 0.0)
+        process_size = "No Size"
+        qty_index = 4
+        rate_index = 5
+        if len(parts) >= 7:
+            process_size = normalize_param(parts[4]) or "No Size"
+            qty_index = 5
+            rate_index = 6
+        qty = max(round2(parts[qty_index]), 0.0)
+        rate = max(round2(parts[rate_index]), 0.0)
         amount = round2(qty * rate)
         if qty <= 0:
             continue
@@ -658,6 +695,7 @@ def parse_rows(raw_value):
                 "name1": name1,
                 "product": product,
                 "process_type": process_type,
+                "process_size": process_size,
                 "qty": qty,
                 "rate": rate,
                 "amount": amount,
@@ -669,6 +707,8 @@ args = dict(frappe.form_dict or {})
 from_date = normalize_date(args.get("from_date"))
 to_date = normalize_date(args.get("to_date"))
 po_number = normalize_param(args.get("po_number"))
+item_group = normalize_param(args.get("item_group"))
+employee = normalize_param(args.get("employee"))
 entry_name = normalize_param(args.get("entry_name"))
 rows = parse_rows(args.get("rows"))
 
@@ -703,6 +743,9 @@ else:
 doc.from_date = from_date
 doc.to_date = to_date
 doc.po_number = po_number
+doc.item_group = item_group
+if frappe.get_meta("Per Piece Salary").has_field("employee"):
+    doc.employee = employee
 doc.set("perpiece", [])
 
 total_qty = 0.0
@@ -717,6 +760,7 @@ for row in rows:
             "name1": row.get("name1"),
             "product": row.get("product"),
             "process_type": row.get("process_type"),
+            "process_size": row.get("process_size") or "No Size",
             "qty": row.get("qty"),
             "rate": row.get("rate"),
             "amount": row.get("amount"),
@@ -1829,10 +1873,12 @@ columns = [
     {"fieldname": "from_date", "label": "From Date", "fieldtype": "Date", "width": 95},
     {"fieldname": "to_date", "label": "To Date", "fieldtype": "Date", "width": 95},
     {"fieldname": "po_number", "label": "PO Number", "fieldtype": "Data", "width": 110},
+    {"fieldname": "item_group", "label": "Item Group", "fieldtype": "Link", "options": "Item Group", "width": 120},
     {"fieldname": "employee", "label": "Employee", "fieldtype": "Link", "options": "Employee", "width": 120},
     {"fieldname": "name1", "label": "Employee First Name", "fieldtype": "Data", "width": 140},
     {"fieldname": "product", "label": "Product", "fieldtype": "Link", "options": "Item", "width": 140},
     {"fieldname": "process_type", "label": "Process Type", "fieldtype": "Data", "width": 120},
+    {"fieldname": "process_size", "label": "Process Size", "fieldtype": "Data", "width": 110},
     {"fieldname": "qty", "label": "Qty", "fieldtype": "Float", "precision": 2, "width": 80},
     {"fieldname": "rate", "label": "Rate", "fieldtype": "Float", "precision": 2, "width": 80},
     {"fieldname": "amount", "label": "Amount", "fieldtype": "Float", "precision": 2, "width": 100},
@@ -1858,7 +1904,7 @@ if filters.get("to_date"):
 parents = frappe.get_all(
     "Per Piece Salary",
     filters=parent_filters,
-    fields=["name", "from_date", "to_date", "po_number"],
+    fields=["name", "from_date", "to_date", "po_number", "item_group"],
     order_by="from_date desc, creation desc",
 )
 
@@ -1869,11 +1915,14 @@ if parents:
     for fieldname in ("employee", "product", "process_type", "jv_status", "payment_status"):
         if filters.get(fieldname):
             child_filters[fieldname] = filters.get(fieldname)
+    if filters.get("item_group"):
+        parent_names = [p["name"] for p in parents if (p.get("item_group") or "") == filters.get("item_group")]
+        child_filters["parent"] = ["in", parent_names or [""]]
 
     children = frappe.get_all(
         "Per Piece",
         filters=child_filters,
-        fields=["parent", "idx", "employee", "name1", "product", "process_type", "qty", "rate", "amount", "jv_status", "jv_entry_no", "jv_line_remark", "booked_amount", "paid_amount", "unpaid_amount", "payment_status", "payment_jv_no", "payment_line_remark"],
+        fields=["parent", "idx", "employee", "name1", "product", "process_type", "process_size", "qty", "rate", "amount", "jv_status", "jv_entry_no", "jv_line_remark", "booked_amount", "paid_amount", "unpaid_amount", "payment_status", "payment_jv_no", "payment_line_remark"],
         order_by="parent asc, idx asc",
     )
 
@@ -1912,10 +1961,12 @@ if parents:
                 "from_date": parent.get("from_date"),
                 "to_date": parent.get("to_date"),
                 "po_number": parent.get("po_number"),
+                "item_group": parent.get("item_group"),
                 "employee": child.get("employee"),
                 "name1": child.get("name1"),
                 "product": child.get("product"),
                 "process_type": child.get("process_type"),
+                "process_size": child.get("process_size") or "No Size",
                 "qty": child.get("qty"),
                 "rate": child.get("rate"),
                 "amount": child.get("amount"),
@@ -1941,6 +1992,7 @@ SCRIPT_REPORT_JS = """frappe.query_reports["Per Piece Salary Report"] = {
     filters: [
         { fieldname: "from_date", label: __("From Date"), fieldtype: "Date" },
         { fieldname: "to_date", label: __("To Date"), fieldtype: "Date" },
+        { fieldname: "item_group", label: __("Item Group"), fieldtype: "Link", options: "Item Group" },
         { fieldname: "employee", label: __("Employee"), fieldtype: "Link", options: "Employee" },
         { fieldname: "product", label: __("Product"), fieldtype: "Link", options: "Item" },
         { fieldname: "process_type", label: __("Process Type"), fieldtype: "Data" },
@@ -1956,10 +2008,12 @@ QUERY_REPORT_QUERY = """SELECT
     pps.from_date,
     pps.to_date,
     pps.po_number,
+    pps.item_group,
     pp.employee,
     pp.name1,
     pp.product,
     pp.process_type,
+    COALESCE(pp.process_size, 'No Size') AS process_size,
     pp.qty,
     pp.rate,
     pp.amount,
@@ -2004,6 +2058,7 @@ LEFT JOIN `tabPer Piece` pp
 WHERE pps.docstatus < 2
     AND (%(from_date)s IS NULL OR %(from_date)s = '' OR pps.to_date >= %(from_date)s)
     AND (%(to_date)s IS NULL OR %(to_date)s = '' OR pps.from_date <= %(to_date)s)
+    AND (%(item_group)s IS NULL OR %(item_group)s = '' OR pps.item_group = %(item_group)s)
     AND (%(employee)s IS NULL OR %(employee)s = '' OR pp.employee = %(employee)s)
     AND (%(product)s IS NULL OR %(product)s = '' OR pp.product = %(product)s)
     AND (%(process_type)s IS NULL OR %(process_type)s = '' OR pp.process_type = %(process_type)s)
@@ -2017,6 +2072,7 @@ QUERY_REPORT_JS = """frappe.query_reports["Per Piece Query Report Simple"] = {
     filters: [
         { fieldname: "from_date", label: __("From Date"), fieldtype: "Date" },
         { fieldname: "to_date", label: __("To Date"), fieldtype: "Date" },
+        { fieldname: "item_group", label: __("Item Group"), fieldtype: "Link", options: "Item Group" },
         { fieldname: "employee", label: __("Employee"), fieldtype: "Link", options: "Employee" },
         { fieldname: "product", label: __("Product"), fieldtype: "Link", options: "Item" },
         { fieldname: "process_type", label: __("Process Type"), fieldtype: "Data" },
@@ -2027,12 +2083,492 @@ QUERY_REPORT_JS = """frappe.query_reports["Per Piece Query Report Simple"] = {
 """
 
 
+CLIENT_SCRIPT_SCRIPT = """const REPORT_ROUTE = "/per-piece-report";
+const CHILD_TABLE_FIELD = "perpiece";
+const DECIMALS = 2;
+const PROCESS_SIZE_DEFAULT = "No Size";
+
+function calculateRowAmount(row) {
+    const qty = flt(row.qty, DECIMALS);
+    const rate = flt(row.rate, DECIMALS);
+    row.amount = flt(qty * rate, DECIMALS);
+}
+
+function validateDateRange(frm) {
+    if (!frm.doc.from_date || !frm.doc.to_date) return;
+    if (frappe.datetime.get_diff(frm.doc.to_date, frm.doc.from_date) < 0) {
+        frappe.throw(__("From Date cannot be after To Date."));
+    }
+}
+
+function setProductQuery(frm) {
+    const getQuery = () => {
+        const filters = { disabled: 0 };
+        if (frm.doc.item_group) {
+            filters.item_group = frm.doc.item_group;
+        }
+        return { filters };
+    };
+
+    frm.set_query("product", CHILD_TABLE_FIELD, getQuery);
+
+    if (
+        frm.fields_dict &&
+        frm.fields_dict[CHILD_TABLE_FIELD] &&
+        frm.fields_dict[CHILD_TABLE_FIELD].grid
+    ) {
+        frm.fields_dict[CHILD_TABLE_FIELD].grid.get_field("product").get_query = getQuery;
+    }
+}
+
+function loadItemsForGroup(frm) {
+    const itemGroup = (frm.doc.item_group || "").trim();
+    if (!itemGroup) {
+        frm.__per_piece_group_items = [];
+        return Promise.resolve([]);
+    }
+
+    return Promise.resolve(frappe.call({
+            method: "per_piece_payroll.api.get_item_process_rows",
+            args: { item_group: itemGroup },
+        }))
+        .then((response) => {
+            frm.__per_piece_group_items = (response && response.message) || [];
+            return frm.__per_piece_group_items;
+        })
+        .catch(() => {
+            frm.__per_piece_group_items = [];
+            return [];
+        });
+}
+
+function loadProcessRowsForItem(frm, itemName) {
+    const product = (itemName || "").trim();
+    if (!product) return Promise.resolve([]);
+
+    if (!frm.__per_piece_item_process_map) {
+        frm.__per_piece_item_process_map = {};
+    }
+    if (frm.__per_piece_item_process_map[product]) {
+        return Promise.resolve(frm.__per_piece_item_process_map[product]);
+    }
+
+    return Promise.resolve(frappe.call({
+            method: "per_piece_payroll.api.get_item_process_rows",
+            args: { item: product },
+        }))
+        .then((response) => {
+            frm.__per_piece_item_process_map[product] = (response && response.message) || [];
+            return frm.__per_piece_item_process_map[product];
+        })
+        .catch(() => {
+            frm.__per_piece_item_process_map[product] = [];
+            return [];
+        });
+}
+
+function getAutoGroupProduct(frm) {
+    const rows = frm.__per_piece_group_items || [];
+    const items = [...new Set(rows.map((row) => (row && row.item) || "").filter(Boolean))];
+    return items.length === 1 ? items[0] : "";
+}
+
+function isBlankChildRow(row) {
+    if (!row) return true;
+    return !(
+        (row.employee || "").trim() ||
+        (row.name1 || "").trim() ||
+        (row.product || "").trim() ||
+        flt(row.qty, DECIMALS) ||
+        flt(row.rate, DECIMALS) ||
+        flt(row.amount, DECIMALS)
+    );
+}
+
+function isGroupProductAllowed(frm, product) {
+    const productName = (product || "").trim();
+    const itemGroup = (frm.doc.item_group || "").trim();
+    if (!productName || !itemGroup) return true;
+    const rows = frm.__per_piece_group_items || [];
+    if (!rows.length) return false;
+    return rows.some((row) => (row && row.item) === productName);
+}
+
+function resetRowProductFields(frm, row) {
+    if (!row) return;
+    const cdt = row.doctype;
+    const cdn = row.name;
+    const tasks = [
+        frappe.model.set_value(cdt, cdn, "product", ""),
+        frappe.model.set_value(cdt, cdn, "process_type", ""),
+        frappe.model.set_value(cdt, cdn, "process_size", PROCESS_SIZE_DEFAULT),
+        frappe.model.set_value(cdt, cdn, "rate", 0),
+        frappe.model.set_value(cdt, cdn, "amount", 0),
+    ];
+    return Promise.all(tasks).then(() => {
+        const freshRow = locals[cdt] && locals[cdt][cdn] ? locals[cdt][cdn] : row;
+        calculateRowAmount(freshRow);
+        frm.trigger("recalc_amount_and_total");
+    }, () => {
+        const freshRow = locals[cdt] && locals[cdt][cdn] ? locals[cdt][cdn] : row;
+        calculateRowAmount(freshRow);
+        frm.trigger("recalc_amount_and_total");
+    });
+}
+
+function loadParentEmployeeName(frm) {
+    const employee = (frm.doc.employee || "").trim();
+    if (!employee) {
+        frm.__per_piece_parent_employee_name = "";
+        return Promise.resolve("");
+    }
+    if (frm.__per_piece_parent_employee === employee && frm.__per_piece_parent_employee_name) {
+        return Promise.resolve(frm.__per_piece_parent_employee_name);
+    }
+
+    return Promise.resolve(
+        frappe.db.get_value("Employee", employee, "employee_name")
+    ).then((response) => {
+        const message = (response && response.message) || {};
+        frm.__per_piece_parent_employee = employee;
+        frm.__per_piece_parent_employee_name = message.employee_name || "";
+        return frm.__per_piece_parent_employee_name;
+    }).catch(() => {
+        frm.__per_piece_parent_employee = employee;
+        frm.__per_piece_parent_employee_name = "";
+        return "";
+    });
+}
+
+function applyParentEmployeeToRows(frm) {
+    const employee = (frm.doc.employee || "").trim();
+    const employeeName = (frm.__per_piece_parent_employee_name || "").trim();
+    if (!employee) return;
+    const rows = frm.doc[CHILD_TABLE_FIELD] || [];
+    rows.forEach((row) => {
+        row.employee = employee;
+        if (employeeName) {
+            row.name1 = employeeName;
+        }
+    });
+}
+
+function populateRowsFromGroup(frm) {
+    const itemGroup = (frm.doc.item_group || "").trim();
+    const items = frm.__per_piece_group_items || [];
+    const rows = frm.doc[CHILD_TABLE_FIELD] || [];
+
+    if (!itemGroup || !items.length) return Promise.resolve();
+
+    const hasMeaningfulRows = rows.some((row) => !isBlankChildRow(row));
+    if (hasMeaningfulRows) return Promise.resolve();
+
+    frm.clear_table(CHILD_TABLE_FIELD);
+
+    items.forEach((item) => {
+        const row = frm.add_child(CHILD_TABLE_FIELD);
+        row.employee = item.employee || frm.doc.employee || "";
+        row.name1 = item.employee_name || frm.__per_piece_parent_employee_name || "";
+        row.product = item.item || "";
+        row.process_type = item.process_type || "";
+        row.process_size = item.process_size || PROCESS_SIZE_DEFAULT;
+        row.rate = flt(item.rate, DECIMALS);
+        row.qty = 0;
+        row.amount = 0;
+        row.from_date = frm.doc.from_date || null;
+        row.to_date = frm.doc.to_date || null;
+        row.po_number = frm.doc.po_number || null;
+    });
+
+    frm.refresh_field(CHILD_TABLE_FIELD);
+    frm.trigger("recalc_amount_and_total");
+    return Promise.resolve();
+}
+
+function resolveProcessRow(processRows, row) {
+    if (!processRows || !processRows.length) return null;
+
+    const currentType = (row.process_type || "").trim();
+    const currentSize = (row.process_size || "").trim();
+    const currentEmployee = (row.employee || "").trim();
+
+    let matches = processRows.slice();
+    if (currentType) {
+        const typed = matches.filter((entry) => (entry.process_type || "").trim() === currentType);
+        if (typed.length) matches = typed;
+    }
+    if (currentSize) {
+        const sized = matches.filter(
+            (entry) => ((entry.process_size || PROCESS_SIZE_DEFAULT).trim() === currentSize)
+        );
+        if (sized.length) matches = sized;
+    }
+    if (currentEmployee) {
+        const employeeMatched = matches.filter(
+            (entry) => (entry.employee || "").trim() === currentEmployee
+        );
+        if (employeeMatched.length) matches = employeeMatched;
+    }
+
+    return matches[0] || processRows[0];
+}
+
+function syncRowsToItemGroup(frm) {
+    const rows = frm.doc[CHILD_TABLE_FIELD] || [];
+    const autoProduct = getAutoGroupProduct(frm);
+    const tasks = [];
+
+    rows.forEach((row) => {
+        if (row.product && !isGroupProductAllowed(frm, row.product)) {
+            tasks.push(
+                resetRowProductFields(frm, row).then(() => {
+                    if (autoProduct) {
+                        return frappe.model
+                            .set_value(row.doctype, row.name, "product", autoProduct)
+                            .then(() => applyItemDefaults(frm, row.doctype, row.name));
+                    }
+                })
+            );
+            return;
+        }
+
+        if (!row.product && autoProduct) {
+            tasks.push(
+                frappe.model
+                    .set_value(row.doctype, row.name, "product", autoProduct)
+                    .then(() => applyItemDefaults(frm, row.doctype, row.name))
+            );
+            return;
+        }
+
+        if (row.product) {
+            tasks.push(applyItemDefaults(frm, row.doctype, row.name));
+        }
+    });
+
+    return Promise.all(tasks).then(() => {
+        frm.refresh_field(CHILD_TABLE_FIELD);
+        frm.trigger("recalc_amount_and_total");
+    }, () => {
+        frm.refresh_field(CHILD_TABLE_FIELD);
+        frm.trigger("recalc_amount_and_total");
+    });
+}
+
+function applyItemDefaults(frm, cdt, cdn) {
+    const row = locals[cdt][cdn];
+    if (!row) return Promise.resolve();
+
+    if (!row.process_size) {
+        frappe.model.set_value(cdt, cdn, "process_size", PROCESS_SIZE_DEFAULT);
+    }
+
+    if (!row.product) {
+        calculateRowAmount(row);
+        frm.trigger("recalc_amount_and_total");
+        return Promise.resolve();
+    }
+
+    return loadProcessRowsForItem(frm, row.product)
+        .then((processRows) => {
+            const processRow = resolveProcessRow(processRows, row);
+            if (!processRow) return;
+            if (processRow.process_type) {
+                frappe.model.set_value(cdt, cdn, "process_type", processRow.process_type);
+            }
+            if (processRow.employee) {
+                frappe.model.set_value(cdt, cdn, "employee", processRow.employee);
+                frappe.model.set_value(cdt, cdn, "name1", processRow.employee_name || "");
+            }
+            frappe.model.set_value(
+                cdt,
+                cdn,
+                "process_size",
+                processRow.process_size || PROCESS_SIZE_DEFAULT
+            );
+            const itemRate = flt(processRow.rate, DECIMALS);
+            if (itemRate > 0) {
+                frappe.model.set_value(cdt, cdn, "rate", itemRate);
+            }
+        })
+        .then(() => {
+            const updatedRow = locals[cdt][cdn] || row;
+            calculateRowAmount(updatedRow);
+            frappe.model.set_value(cdt, cdn, "amount", updatedRow.amount);
+            frm.trigger("recalc_amount_and_total");
+        }, () => {
+            const updatedRow = locals[cdt][cdn] || row;
+            calculateRowAmount(updatedRow);
+            frappe.model.set_value(cdt, cdn, "amount", updatedRow.amount);
+            frm.trigger("recalc_amount_and_total");
+        });
+}
+
+frappe.ui.form.on("Per Piece Salary", {
+    onload(frm) {
+        setProductQuery(frm);
+        loadParentEmployeeName(frm).then(() => {
+            return loadItemsForGroup(frm);
+        }).then(() => {
+            populateRowsFromGroup(frm);
+            frm.trigger("sync_parent_to_child");
+            return syncRowsToItemGroup(frm);
+        });
+    },
+
+    refresh(frm) {
+        setProductQuery(frm);
+        const btn = frm.add_custom_button(__("Per Piece Salary Report"), () => {
+            window.open(REPORT_ROUTE, "_blank");
+        });
+        btn.addClass("btn-primary");
+    },
+
+    validate(frm) {
+        validateDateRange(frm);
+        frm.trigger("sync_parent_to_child");
+        frm.trigger("recalc_amount_and_total");
+    },
+
+    from_date(frm) {
+        validateDateRange(frm);
+        frm.trigger("sync_parent_to_child");
+    },
+
+    to_date(frm) {
+        validateDateRange(frm);
+        frm.trigger("sync_parent_to_child");
+    },
+
+    po_number(frm) {
+        frm.trigger("sync_parent_to_child");
+    },
+
+    employee(frm) {
+        loadParentEmployeeName(frm).then(() => {
+            frm.trigger("sync_parent_to_child");
+            frm.refresh_field(CHILD_TABLE_FIELD);
+        });
+    },
+
+    item_group(frm) {
+        setProductQuery(frm);
+        loadItemsForGroup(frm).then(() => {
+            populateRowsFromGroup(frm);
+            frm.refresh_field(CHILD_TABLE_FIELD);
+            return syncRowsToItemGroup(frm);
+        });
+    },
+
+    sync_parent_to_child(frm) {
+        const rows = frm.doc[CHILD_TABLE_FIELD] || [];
+        if (!rows.length) return;
+
+        const fromDate = frm.doc.from_date || null;
+        const toDate = frm.doc.to_date || null;
+        const poNumber = frm.doc.po_number || null;
+
+        applyParentEmployeeToRows(frm);
+        rows.forEach((row) => {
+            row.from_date = fromDate;
+            row.to_date = toDate;
+            row.po_number = poNumber;
+            if (!row.process_size) {
+                row.process_size = PROCESS_SIZE_DEFAULT;
+            }
+            calculateRowAmount(row);
+        });
+
+        frm.refresh_field(CHILD_TABLE_FIELD);
+        frm.trigger("recalc_amount_and_total");
+    },
+
+    recalc_amount_and_total(frm) {
+        const rows = frm.doc[CHILD_TABLE_FIELD] || [];
+        let totalAmount = 0;
+        let totalQty = 0;
+
+        rows.forEach((row) => {
+            if (!row.process_size) {
+                row.process_size = PROCESS_SIZE_DEFAULT;
+            }
+            calculateRowAmount(row);
+            totalAmount += flt(row.amount, DECIMALS);
+            totalQty += flt(row.qty, DECIMALS);
+        });
+
+        frm.refresh_field(CHILD_TABLE_FIELD);
+        frm.set_value("total_amount", flt(totalAmount, DECIMALS));
+        frm.set_value("total_qty", flt(totalQty, DECIMALS));
+    },
+
+    perpiece_add(frm) {
+        frm.trigger("sync_parent_to_child");
+        loadItemsForGroup(frm).then(() => syncRowsToItemGroup(frm));
+    },
+
+    perpiece_remove(frm) {
+        frm.trigger("recalc_amount_and_total");
+    },
+});
+
+frappe.ui.form.on("Per Piece", {
+    form_render(frm, cdt, cdn) {
+        const row = locals[cdt][cdn];
+        row.from_date = frm.doc.from_date || null;
+        row.to_date = frm.doc.to_date || null;
+        row.po_number = frm.doc.po_number || null;
+        if (!row.process_size) {
+            frappe.model.set_value(cdt, cdn, "process_size", PROCESS_SIZE_DEFAULT);
+        }
+        loadItemsForGroup(frm).then(() => {
+            const autoProduct = getAutoGroupProduct(frm);
+            if (!row.product && autoProduct) {
+                frappe.model
+                    .set_value(cdt, cdn, "product", autoProduct)
+                    .then(() => applyItemDefaults(frm, cdt, cdn));
+                return;
+            }
+            calculateRowAmount(row);
+            frm.trigger("recalc_amount_and_total");
+        });
+    },
+
+    product(frm, cdt, cdn) {
+        applyItemDefaults(frm, cdt, cdn);
+    },
+
+    qty(frm, cdt, cdn) {
+        const row = locals[cdt][cdn];
+        calculateRowAmount(row);
+        frappe.model.set_value(cdt, cdn, "amount", row.amount);
+        frm.trigger("recalc_amount_and_total");
+    },
+
+    rate(frm, cdt, cdn) {
+        const row = locals[cdt][cdn];
+        calculateRowAmount(row);
+        frappe.model.set_value(cdt, cdn, "amount", row.amount);
+        frm.trigger("recalc_amount_and_total");
+    },
+
+    process_size(frm, cdt, cdn) {
+        const row = locals[cdt][cdn];
+        if (!row.process_size) {
+            frappe.model.set_value(cdt, cdn, "process_size", PROCESS_SIZE_DEFAULT);
+        }
+    },
+});
+"""
+
+
 WEB_PAGE_HTML = """
 <div class="pp-wrap">
   <div class="pp-filters">
     <label>From Date <input type="date" id="pp-from-date" /></label>
     <label>To Date <input type="date" id="pp-to-date" /></label>
     <label>Employee <select id="pp-employee"><option value="">All</option></select></label>
+    <label>Item Group <select id="pp-item-group"><option value="">All</option></select></label>
     <label>Product <select id="pp-product"><option value="">All</option></select></label>
     <label>Process Type <select id="pp-process-type"><option value="">All</option></select></label>
     <label>PO Number <select id="pp-po-number"><option value="">All</option></select></label>
@@ -2150,6 +2686,9 @@ WEB_PAGE_HTML = """
   .pp-entry-actions { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
   .pp-entry-list { margin-top: 10px; font-size: 12px; color: #475569; }
   .pp-pay-input { width: 120px; border: 1px solid #cbd5e1; border-radius: 6px; padding: 4px 6px; font-size: 12px; }
+  .pp-entry-card .pp-table th, .pp-entry-card .pp-table td { vertical-align: middle; }
+  .pp-entry-card .pp-table .pp-pay-input { width: 100%; min-width: 0; max-width: none; box-sizing: border-box; }
+  .pp-entry-card .pp-table .pp-entry-view { background: #f8fafc; color: #334155; }
   .pp-jv-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; }
   .pp-jv-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #334155; }
   .pp-jv-grid input, .pp-jv-grid select { border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px 10px; font-size: 13px; }
@@ -2173,7 +2712,7 @@ WEB_PAGE_HTML = """
     currentTab: "all",
     rows: [],
     columns: [],
-    filterOptions: { employees: [], products: [], process_types: [] },
+    filterOptions: { employees: [], item_groups: [], products: [], process_types: [] },
     adjustments: {},
     advanceBalances: {},
     advanceRows: [],
@@ -2190,6 +2729,9 @@ WEB_PAGE_HTML = """
   function num(v) { var n = Number(v || 0); return isNaN(n) ? 0 : n; }
   function whole(v) { return Math.max(0, Math.round(num(v))); }
   function fmt(v) { return num(v).toLocaleString(undefined, { maximumFractionDigits: 2 }); }
+  function baseProcessSizeOptions() {
+    return ["No Size", "Single", "Double", "King", "Supper King"];
+  }
   function isStatusField(fieldname) {
     var f = String(fieldname || "");
     return f === "jv_status" || f === "booking_status" || f === "payment_status";
@@ -2388,6 +2930,58 @@ WEB_PAGE_HTML = """
     });
   }
 
+  function refreshTopProductOptions() {
+    var productSelect = el("pp-product");
+    if (!productSelect) return;
+    var selectedItemGroup = String((el("pp-item-group") && el("pp-item-group").value) || "").trim();
+    var currentProduct = String(productSelect.value || "").trim();
+    var productMap = {};
+    var productRows = [];
+    var productMetaMap = (state.entryMeta && state.entryMeta.productMetaMap) || {};
+
+    function canUseProduct(productName, itemGroup) {
+      if (!productName) return false;
+      if (!selectedItemGroup) return true;
+      if (itemGroup) return String(itemGroup).trim() === selectedItemGroup;
+      return false;
+    }
+
+    (state.entryMeta.masterProcessRows || []).forEach(function (item) {
+      var productName = String((item && item.item) || "").trim();
+      var itemGroup = String((item && item.item_group) || "").trim();
+      if (!canUseProduct(productName, itemGroup) || productMap[productName]) return;
+      productMap[productName] = true;
+      productRows.push({ value: productName, label: productName });
+    });
+
+    (state.rows || []).forEach(function (row) {
+      var productName = String((row && row.product) || "").trim();
+      var itemGroup = String((row && row.item_group) || "").trim();
+      if (!canUseProduct(productName, itemGroup) || productMap[productName]) return;
+      productMap[productName] = true;
+      productRows.push({ value: productName, label: productName });
+    });
+
+    (state.filterOptions.products || []).forEach(function (productNameRaw) {
+      var productName = String(productNameRaw || "").trim();
+      var meta = productMetaMap[productName] || {};
+      var itemGroup = String(meta.item_group || "").trim();
+      if (!canUseProduct(productName, itemGroup) || productMap[productName]) return;
+      productMap[productName] = true;
+      productRows.push({ value: productName, label: productName });
+    });
+
+    productRows.sort(function (a, b) {
+      return String(a.label || "").localeCompare(String(b.label || ""));
+    });
+    setOptions(productSelect, productRows, "value", "label", "All");
+    if (currentProduct && productMap[currentProduct]) {
+      productSelect.value = currentProduct;
+    } else if (selectedItemGroup) {
+      productSelect.value = "";
+    }
+  }
+
   function getReportArgs() {
     var fromVal = el("pp-from-date").value || "";
     var toVal = el("pp-to-date").value || "";
@@ -2402,6 +2996,7 @@ WEB_PAGE_HTML = """
       from_date: fromVal,
       to_date: toVal,
       employee: el("pp-employee").value || "",
+      item_group: el("pp-item-group") ? (el("pp-item-group").value || "") : "",
       product: el("pp-product").value || "",
       process_type: el("pp-process-type").value || "",
       po_number: el("pp-po-number") ? (el("pp-po-number").value || "") : "",
@@ -2579,20 +3174,28 @@ WEB_PAGE_HTML = """
 
   function loadFilterOptions() {
     return callApi("get_per_piece_salary_report", { get_options: 1 }).then(function (m) {
+      var currentEmployee = el("pp-employee") ? (el("pp-employee").value || "") : "";
+      var currentItemGroup = el("pp-item-group") ? (el("pp-item-group").value || "") : "";
+      var currentProcessType = el("pp-process-type") ? (el("pp-process-type").value || "") : "";
       state.filterOptions = {
         employees: (m && m.employees) || [],
+        item_groups: (m && m.item_groups) || [],
         products: (m && m.products) || [],
         process_types: (m && m.process_types) || []
       };
       var emps = (state.filterOptions.employees || []).map(function (v) { return { value: v, label: v }; });
-      var prods = (m && m.products || []).map(function (v) { return { value: v, label: v }; });
+      var itemGroups = (state.filterOptions.item_groups || []).map(function (v) { return { value: v, label: v }; });
       var ptypes = (m && m.process_types || []).map(function (v) { return { value: v, label: v }; });
       state.advanceBalances = (m && m.advance_balances) || {};
       state.advanceRows = (m && m.advance_rows) || [];
       state.advanceMonths = (m && m.advance_months) || [];
       setOptions(el("pp-employee"), emps, "value", "label", "All");
-      setOptions(el("pp-product"), prods, "value", "label", "All");
+      setOptions(el("pp-item-group"), itemGroups, "value", "label", "All");
       setOptions(el("pp-process-type"), ptypes, "value", "label", "All");
+      if (el("pp-employee")) el("pp-employee").value = currentEmployee;
+      if (el("pp-item-group")) el("pp-item-group").value = currentItemGroup;
+      if (el("pp-process-type")) el("pp-process-type").value = currentProcessType;
+      refreshTopProductOptions();
       setOptions(el("pp-po-number"), [], "value", "label", "All");
       setOptions(el("pp-entry-no"), [], "value", "label", "All");
       rebuildEntryMetaLookups();
@@ -2612,25 +3215,36 @@ WEB_PAGE_HTML = """
       })
       .catch(function () {});
 
-    var itemPromise = callGetList("Item", ["name"], { disabled: 0 }, 2000)
+    var itemGroupPromise = callGetList("Item Group", ["name"], {}, 2000)
       .then(function (rows) {
-        state.entryMeta.masterProductOptions = (rows || []).map(function (r) {
+        state.entryMeta.masterItemGroupOptions = (rows || []).map(function (r) {
           return { value: r.name, label: r.name };
         });
       })
       .catch(function () {});
 
-    return Promise.all([employeePromise, itemPromise]).then(function () {
+    var itemPromise = callApi("per_piece_payroll.api.get_item_process_rows", {})
+      .then(function (rows) {
+        state.entryMeta.masterProcessRows = rows || [];
+      })
+      .catch(function () {});
+
+    return Promise.all([employeePromise, itemGroupPromise, itemPromise]).then(function () {
       rebuildEntryMetaLookups();
+      refreshTopProductOptions();
     });
   }
 
   function rebuildEntryMetaLookups() {
     var employeeSet = {};
+    var itemGroupSet = {};
     var productSet = {};
     var processSet = {};
+    var processSizeSet = {};
     var employeeNameMap = {};
-    var rateMap = {};
+    var productMetaMap = {};
+    var productProcessMap = {};
+    var currentItemGroup = String(state.entryMeta.item_group || "").trim();
 
     (state.entryMeta.masterEmployeeOptions || []).forEach(function (opt) {
       if (opt && opt.value) {
@@ -2640,29 +3254,87 @@ WEB_PAGE_HTML = """
         if (nameOnly) employeeNameMap[String(opt.value)] = nameOnly;
       }
     });
-    (state.entryMeta.masterProductOptions || []).forEach(function (opt) {
-      if (opt && opt.value) productSet[String(opt.value)] = true;
+    (state.entryMeta.masterItemGroupOptions || []).forEach(function (opt) {
+      if (opt && opt.value) itemGroupSet[String(opt.value)] = true;
+    });
+    (baseProcessSizeOptions() || []).forEach(function (value) {
+      if (value) processSizeSet[String(value)] = true;
+    });
+    (state.entryMeta.masterProcessRows || []).forEach(function (item) {
+      var itemName = String((item && item.item) || "").trim();
+      var itemGroup = String((item && item.item_group) || "").trim();
+      var employee = String((item && item.employee) || "").trim();
+      var employeeName = String((item && item.employee_name) || "").trim();
+      var processType = String((item && item.process_type) || "").trim();
+      var processSize = String((item && item.process_size) || "").trim() || "No Size";
+      var rate = num(item && item.rate);
+      if (!itemName) return;
+      if (itemGroup) itemGroupSet[itemGroup] = true;
+      if (employee) {
+        employeeSet[employee] = true;
+        if (employeeName) employeeNameMap[employee] = employeeName;
+      }
+      if (!productProcessMap[itemName]) productProcessMap[itemName] = [];
+      productProcessMap[itemName].push({
+        item_group: itemGroup,
+        employee: employee,
+        employee_name: employeeName,
+        process_type: processType,
+        process_size: processSize,
+        rate: rate,
+      });
+      if (!productMetaMap[itemName]) {
+        productMetaMap[itemName] = {
+          item_group: itemGroup,
+          employee: employee,
+          employee_name: employeeName,
+          process_type: processType,
+          process_size: processSize,
+          rate: rate,
+        };
+      }
+      if (!currentItemGroup || itemGroup === currentItemGroup) {
+        productSet[itemName] = true;
+      }
+      if (processType) processSet[processType] = true;
+      if (processSize) processSizeSet[processSize] = true;
     });
 
     (state.filterOptions.employees || []).forEach(function (v) { if (v) employeeSet[String(v)] = true; });
-    (state.filterOptions.products || []).forEach(function (v) { if (v) productSet[String(v)] = true; });
+    (state.filterOptions.item_groups || []).forEach(function (v) { if (v) itemGroupSet[String(v)] = true; });
+    (state.filterOptions.products || []).forEach(function (v) {
+      var productName = String(v || "").trim();
+      if (!productName) return;
+      var meta = productMetaMap[productName] || {};
+      if (!currentItemGroup || !meta.item_group || meta.item_group === currentItemGroup) {
+        productSet[productName] = true;
+      }
+    });
     (state.filterOptions.process_types || []).forEach(function (v) { if (v) processSet[String(v)] = true; });
 
     (state.rows || []).forEach(function (r) {
       var emp = String(r.employee || "").trim();
       var name1 = String(r.name1 || "").trim();
+      var itemGroup = String(r.item_group || "").trim();
       var product = String(r.product || "").trim();
       var processType = String(r.process_type || "").trim();
+      var processSize = String(r.process_size || "").trim() || "No Size";
       var rate = num(r.rate);
 
       if (emp) {
         employeeSet[emp] = true;
         if (name1) employeeNameMap[emp] = name1;
       }
-      if (product) productSet[product] = true;
+      if (itemGroup) itemGroupSet[itemGroup] = true;
+      if (product && (!currentItemGroup || !itemGroup || itemGroup === currentItemGroup)) productSet[product] = true;
       if (processType) processSet[processType] = true;
-      if (product && processType && rate > 0) {
-        rateMap[product + "||" + processType] = rate;
+      if (processSize) processSizeSet[processSize] = true;
+      if (product) {
+        if (!productMetaMap[product]) productMetaMap[product] = {};
+        if (itemGroup && !productMetaMap[product].item_group) productMetaMap[product].item_group = itemGroup;
+        if (processType && !productMetaMap[product].process_type) productMetaMap[product].process_type = processType;
+        if (processSize && !productMetaMap[product].process_size) productMetaMap[product].process_size = processSize;
+        if (rate > 0 && !productMetaMap[product].rate) productMetaMap[product].rate = rate;
       }
     });
 
@@ -2670,14 +3342,29 @@ WEB_PAGE_HTML = """
       var label = employeeNameMap[emp] ? (employeeNameMap[emp] + " (" + emp + ")") : emp;
       return { value: emp, label: label };
     });
+    state.entryMeta.itemGroupOptions = Object.keys(itemGroupSet).sort().map(function (group) {
+      return { value: group, label: group };
+    });
     state.entryMeta.productOptions = Object.keys(productSet).sort().map(function (p) {
       return { value: p, label: p };
     });
     state.entryMeta.processOptions = Object.keys(processSet).sort().map(function (p) {
       return { value: p, label: p };
     });
+    state.entryMeta.processSizeOptions = Object.keys(processSizeSet).sort(function (a, b) {
+      var order = baseProcessSizeOptions();
+      var ai = order.indexOf(a);
+      var bi = order.indexOf(b);
+      if (ai < 0 && bi < 0) return String(a).localeCompare(String(b));
+      if (ai < 0) return 1;
+      if (bi < 0) return -1;
+      return ai - bi;
+    }).map(function (value) {
+      return { value: value, label: value };
+    });
     state.entryMeta.employeeNameMap = employeeNameMap;
-    state.entryMeta.rateMap = rateMap;
+    state.entryMeta.productMetaMap = productMetaMap;
+    state.entryMeta.productProcessMap = productProcessMap;
   }
 
   function groupRows(rows, keys, builder) {
@@ -3568,7 +4255,8 @@ WEB_PAGE_HTML = """
           name: key,
           from_date: r.from_date || "",
           to_date: r.to_date || "",
-          po_number: r.po_number || ""
+          po_number: r.po_number || "",
+          item_group: r.item_group || ""
         };
       }
     });
@@ -3610,6 +4298,7 @@ WEB_PAGE_HTML = """
     var html = ""
       + "<div class='pp-summary-chips'>"
       + "<span class='pp-summary-chip'>PO: " + esc(first.po_number || "-") + "</span>"
+      + "<span class='pp-summary-chip'>Item Group: " + esc(first.item_group || "-") + "</span>"
       + "<span class='pp-summary-chip'>Rows: " + esc(rows.length) + "</span>"
       + "<span class='pp-summary-chip'>Qty: " + esc(fmt(totalQty)) + "</span>"
       + "<span class='pp-summary-chip'>Amount: " + esc(fmt(totalAmount)) + "</span>"
@@ -3619,13 +4308,14 @@ WEB_PAGE_HTML = """
       + "</div>";
 
     html += "<table class='pp-table'><thead><tr>"
-      + "<th>Employee</th><th>Product</th><th>Process</th><th>Qty</th><th>Rate</th><th>Amount</th><th>Booking</th><th>Payment</th>"
+      + "<th>Employee</th><th>Product</th><th>Process</th><th>Process Size</th><th>Qty</th><th>Rate</th><th>Amount</th><th>Booking</th><th>Payment</th>"
       + "</tr></thead><tbody>";
     rows.forEach(function (r) {
       html += "<tr>"
         + "<td>" + esc(employeeLabel(r) || "") + "</td>"
         + "<td>" + esc(r.product || "") + "</td>"
         + "<td>" + esc(r.process_type || "") + "</td>"
+        + "<td>" + esc(r.process_size || "No Size") + "</td>"
         + "<td class='num'>" + esc(fmt(r.qty)) + "</td>"
         + "<td class='num'>" + esc(fmt(r.rate)) + "</td>"
         + "<td class='num'>" + esc(fmt(r.amount)) + "</td>"
@@ -3643,8 +4333,166 @@ WEB_PAGE_HTML = """
     if (modal) modal.style.display = "none";
   }
 
+  function getAutoEntryProduct() {
+    var productOptions = state.entryMeta.productOptions || [];
+    return productOptions.length === 1 ? String((productOptions[0] && productOptions[0].value) || "").trim() : "";
+  }
+
+  function getCurrentGroupItems() {
+    var currentItemGroup = String(state.entryMeta.item_group || "").trim();
+    return (state.entryMeta.masterProcessRows || []).filter(function (item) {
+      if (!currentItemGroup) return false;
+      return String((item && item.item_group) || "").trim() === currentItemGroup;
+    });
+  }
+
+  function entryRowIsBlank(row) {
+    if (!row) return true;
+    return !(
+      String(row.employee || "").trim() ||
+      String(row.name1 || "").trim() ||
+      String(row.product || "").trim() ||
+      num(row.qty) ||
+      num(row.rate) ||
+      entryAmount(row)
+    );
+  }
+
+  function syncEntryEmployeeToRows() {
+    var employee = String(state.entryMeta.employee || "").trim();
+    if (!employee) return;
+    var employeeName = String(((state.entryMeta.employeeNameMap || {})[employee]) || "").trim();
+    (state.entryRows || []).forEach(function (row) {
+      row.employee = employee;
+      if (employeeName) row.name1 = employeeName;
+    });
+  }
+
+  function applyEntryItemDefaults(row) {
+    if (!row) return;
+    var productName = String(row.product || "").trim();
+    var processRows = ((state.entryMeta.productProcessMap || {})[productName] || []).slice();
+    var meta = (state.entryMeta.productMetaMap || {})[productName] || {};
+    if (!productName) {
+      row.process_type = "";
+      row.process_size = "No Size";
+      row.rate = 0;
+      return;
+    }
+    if (processRows.length) {
+      var currentType = String(row.process_type || "").trim();
+      var currentSize = String(row.process_size || "").trim();
+      var matches = processRows.slice();
+      if (currentType) {
+        var typed = matches.filter(function (entry) {
+          return String(entry.process_type || "").trim() === currentType;
+        });
+        if (typed.length) matches = typed;
+      }
+      if (currentSize) {
+        var sized = matches.filter(function (entry) {
+          return String(entry.process_size || "No Size").trim() === currentSize;
+        });
+        if (sized.length) matches = sized;
+      }
+      var currentEmployee = String(row.employee || "").trim();
+      if (currentEmployee) {
+        var employeeMatched = matches.filter(function (entry) {
+          return String(entry.employee || "").trim() === currentEmployee;
+        });
+        if (employeeMatched.length) matches = employeeMatched;
+      }
+      meta = matches[0] || processRows[0];
+    }
+    var selectedEmployee = String(state.entryMeta.employee || "").trim();
+    if (meta.employee && (!String(row.employee || "").trim() || String(row.employee || "").trim() === selectedEmployee)) {
+      row.employee = String(meta.employee || "").trim();
+      row.name1 = String(meta.employee_name || (state.entryMeta.employeeNameMap || {})[row.employee] || "").trim();
+    }
+    if (meta.process_type) row.process_type = meta.process_type;
+    row.process_size = meta.process_size || "No Size";
+    if (num(meta.rate) > 0) row.rate = whole(meta.rate);
+  }
+
+  function syncEntryRowsToItemGroup() {
+    var currentItemGroup = String(state.entryMeta.item_group || "").trim();
+    var productMetaMap = state.entryMeta.productMetaMap || {};
+    var allowedMap = {};
+    (state.entryMeta.productOptions || []).forEach(function (opt) {
+      var value = String((opt && opt.value) || "").trim();
+      if (value) allowedMap[value] = true;
+    });
+    var autoProduct = getAutoEntryProduct();
+
+    (state.entryRows || []).forEach(function (row) {
+      var productName = String(row.product || "").trim();
+      if (currentItemGroup && productName) {
+        var meta = productMetaMap[productName] || {};
+        var rowGroup = String(meta.item_group || "").trim();
+        if (!allowedMap[productName] || (rowGroup && rowGroup !== currentItemGroup)) {
+          row.product = "";
+          row.process_type = "";
+          row.process_size = "No Size";
+          row.rate = 0;
+          productName = "";
+        }
+      }
+
+      if (!productName && autoProduct) {
+        row.product = autoProduct;
+        productName = autoProduct;
+      }
+
+      if (productName) {
+        applyEntryItemDefaults(row);
+      } else if (!row.process_size) {
+        row.process_size = "No Size";
+      }
+    });
+  }
+
+  function populateEntryRowsFromItemGroup() {
+    var groupItems = getCurrentGroupItems();
+    if (!groupItems.length) return;
+    ensureEntryRows();
+    var hasMeaningfulRows = (state.entryRows || []).some(function (row) {
+      return !entryRowIsBlank(row);
+    });
+    if (hasMeaningfulRows) return;
+    state.entryRows = groupItems.map(function (item) {
+      var itemEmployee = String((item && item.employee) || "").trim();
+      var fallbackEmployee = String(state.entryMeta.employee || "").trim();
+      var finalEmployee = itemEmployee || fallbackEmployee;
+      var row = {
+        employee: finalEmployee,
+        name1: String((item && item.employee_name) || ((state.entryMeta.employeeNameMap || {})[finalEmployee]) || "").trim(),
+        product: String((item && item.item) || "").trim(),
+        process_type: String((item && item.process_type) || "").trim(),
+        process_size: String((item && item.process_size) || "").trim() || "No Size",
+        qty: 0,
+        rate: whole(item && item.rate),
+      };
+      return row;
+    });
+  }
+
   function newEntryRow() {
-    return { employee: "", name1: "", product: "", process_type: "", qty: 0, rate: 0 };
+    var employee = String(state.entryMeta.employee || "").trim();
+    var row = {
+      employee: employee,
+      name1: String(((state.entryMeta.employeeNameMap || {})[employee]) || "").trim(),
+      product: "",
+      process_type: "",
+      process_size: "No Size",
+      qty: 0,
+      rate: 0
+    };
+    var autoProduct = getAutoEntryProduct();
+    if (autoProduct) {
+      row.product = autoProduct;
+      applyEntryItemDefaults(row);
+    }
+    return row;
   }
 
   function ensureEntryRows() {
@@ -3660,16 +4508,22 @@ WEB_PAGE_HTML = """
     if (!wrap) return;
     ensureEntryRows();
     rebuildEntryMetaLookups();
+    populateEntryRowsFromItemGroup();
     var docs = uniqueSalaryDocs();
     if (!state.entryMeta.from_date) state.entryMeta.from_date = el("pp-from-date").value || "";
     if (!state.entryMeta.to_date) state.entryMeta.to_date = el("pp-to-date").value || "";
     if (state.entryMeta.po_number === undefined) state.entryMeta.po_number = "";
+    if (state.entryMeta.item_group === undefined) state.entryMeta.item_group = el("pp-item-group") ? (el("pp-item-group").value || "") : "";
+    if (state.entryMeta.employee === undefined) state.entryMeta.employee = el("pp-employee") ? (el("pp-employee").value || "") : "";
     if (state.entryMeta.edit_name === undefined) state.entryMeta.edit_name = "";
     var employeeOptions = state.entryMeta.employeeOptions || [];
+    var itemGroupOptions = state.entryMeta.itemGroupOptions || [];
     var productOptions = state.entryMeta.productOptions || [];
     var processOptions = state.entryMeta.processOptions || [];
     var employeeNameMap = state.entryMeta.employeeNameMap || {};
     var editing = !!(state.entryMeta.edit_name || "");
+    syncEntryEmployeeToRows();
+    syncEntryRowsToItemGroup();
 
     function selectHtml(options, value, idx, field) {
       var htmlParts = [];
@@ -3689,6 +4543,10 @@ WEB_PAGE_HTML = """
       return htmlParts.join("");
     }
 
+    function readonlyHtml(value) {
+      return "<input class='pp-pay-input pp-entry-view' readonly tabindex='-1' value='" + esc(value || "") + "'>";
+    }
+
     function docsSelectHtml(selectedName) {
       var parts = [];
       parts.push("<select id='pp-entry-edit-name'>");
@@ -3701,6 +4559,44 @@ WEB_PAGE_HTML = """
       return parts.join("");
     }
 
+    function itemGroupSelectHtml(selectedValue) {
+      var parts = [];
+      var current = String(selectedValue || "");
+      var exists = false;
+      parts.push("<select id='pp-entry-item-group'>");
+      parts.push("<option value=''>All Item Groups</option>");
+      (itemGroupOptions || []).forEach(function (opt) {
+        var optValue = String((opt && opt.value) || "");
+        var selected = optValue === current ? " selected" : "";
+        if (selected) exists = true;
+        parts.push("<option value='" + esc(optValue) + "'" + selected + ">" + esc((opt && opt.label) || optValue) + "</option>");
+      });
+      if (current && !exists) {
+        parts.push("<option value='" + esc(current) + "' selected>" + esc(current) + "</option>");
+      }
+      parts.push("</select>");
+      return parts.join("");
+    }
+
+    function employeeSelectHtml(selectedValue) {
+      var parts = [];
+      var current = String(selectedValue || "");
+      var exists = false;
+      parts.push("<select id='pp-entry-employee'>");
+      parts.push("<option value=''>All Employees</option>");
+      (employeeOptions || []).forEach(function (opt) {
+        var optValue = String((opt && opt.value) || "");
+        var selected = optValue === current ? " selected" : "";
+        if (selected) exists = true;
+        parts.push("<option value='" + esc(optValue) + "'" + selected + ">" + esc((opt && opt.label) || optValue) + "</option>");
+      });
+      if (current && !exists) {
+        parts.push("<option value='" + esc(current) + "' selected>" + esc(current) + "</option>");
+      }
+      parts.push("</select>");
+      return parts.join("");
+    }
+
     var html = "<div class='pp-entry-card'>"
       + "<strong>Data Enter (" + (editing ? "Edit Existing Per Piece Salary" : "Create Per Piece Salary") + ")</strong>"
       + "<div style='margin-top:6px;color:#475569;font-size:12px;'>PO Number is mandatory. Use Edit controls to fix draft entry mistakes.</div>"
@@ -3708,6 +4604,8 @@ WEB_PAGE_HTML = """
       + "<label>Edit Entry " + docsSelectHtml(state.entryMeta.edit_name || "") + "</label>"
       + "<label>From Date <input type='date' id='pp-entry-from-date' value='" + esc(state.entryMeta.from_date || "") + "'></label>"
       + "<label>To Date <input type='date' id='pp-entry-to-date' value='" + esc(state.entryMeta.to_date || "") + "'></label>"
+      + "<label>Employee " + employeeSelectHtml(state.entryMeta.employee || "") + "</label>"
+      + "<label>Item Group " + itemGroupSelectHtml(state.entryMeta.item_group || "") + "</label>"
       + "<label>PO Number * <input type='text' id='pp-entry-po-number' required placeholder='Required' value='" + esc(state.entryMeta.po_number || "") + "'></label>"
       + "</div>"
       + "<div class='pp-entry-actions'>"
@@ -3718,7 +4616,7 @@ WEB_PAGE_HTML = """
       + "<button id='pp-entry-save' class='btn btn-primary' type='button'>" + (editing ? "Update Per Piece Salary" : "Save Per Piece Salary") + "</button>"
       + "</div>"
       + "<div id='pp-entry-result' class='pp-jv-result'></div>"
-      + "<table class='pp-table' style='margin-top:8px;'><thead><tr><th>Employee</th><th>Employee First Name</th><th>Product</th><th>Process Type</th><th>Qty</th><th>Rate</th><th>Amount</th><th>Action</th></tr></thead><tbody>";
+      + "<table class='pp-table' style='margin-top:8px;'><thead><tr><th>Employee</th><th>Employee First Name</th><th>Product</th><th>Process Type</th><th>Process Size</th><th>Qty</th><th>Rate</th><th>Amount</th><th>Action</th></tr></thead><tbody>";
     state.entryRows.forEach(function (r, idx) {
       var name1 = r.name1 || (employeeNameMap[r.employee || ""] || "");
       html += "<tr>"
@@ -3726,6 +4624,7 @@ WEB_PAGE_HTML = """
         + "<td><input class='pp-pay-input pp-entry-in' data-idx='" + idx + "' data-field='name1' value='" + esc(name1) + "'></td>"
         + "<td>" + selectHtml(productOptions, r.product || "", idx, "product") + "</td>"
         + "<td>" + selectHtml(processOptions, r.process_type || "", idx, "process_type") + "</td>"
+        + "<td>" + readonlyHtml(r.process_size || "No Size") + "</td>"
         + "<td><input class='pp-pay-input pp-entry-in' type='number' min='0' step='1' inputmode='numeric' data-idx='" + idx + "' data-field='qty' value='" + esc(whole(r.qty)) + "'></td>"
         + "<td><input class='pp-pay-input pp-entry-in' type='number' min='0' step='1' inputmode='numeric' data-idx='" + idx + "' data-field='rate' value='" + esc(whole(r.rate)) + "'></td>"
         + "<td class='num'>" + esc(fmt(entryAmount(r))) + "</td>"
@@ -3739,7 +4638,7 @@ WEB_PAGE_HTML = """
       eAmount += entryAmount(r);
     });
     html += "<tr class='pp-year-total'>"
-      + "<td>Total</td><td></td><td></td><td></td>"
+      + "<td>Total</td><td></td><td></td><td></td><td></td>"
       + "<td class='num'>" + esc(fmt(eQty)) + "</td>"
       + "<td class='num'>" + esc(fmt(eRate)) + "</td>"
       + "<td class='num pp-amt-col'>" + esc(fmt(eAmount)) + "</td>"
@@ -3748,9 +4647,9 @@ WEB_PAGE_HTML = """
     html += "</tbody></table>";
     if (docs.length) {
       html += "<div class='pp-entry-list'><strong>Recent Docs:</strong></div>";
-      html += "<table class='pp-table' style='margin-top:6px;'><thead><tr><th>Per Piece Salary</th><th>From Date</th><th>To Date</th><th>PO Number</th><th>Edit</th><th>Open</th></tr></thead><tbody>";
+      html += "<table class='pp-table' style='margin-top:6px;'><thead><tr><th>Per Piece Salary</th><th>From Date</th><th>To Date</th><th>Item Group</th><th>PO Number</th><th>Edit</th><th>Open</th></tr></thead><tbody>";
       docs.slice(0, 10).forEach(function (d) {
-        html += "<tr><td>" + esc(d.name) + "</td><td>" + esc(d.from_date) + "</td><td>" + esc(d.to_date) + "</td><td>" + esc(d.po_number) + "</td><td><button type='button' class='btn btn-xs btn-default pp-entry-edit-doc' data-name='" + esc(d.name) + "'>Edit</button></td><td><a target='_blank' href='/app/per-piece-salary/" + encodeURIComponent(d.name) + "'>Open</a></td></tr>";
+        html += "<tr><td>" + esc(d.name) + "</td><td>" + esc(d.from_date) + "</td><td>" + esc(d.to_date) + "</td><td>" + esc(d.item_group || "") + "</td><td>" + esc(d.po_number) + "</td><td><button type='button' class='btn btn-xs btn-default pp-entry-edit-doc' data-name='" + esc(d.name) + "'>Edit</button></td><td><a target='_blank' href='/app/per-piece-salary/" + encodeURIComponent(d.name) + "'>Open</a></td></tr>";
       });
       html += "</tbody></table>";
     }
@@ -3765,6 +4664,24 @@ WEB_PAGE_HTML = """
     if (toInput) toInput.addEventListener("change", function () { state.entryMeta.to_date = toInput.value || ""; });
     var poInput = el("pp-entry-po-number");
     if (poInput) poInput.addEventListener("change", function () { state.entryMeta.po_number = poInput.value || ""; });
+    var employeeInput = el("pp-entry-employee");
+    if (employeeInput) {
+      employeeInput.addEventListener("change", function () {
+        state.entryMeta.employee = employeeInput.value || "";
+        syncEntryEmployeeToRows();
+        renderDataEntryTab();
+      });
+    }
+    var itemGroupInput = el("pp-entry-item-group");
+    if (itemGroupInput) {
+      itemGroupInput.addEventListener("change", function () {
+        state.entryMeta.item_group = itemGroupInput.value || "";
+        rebuildEntryMetaLookups();
+        populateEntryRowsFromItemGroup();
+        syncEntryRowsToItemGroup();
+        renderDataEntryTab();
+      });
+    }
     var loadDocBtn = el("pp-entry-load-doc");
     if (loadDocBtn) loadDocBtn.addEventListener("click", function () {
       var selected = (el("pp-entry-edit-name") && el("pp-entry-edit-name").value) || "";
@@ -3775,8 +4692,13 @@ WEB_PAGE_HTML = """
       state.entryMeta.edit_name = "";
       state.entryMeta.from_date = el("pp-from-date").value || "";
       state.entryMeta.to_date = el("pp-to-date").value || "";
+      state.entryMeta.employee = el("pp-employee") ? (el("pp-employee").value || "") : "";
+      state.entryMeta.item_group = el("pp-item-group") ? (el("pp-item-group").value || "") : "";
       state.entryMeta.po_number = "";
-      state.entryRows = [newEntryRow()];
+      rebuildEntryMetaLookups();
+      state.entryRows = [];
+      populateEntryRowsFromItemGroup();
+      if (!state.entryRows.length) state.entryRows = [newEntryRow()];
       renderDataEntryTab();
     });
     var addBtn = el("pp-entry-add-row");
@@ -3805,11 +4727,7 @@ WEB_PAGE_HTML = """
         }
         if (field === "product" || field === "process_type") {
           var row = state.entryRows[idx];
-          var key = String(row.product || "") + "||" + String(row.process_type || "");
-          var suggestedRate = num((state.entryMeta.rateMap || {})[key]);
-          if (suggestedRate > 0 && num(row.rate) <= 0) {
-            row.rate = whole(suggestedRate);
-          }
+          applyEntryItemDefaults(row);
         }
         renderDataEntryTab();
       }
@@ -3854,6 +4772,8 @@ WEB_PAGE_HTML = """
       state.entryMeta.edit_name = doc.name || "";
       state.entryMeta.from_date = doc.from_date || "";
       state.entryMeta.to_date = doc.to_date || "";
+      state.entryMeta.employee = doc.employee || "";
+      state.entryMeta.item_group = doc.item_group || "";
       state.entryMeta.po_number = doc.po_number || "";
       state.entryRows = (doc.perpiece || []).map(function (r) {
         return {
@@ -3861,6 +4781,7 @@ WEB_PAGE_HTML = """
           name1: r.name1 || "",
           product: r.product || "",
           process_type: r.process_type || "",
+          process_size: r.process_size || "No Size",
           qty: whole(r.qty),
           rate: whole(r.rate)
         };
@@ -3878,6 +4799,8 @@ WEB_PAGE_HTML = """
     var result = el("pp-entry-result");
     var fromDate = (el("pp-entry-from-date").value || state.entryMeta.from_date || "");
     var toDate = (el("pp-entry-to-date").value || state.entryMeta.to_date || "");
+    var employee = (el("pp-entry-employee") && el("pp-entry-employee").value) || state.entryMeta.employee || "";
+    var itemGroup = (el("pp-entry-item-group") && el("pp-entry-item-group").value) || state.entryMeta.item_group || "";
     var po = (el("pp-entry-po-number").value || state.entryMeta.po_number || "");
     var editName = state.entryMeta.edit_name || "";
     if (!po) {
@@ -3893,6 +4816,7 @@ WEB_PAGE_HTML = """
         String(r.name1 || "").trim(),
         String(r.product || "").trim(),
         String(r.process_type || "").trim(),
+        String(r.process_size || "No Size").trim(),
         qty,
         whole(r.rate)
       ].join("::"));
@@ -3907,6 +4831,8 @@ WEB_PAGE_HTML = """
       entry_name: editName,
       from_date: fromDate,
       to_date: toDate,
+      employee: employee,
+      item_group: itemGroup,
       po_number: po,
       rows: lines.join(";;")
     }).then(function (msg) {
@@ -3948,9 +4874,11 @@ WEB_PAGE_HTML = """
         { fieldname: "from_date", label: "From Date" },
         { fieldname: "to_date", label: "To Date" },
         { fieldname: "po_number", label: "PO Number" },
+        { fieldname: "item_group", label: "Item Group" },
         { fieldname: "name1", label: "Employee" },
         { fieldname: "product", label: "Product" },
         { fieldname: "process_type", label: "Process Type" },
+        { fieldname: "process_size", label: "Process Size" },
         { fieldname: "qty", label: "Qty", numeric: true },
         { fieldname: "rate", label: "Rate", numeric: true },
         { fieldname: "amount", label: "Amount", numeric: true },
@@ -4240,6 +5168,7 @@ WEB_PAGE_HTML = """
         state.advanceMonths = (msg && msg.advance_months) || [];
       }).then(function () {
         rebuildEntryMetaLookups();
+        refreshTopProductOptions();
         normalizeExcludedEmployees();
         normalizeAdjustmentsForEmployees();
         normalizePaymentExcludedEmployees();
@@ -4623,6 +5552,12 @@ WEB_PAGE_HTML = """
     if (value) el("pp-pay-payable-account").value = value;
   });
   el("pp-load-btn").addEventListener("click", loadReport);
+  if (el("pp-item-group")) {
+    el("pp-item-group").addEventListener("change", function () {
+      refreshTopProductOptions();
+      renderCurrentTab();
+    });
+  }
   if (el("pp-po-number")) {
     el("pp-po-number").addEventListener("change", renderCurrentTab);
   }
@@ -4652,452 +5587,521 @@ WEB_PAGE_HTML = """
 
 
 def _update_doc(doctype: str, name: str, updates: dict, results: list[str]) -> None:
-    if not frappe.db.exists(doctype, name):
-        results.append(f"Skipped: {doctype} '{name}' does not exist")
-        return
+	if not frappe.db.exists(doctype, name):
+		results.append(f"Skipped: {doctype} '{name}' does not exist")
+		return
 
-    doc = frappe.get_doc(doctype, name)
-    changed = False
-    for fieldname, value in updates.items():
-        if doc.get(fieldname) != value:
-            doc.set(fieldname, value)
-            changed = True
+	doc = frappe.get_doc(doctype, name)
+	changed = False
+	for fieldname, value in updates.items():
+		if doc.get(fieldname) != value:
+			doc.set(fieldname, value)
+			changed = True
 
-    if changed:
-        doc.save(ignore_permissions=True)
-        results.append(f"Updated: {doctype} '{name}'")
-    else:
-        results.append(f"No change: {doctype} '{name}'")
+	if changed:
+		doc.save(ignore_permissions=True)
+		results.append(f"Updated: {doctype} '{name}'")
+	else:
+		results.append(f"No change: {doctype} '{name}'")
 
 
 def _upsert_doc(doctype: str, name: str, updates: dict, results: list[str]) -> None:
-    if frappe.db.exists(doctype, name):
-        _update_doc(doctype, name, updates, results)
-        return
+	if frappe.db.exists(doctype, name):
+		_update_doc(doctype, name, updates, results)
+		return
 
-    doc = frappe.new_doc(doctype)
-    doc.name = name
-    for fieldname, value in updates.items():
-        doc.set(fieldname, value)
-    doc.insert(ignore_permissions=True)
-    results.append(f"Created: {doctype} '{name}'")
+	doc = frappe.new_doc(doctype)
+	doc.name = name
+	for fieldname, value in updates.items():
+		doc.set(fieldname, value)
+	doc.insert(ignore_permissions=True)
+	results.append(f"Created: {doctype} '{name}'")
 
 
 def _ensure_custom_field(
-    fieldname: str,
-    label: str,
-    fieldtype: str,
-    options: str | None,
-    insert_after: str,
-    results: list[str],
-    doctype: str = "Per Piece",
-    read_only: int = 1,
-    in_list_view: int = 1,
-    default: str | None = None,
-    reqd: int = 0,
-    no_copy: int = 1,
-    allow_fieldtype_override: int = 0,
+	fieldname: str,
+	label: str,
+	fieldtype: str,
+	options: str | None,
+	insert_after: str,
+	results: list[str],
+	doctype: str = "Per Piece",
+	read_only: int = 1,
+	in_list_view: int = 1,
+	default: str | None = None,
+	reqd: int = 0,
+	no_copy: int = 1,
+	allow_fieldtype_override: int = 0,
 ) -> None:
-    existing = frappe.db.get_value("Custom Field", {"dt": doctype, "fieldname": fieldname}, "name")
-    payload = {
-        "dt": doctype,
-        "fieldname": fieldname,
-        "label": label,
-        "fieldtype": fieldtype,
-        "insert_after": insert_after,
-        "read_only": read_only,
-        "in_list_view": in_list_view,
-        "no_copy": no_copy,
-        "reqd": reqd,
-    }
-    if options is not None:
-        payload["options"] = options
-    if default is not None:
-        payload["default"] = default
+	existing = frappe.db.get_value("Custom Field", {"dt": doctype, "fieldname": fieldname}, "name")
+	payload = {
+		"dt": doctype,
+		"fieldname": fieldname,
+		"label": label,
+		"fieldtype": fieldtype,
+		"insert_after": insert_after,
+		"read_only": read_only,
+		"in_list_view": in_list_view,
+		"no_copy": no_copy,
+		"reqd": reqd,
+	}
+	if options is not None:
+		payload["options"] = options
+	if default is not None:
+		payload["default"] = default
+
+	if existing:
+		doc = frappe.get_doc("Custom Field", existing)
+		force_override = bool(allow_fieldtype_override and doc.get("fieldtype") != fieldtype)
+		if force_override:
+			for key, value in payload.items():
+				frappe.db.set_value("Custom Field", existing, key, value, update_modified=False)
+			results.append(f"Updated (force): Custom Field '{doctype}.{fieldname}'")
+			return
+
+		changed = False
+		skipped_fieldtype = False
+		for key, value in payload.items():
+			if key == "fieldtype" and doc.get("fieldtype") != value and not allow_fieldtype_override:
+				skipped_fieldtype = True
+				continue
+			if doc.get(key) != value:
+				doc.set(key, value)
+				changed = True
+		if changed:
+			doc.save(ignore_permissions=True)
+			if skipped_fieldtype:
+				results.append(f"Updated (except fieldtype): Custom Field '{doctype}.{fieldname}'")
+			else:
+				results.append(f"Updated: Custom Field '{doctype}.{fieldname}'")
+		else:
+			if skipped_fieldtype:
+				results.append(f"Skipped fieldtype update: Custom Field '{doctype}.{fieldname}'")
+			else:
+				results.append(f"No change: Custom Field '{doctype}.{fieldname}'")
+	else:
+		doc = frappe.new_doc("Custom Field")
+		for key, value in payload.items():
+			doc.set(key, value)
+		doc.insert(ignore_permissions=True)
+		results.append(f"Created: Custom Field '{doctype}.{fieldname}'")
 
 
-    if existing:
-        doc = frappe.get_doc("Custom Field", existing)
-        force_override = bool(allow_fieldtype_override and doc.get("fieldtype") != fieldtype)
-        if force_override:
-            for key, value in payload.items():
-                frappe.db.set_value("Custom Field", existing, key, value, update_modified=False)
-            results.append(f"Updated (force): Custom Field '{doctype}.{fieldname}'")
-            return
-
-        changed = False
-        skipped_fieldtype = False
-        for key, value in payload.items():
-            if key == "fieldtype" and doc.get("fieldtype") != value and not allow_fieldtype_override:
-                skipped_fieldtype = True
-                continue
-            if doc.get(key) != value:
-                doc.set(key, value)
-                changed = True
-        if changed:
-            doc.save(ignore_permissions=True)
-            if skipped_fieldtype:
-                results.append(
-                    f"Updated (except fieldtype): Custom Field '{doctype}.{fieldname}'"
-                )
-            else:
-                results.append(f"Updated: Custom Field '{doctype}.{fieldname}'")
-        else:
-            if skipped_fieldtype:
-                results.append(
-                    f"Skipped fieldtype update: Custom Field '{doctype}.{fieldname}'"
-                )
-            else:
-                results.append(f"No change: Custom Field '{doctype}.{fieldname}'")
-    else:
-        doc = frappe.new_doc("Custom Field")
-        for key, value in payload.items():
-            doc.set(key, value)
-        doc.insert(ignore_permissions=True)
-        results.append(f"Created: Custom Field '{doctype}.{fieldname}'")
+def _delete_custom_field(doctype: str, fieldname: str, results: list[str]) -> None:
+	existing = frappe.db.get_value("Custom Field", {"dt": doctype, "fieldname": fieldname}, "name")
+	if not existing:
+		results.append(f"No change: Custom Field '{doctype}.{fieldname}' already absent")
+		return
+	frappe.delete_doc("Custom Field", existing, ignore_permissions=True, force=1)
+	results.append(f"Deleted: Custom Field '{doctype}.{fieldname}'")
 
 
 def _ensure_field_property_setter(
-    doctype: str,
-    fieldname: str,
-    property_name: str,
-    value: str,
-    property_type: str,
-    results: list[str],
+	doctype: str,
+	fieldname: str,
+	property_name: str,
+	value: str,
+	property_type: str,
+	results: list[str],
 ) -> None:
-    try:
-        meta = frappe.get_meta(doctype)
-    except Exception:
-        results.append(f"Skipped: Property Setter for {doctype}.{fieldname} ({property_name})")
-        return
-    if not meta.has_field(fieldname):
-        results.append(f"Skipped: Field {doctype}.{fieldname} not found")
-        return
+	try:
+		meta = frappe.get_meta(doctype)
+	except Exception:
+		results.append(f"Skipped: Property Setter for {doctype}.{fieldname} ({property_name})")
+		return
+	if not meta.has_field(fieldname):
+		results.append(f"Skipped: Field {doctype}.{fieldname} not found")
+		return
 
-    existing = frappe.db.get_value(
-        "Property Setter",
-        {
-            "doc_type": doctype,
-            "doctype_or_field": "DocField",
-            "field_name": fieldname,
-            "property": property_name,
-        },
-        "name",
-    )
+	existing = frappe.db.get_value(
+		"Property Setter",
+		{
+			"doc_type": doctype,
+			"doctype_or_field": "DocField",
+			"field_name": fieldname,
+			"property": property_name,
+		},
+		"name",
+	)
 
-    payload = {
-        "doc_type": doctype,
-        "doctype_or_field": "DocField",
-        "field_name": fieldname,
-        "property": property_name,
-        "property_type": property_type,
-        "value": value,
-    }
+	payload = {
+		"doc_type": doctype,
+		"doctype_or_field": "DocField",
+		"field_name": fieldname,
+		"property": property_name,
+		"property_type": property_type,
+		"value": value,
+	}
 
-    if existing:
-        doc = frappe.get_doc("Property Setter", existing)
-        changed = False
-        for key, val in payload.items():
-            if str(doc.get(key) or "") != str(val or ""):
-                doc.set(key, val)
-                changed = True
-        if changed:
-            doc.save(ignore_permissions=True)
-            results.append(f"Updated: Property Setter {doctype}.{fieldname}.{property_name}")
-        else:
-            results.append(f"No change: Property Setter {doctype}.{fieldname}.{property_name}")
-    else:
-        doc = frappe.new_doc("Property Setter")
-        for key, val in payload.items():
-            doc.set(key, val)
-        doc.insert(ignore_permissions=True)
-        results.append(f"Created: Property Setter {doctype}.{fieldname}.{property_name}")
+	if existing:
+		doc = frappe.get_doc("Property Setter", existing)
+		changed = False
+		for key, val in payload.items():
+			if str(doc.get(key) or "") != str(val or ""):
+				doc.set(key, val)
+				changed = True
+		if changed:
+			doc.save(ignore_permissions=True)
+			results.append(f"Updated: Property Setter {doctype}.{fieldname}.{property_name}")
+		else:
+			results.append(f"No change: Property Setter {doctype}.{fieldname}.{property_name}")
+	else:
+		doc = frappe.new_doc("Property Setter")
+		for key, val in payload.items():
+			doc.set(key, val)
+		doc.insert(ignore_permissions=True)
+		results.append(f"Created: Property Setter {doctype}.{fieldname}.{property_name}")
 
 
 def _migrate_jv_status(results: list[str]) -> None:
-    old_count = frappe.db.count("Per Piece", {"jv_status": "Accounted"})
-    if not old_count:
-        results.append("No change: JV Status values already aligned")
-        return
-    frappe.db.sql("UPDATE `tabPer Piece` SET jv_status = 'Posted' WHERE jv_status = 'Accounted'")
-    results.append("Updated: Migrated " + str(old_count) + " row(s) from JV Status Accounted to Posted")
+	old_count = frappe.db.count("Per Piece", {"jv_status": "Accounted"})
+	if not old_count:
+		results.append("No change: JV Status values already aligned")
+		return
+	frappe.db.sql("UPDATE `tabPer Piece` SET jv_status = 'Posted' WHERE jv_status = 'Accounted'")
+	results.append("Updated: Migrated " + str(old_count) + " row(s) from JV Status Accounted to Posted")
 
 
 def _update_print_format(results: list[str]) -> None:
-    if not frappe.db.exists("Print Format", "Per Piece Print"):
-        results.append("Skipped: Print Format 'Per Piece Print' does not exist")
-        return
+	if not frappe.db.exists("Print Format", "Per Piece Print"):
+		results.append("Skipped: Print Format 'Per Piece Print' does not exist")
+		return
 
-    doc = frappe.get_doc("Print Format", "Per Piece Print")
-    data = json.loads(doc.format_data or "[]")
-    changed = False
-    for row in data:
-        if row.get("fieldname") == "productions":
-            row["fieldname"] = "perpiece"
-            row["label"] = "Per Piece"
-            changed = True
-    landscape_css = (
-        "@media print {\n"
-        "  @page { size: A4 landscape; margin: 8mm; }\n"
-        "  .print-format table { font-size: 10px; }\n"
-        "  .print-format td, .print-format th { padding: 3px 5px !important; }\n"
-        "}\n"
-    )
-    current_css = doc.css or ""
-    if landscape_css.strip() not in current_css:
-        doc.css = (current_css + ("\n" if current_css else "") + landscape_css)
-        changed = True
-    if changed:
-        doc.format_data = json.dumps(data, ensure_ascii=True)
-        doc.save(ignore_permissions=True)
-        results.append("Updated: Print Format 'Per Piece Print'")
-    else:
-        results.append("No change: Print Format 'Per Piece Print'")
+	doc = frappe.get_doc("Print Format", "Per Piece Print")
+	data = json.loads(doc.format_data or "[]")
+	changed = False
+	for row in data:
+		if row.get("fieldname") == "productions":
+			row["fieldname"] = "perpiece"
+			row["label"] = "Per Piece"
+			changed = True
+	landscape_css = (
+		"@media print {\n"
+		"  @page { size: A4 landscape; margin: 8mm; }\n"
+		"  .print-format table { font-size: 10px; }\n"
+		"  .print-format td, .print-format th { padding: 3px 5px !important; }\n"
+		"}\n"
+	)
+	current_css = doc.css or ""
+	if landscape_css.strip() not in current_css:
+		doc.css = current_css + ("\n" if current_css else "") + landscape_css
+		changed = True
+	if changed:
+		doc.format_data = json.dumps(data, ensure_ascii=True)
+		doc.save(ignore_permissions=True)
+		results.append("Updated: Print Format 'Per Piece Print'")
+	else:
+		results.append("No change: Print Format 'Per Piece Print'")
 
 
 def _update_web_page(results: list[str]) -> None:
-    _upsert_doc(
-        "Web Page",
-        "per-piece-report",
-        {
-            "title": "Per Piece Salary Report",
-            "route": "per-piece-report",
-            "published": 1,
-            "content_type": "HTML",
-            "main_section_html": WEB_PAGE_HTML,
-        },
-        results,
-    )
+	_upsert_doc(
+		"Web Page",
+		"per-piece-report",
+		{
+			"title": "Per Piece Salary Report",
+			"route": "per-piece-report",
+			"published": 1,
+			"content_type": "HTML",
+			"main_section_html": WEB_PAGE_HTML,
+		},
+		results,
+	)
 
 
 def _ensure_core_doctypes(results: list[str]) -> None:
-    required = ["Per Piece", "Per Piece Salary"]
-    missing = [d for d in required if not frappe.db.exists("DocType", d)]
-    if not missing:
-        return
+	required = ["Per Piece", "Per Piece Salary"]
+	missing = [d for d in required if not frappe.db.exists("DocType", d)]
+	if not missing:
+		return
 
-    fixture_path = frappe.get_app_path("per_piece_payroll", "per_piece_payroll", "fixtures", "doctype.json")
-    try:
-        fixture_rows = json.loads(frappe.safe_decode(open(fixture_path, "rb").read()))
-    except Exception:
-        results.append("Skipped: Could not read doctype fixture for core doctypes")
-        return
+	fixture_path = frappe.get_app_path("per_piece_payroll", "per_piece_payroll", "fixtures", "doctype.json")
+	try:
+		fixture_rows = json.loads(frappe.safe_decode(open(fixture_path, "rb").read()))
+	except Exception:
+		results.append("Skipped: Could not read doctype fixture for core doctypes")
+		return
 
-    row_map = {}
-    for row in fixture_rows or []:
-        if (row or {}).get("doctype") == "DocType" and (row or {}).get("name") in required:
-            row_map[row.get("name")] = row
+	row_map = {}
+	for row in fixture_rows or []:
+		if (row or {}).get("doctype") == "DocType" and (row or {}).get("name") in required:
+			row_map[row.get("name")] = row
 
-    for doctype_name in required:
-        if frappe.db.exists("DocType", doctype_name):
-            continue
-        raw = row_map.get(doctype_name)
-        if not raw:
-            results.append(f"Skipped: Doctype fixture row not found for '{doctype_name}'")
-            continue
+	for doctype_name in required:
+		if frappe.db.exists("DocType", doctype_name):
+			continue
+		raw = row_map.get(doctype_name)
+		if not raw:
+			results.append(f"Skipped: Doctype fixture row not found for '{doctype_name}'")
+			continue
 
-        doc = json.loads(json.dumps(raw))
-        for k in ["_user_tags", "_comments", "_assign", "_liked_by", "_last_update", "modified", "modified_by", "creation", "owner"]:
-            if k in doc:
-                del doc[k]
-        doc["name"] = doctype_name
-        doc["module"] = "Per Piece Payroll"
+		doc = json.loads(json.dumps(raw))
+		for k in [
+			"_user_tags",
+			"_comments",
+			"_assign",
+			"_liked_by",
+			"_last_update",
+			"modified",
+			"modified_by",
+			"creation",
+			"owner",
+		]:
+			if k in doc:
+				del doc[k]
+		doc["name"] = doctype_name
+		doc["module"] = "Per Piece Payroll"
 
-        for table_key in ["fields", "permissions", "links", "actions", "states"]:
-            rows = doc.get(table_key) or []
-            for child in rows:
-                if not isinstance(child, dict):
-                    continue
-                for ck in [
-                    "_user_tags",
-                    "_comments",
-                    "_assign",
-                    "_liked_by",
-                    "_last_update",
-                    "modified",
-                    "modified_by",
-                    "creation",
-                    "owner",
-                    "parent",
-                    "parentfield",
-                    "parenttype",
-                    "idx",
-                    "name",
-                    "docstatus",
-                ]:
-                    if ck in child:
-                        del child[ck]
+		for table_key in ["fields", "permissions", "links", "actions", "states"]:
+			rows = doc.get(table_key) or []
+			for child in rows:
+				if not isinstance(child, dict):
+					continue
+				for ck in [
+					"_user_tags",
+					"_comments",
+					"_assign",
+					"_liked_by",
+					"_last_update",
+					"modified",
+					"modified_by",
+					"creation",
+					"owner",
+					"parent",
+					"parentfield",
+					"parenttype",
+					"idx",
+					"name",
+					"docstatus",
+				]:
+					if ck in child:
+						del child[ck]
 
-        try:
-            frappe.get_doc(doc).insert(ignore_permissions=True, ignore_links=True)
-            results.append(f"Created: DocType '{doctype_name}' from fixture")
-        except Exception:
-            results.append(f"Failed: Could not create DocType '{doctype_name}' from fixture")
+		try:
+			frappe.get_doc(doc).insert(ignore_permissions=True, ignore_links=True)
+			results.append(f"Created: DocType '{doctype_name}' from fixture")
+		except Exception:
+			results.append(f"Failed: Could not create DocType '{doctype_name}' from fixture")
 
 
 def apply() -> list[str]:
-    results: list[str] = []
+	results: list[str] = []
 
-    _ensure_core_doctypes(results)
-    if not frappe.db.exists("DocType", "Per Piece") or not frappe.db.exists("DocType", "Per Piece Salary"):
-        results.append("Skipped: Required DocTypes are still missing (Per Piece, Per Piece Salary)")
-        return results
+	_ensure_core_doctypes(results)
+	if not frappe.db.exists("DocType", "Per Piece") or not frappe.db.exists("DocType", "Per Piece Salary"):
+		results.append("Skipped: Required DocTypes are still missing (Per Piece, Per Piece Salary)")
+		return results
 
-    _ensure_custom_field("jv_status", "JV Status", "Select", "Pending\nPosted", "amount", results, default="Pending")
-    _ensure_custom_field("jv_entry_no", "JV Entry No", "Link", "Journal Entry", "jv_status", results)
-    _ensure_custom_field("jv_line_remark", "JV Line Remark", "Small Text", None, "jv_entry_no", results, in_list_view=0)
-    _ensure_custom_field("booked_amount", "Booked Amount", "Float", None, "jv_line_remark", results)
-    _ensure_custom_field("paid_amount", "Paid Amount", "Float", None, "booked_amount", results)
-    _ensure_custom_field("unpaid_amount", "Unpaid Amount", "Float", None, "paid_amount", results)
-    _ensure_custom_field("payment_status", "Payment Status", "Select", "Unpaid\nPartly Paid\nPaid", "unpaid_amount", results, default="Unpaid")
-    _ensure_custom_field("payment_jv_no", "Payment JV", "Link", "Journal Entry", "payment_status", results)
-    _ensure_custom_field("payment_refs", "Payment Refs", "Small Text", None, "payment_jv_no", results, in_list_view=0)
-    _ensure_custom_field("payment_line_remark", "Payment Remark", "Small Text", None, "payment_refs", results, in_list_view=0)
-    _ensure_custom_field(
-        "custom_process_type",
-        "Process Type",
-        "Select",
-        "Cutting\nStitching\nQuilting\nPacking",
-        "item_group",
-        results,
-        doctype="Item",
-        read_only=0,
-        in_list_view=0,
-        no_copy=0,
-        allow_fieldtype_override=1,
-    )
-    _ensure_custom_field(
-        "custom_rate_per_piece",
-        "Rate Per Piece",
-        "Float",
-        None,
-        "custom_process_type",
-        results,
-        doctype="Item",
-        read_only=0,
-        in_list_view=0,
-        no_copy=0,
-    )
-    _ensure_field_property_setter("Per Piece Salary", "po_number", "reqd", "1", "Check", results)
-    _migrate_jv_status(results)
+	_ensure_custom_field(
+		"jv_status", "JV Status", "Select", "Pending\nPosted", "amount", results, default="Pending"
+	)
+	_ensure_custom_field("jv_entry_no", "JV Entry No", "Link", "Journal Entry", "jv_status", results)
+	_ensure_custom_field(
+		"jv_line_remark", "JV Line Remark", "Small Text", None, "jv_entry_no", results, in_list_view=0
+	)
+	_ensure_custom_field("booked_amount", "Booked Amount", "Float", None, "jv_line_remark", results)
+	_ensure_custom_field("paid_amount", "Paid Amount", "Float", None, "booked_amount", results)
+	_ensure_custom_field("unpaid_amount", "Unpaid Amount", "Float", None, "paid_amount", results)
+	_ensure_custom_field(
+		"payment_status",
+		"Payment Status",
+		"Select",
+		"Unpaid\nPartly Paid\nPaid",
+		"unpaid_amount",
+		results,
+		default="Unpaid",
+	)
+	_ensure_custom_field("payment_jv_no", "Payment JV", "Link", "Journal Entry", "payment_status", results)
+	_ensure_custom_field(
+		"payment_refs", "Payment Refs", "Small Text", None, "payment_jv_no", results, in_list_view=0
+	)
+	_ensure_custom_field(
+		"payment_line_remark", "Payment Remark", "Small Text", None, "payment_refs", results, in_list_view=0
+	)
+	_ensure_custom_field(
+		"process_size",
+		"Process Size",
+		"Data",
+		"",
+		"process_type",
+		results,
+		doctype="Per Piece",
+		read_only=1,
+		in_list_view=1,
+		default="No Size",
+		no_copy=0,
+		allow_fieldtype_override=1,
+	)
+	_ensure_custom_field(
+		"item_group",
+		"Item Group",
+		"Link",
+		"Item Group",
+		"po_number",
+		results,
+		doctype="Per Piece Salary",
+		read_only=0,
+		in_list_view=0,
+		no_copy=0,
+	)
+	_ensure_custom_field(
+		"pp_filter_col_break",
+		"Filter Column",
+		"Column Break",
+		None,
+		"item_group",
+		results,
+		doctype="Per Piece Salary",
+		read_only=0,
+		in_list_view=0,
+		no_copy=0,
+	)
+	_ensure_custom_field(
+		"employee",
+		"Employee",
+		"Link",
+		"Employee",
+		"pp_filter_col_break",
+		results,
+		doctype="Per Piece Salary",
+		read_only=0,
+		in_list_view=0,
+		no_copy=0,
+	)
+	_delete_custom_field("Item", "custom_process_type", results)
+	_delete_custom_field("Item", "custom_process_size", results)
+	_delete_custom_field("Item", "custom_rate_per_piece", results)
+	_ensure_field_property_setter("Per Piece Salary", "po_number", "reqd", "1", "Check", results)
+	_migrate_jv_status(results)
 
-    _upsert_doc(
-        "Server Script",
-        "get_per_piece_salary_report",
-        {"script": GET_REPORT_SERVER_SCRIPT, "disabled": 0, "allow_guest": 0},
-        results,
-    )
-    _upsert_doc(
-        "Server Script",
-        "create_per_piece_salary_entry",
-        {
-            "script_type": "API",
-            "api_method": "create_per_piece_salary_entry",
-            "module": "Payroll",
-            "disabled": 0,
-            "allow_guest": 0,
-            "script": CREATE_ENTRY_SERVER_SCRIPT,
-            "enable_rate_limit": 0,
-            "rate_limit_count": 10,
-            "rate_limit_seconds": 86400,
-        },
-        results,
-    )
-    _upsert_doc(
-        "Server Script",
-        "create_per_piece_salary_jv",
-        {
-            "script_type": "API",
-            "api_method": "create_per_piece_salary_jv",
-            "module": "Payroll",
-            "disabled": 0,
-            "allow_guest": 0,
-            "script": CREATE_JV_SERVER_SCRIPT,
-            "enable_rate_limit": 0,
-            "rate_limit_count": 5,
-            "rate_limit_seconds": 86400,
-        },
-        results,
-    )
-    _upsert_doc(
-        "Server Script",
-        "cancel_per_piece_salary_jv",
-        {
-            "script_type": "API",
-            "api_method": "cancel_per_piece_salary_jv",
-            "module": "Payroll",
-            "disabled": 0,
-            "allow_guest": 0,
-            "script": CANCEL_JV_SERVER_SCRIPT,
-            "enable_rate_limit": 0,
-            "rate_limit_count": 5,
-            "rate_limit_seconds": 86400,
-        },
-        results,
-    )
-    _upsert_doc(
-        "Server Script",
-        "create_per_piece_salary_payment_jv",
-        {
-            "script_type": "API",
-            "api_method": "create_per_piece_salary_payment_jv",
-            "module": "Payroll",
-            "disabled": 0,
-            "allow_guest": 0,
-            "script": CREATE_PAYMENT_JV_SERVER_SCRIPT,
-            "enable_rate_limit": 0,
-            "rate_limit_count": 5,
-            "rate_limit_seconds": 86400,
-        },
-        results,
-    )
-    _upsert_doc(
-        "Server Script",
-        "cancel_per_piece_salary_payment_jv",
-        {
-            "script_type": "API",
-            "api_method": "cancel_per_piece_salary_payment_jv",
-            "module": "Payroll",
-            "disabled": 0,
-            "allow_guest": 0,
-            "script": CANCEL_PAYMENT_JV_SERVER_SCRIPT,
-            "enable_rate_limit": 0,
-            "rate_limit_count": 5,
-            "rate_limit_seconds": 86400,
-        },
-        results,
-    )
-    _upsert_doc(
-        "Report",
-        "Per Piece Salary Report",
-        {
-            "ref_doctype": "Per Piece Salary",
-            "report_type": "Script Report",
-            "is_standard": "No",
-            "module": "Payroll",
-            "report_script": SCRIPT_REPORT_SCRIPT,
-            "javascript": SCRIPT_REPORT_JS,
-            "disabled": 0,
-        },
-        results,
-    )
-    _upsert_doc(
-        "Report",
-        "Per Piece Query Report Simple",
-        {
-            "ref_doctype": "Per Piece Salary",
-            "report_type": "Query Report",
-            "is_standard": "No",
-            "module": "Payroll",
-            "query": QUERY_REPORT_QUERY,
-            "javascript": QUERY_REPORT_JS,
-            "disabled": 0,
-        },
-        results,
-    )
-    _update_web_page(results)
-    _update_print_format(results)
+	_upsert_doc(
+		"Server Script",
+		"get_per_piece_salary_report",
+		{"script": GET_REPORT_SERVER_SCRIPT, "disabled": 0, "allow_guest": 0},
+		results,
+	)
+	_upsert_doc(
+		"Server Script",
+		"create_per_piece_salary_entry",
+		{
+			"script_type": "API",
+			"api_method": "create_per_piece_salary_entry",
+			"module": "Payroll",
+			"disabled": 0,
+			"allow_guest": 0,
+			"script": CREATE_ENTRY_SERVER_SCRIPT,
+			"enable_rate_limit": 0,
+			"rate_limit_count": 10,
+			"rate_limit_seconds": 86400,
+		},
+		results,
+	)
+	_upsert_doc(
+		"Server Script",
+		"create_per_piece_salary_jv",
+		{
+			"script_type": "API",
+			"api_method": "create_per_piece_salary_jv",
+			"module": "Payroll",
+			"disabled": 0,
+			"allow_guest": 0,
+			"script": CREATE_JV_SERVER_SCRIPT,
+			"enable_rate_limit": 0,
+			"rate_limit_count": 5,
+			"rate_limit_seconds": 86400,
+		},
+		results,
+	)
+	_upsert_doc(
+		"Server Script",
+		"cancel_per_piece_salary_jv",
+		{
+			"script_type": "API",
+			"api_method": "cancel_per_piece_salary_jv",
+			"module": "Payroll",
+			"disabled": 0,
+			"allow_guest": 0,
+			"script": CANCEL_JV_SERVER_SCRIPT,
+			"enable_rate_limit": 0,
+			"rate_limit_count": 5,
+			"rate_limit_seconds": 86400,
+		},
+		results,
+	)
+	_upsert_doc(
+		"Server Script",
+		"create_per_piece_salary_payment_jv",
+		{
+			"script_type": "API",
+			"api_method": "create_per_piece_salary_payment_jv",
+			"module": "Payroll",
+			"disabled": 0,
+			"allow_guest": 0,
+			"script": CREATE_PAYMENT_JV_SERVER_SCRIPT,
+			"enable_rate_limit": 0,
+			"rate_limit_count": 5,
+			"rate_limit_seconds": 86400,
+		},
+		results,
+	)
+	_upsert_doc(
+		"Server Script",
+		"cancel_per_piece_salary_payment_jv",
+		{
+			"script_type": "API",
+			"api_method": "cancel_per_piece_salary_payment_jv",
+			"module": "Payroll",
+			"disabled": 0,
+			"allow_guest": 0,
+			"script": CANCEL_PAYMENT_JV_SERVER_SCRIPT,
+			"enable_rate_limit": 0,
+			"rate_limit_count": 5,
+			"rate_limit_seconds": 86400,
+		},
+		results,
+	)
+	_upsert_doc(
+		"Client Script",
+		"Per Piece Salary Update Child",
+		{
+			"dt": "Per Piece Salary",
+			"enabled": 1,
+			"view": "Form",
+			"script": CLIENT_SCRIPT_SCRIPT,
+		},
+		results,
+	)
+	_upsert_doc(
+		"Report",
+		"Per Piece Salary Report",
+		{
+			"ref_doctype": "Per Piece Salary",
+			"report_type": "Script Report",
+			"is_standard": "No",
+			"module": "Payroll",
+			"report_script": SCRIPT_REPORT_SCRIPT,
+			"javascript": SCRIPT_REPORT_JS,
+			"disabled": 0,
+		},
+		results,
+	)
+	_upsert_doc(
+		"Report",
+		"Per Piece Query Report Simple",
+		{
+			"ref_doctype": "Per Piece Salary",
+			"report_type": "Query Report",
+			"is_standard": "No",
+			"module": "Payroll",
+			"query": QUERY_REPORT_QUERY,
+			"javascript": QUERY_REPORT_JS,
+			"disabled": 0,
+		},
+		results,
+	)
+	_update_web_page(results)
+	_update_print_format(results)
 
-    frappe.clear_cache()
-    frappe.db.commit()
-    return results
+	frappe.clear_cache()
+	frappe.db.commit()
+	return results
