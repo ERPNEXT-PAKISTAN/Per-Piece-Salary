@@ -5884,10 +5884,122 @@ def _ensure_core_doctypes(results: list[str]) -> None:
 			results.append(f"Failed: Could not create DocType '{doctype_name}' from fixture")
 
 
+def _ensure_item_process_size_doctype_and_field(results: list[str]) -> None:
+	child_doctype = "PRD Process and Sizes"
+	if not frappe.db.exists("DocType", child_doctype):
+		doc = {
+			"doctype": "DocType",
+			"name": child_doctype,
+			"module": "Per Piece Payroll",
+			"custom": 1,
+			"istable": 1,
+			"editable_grid": 1,
+			"track_changes": 0,
+			"autoname": "hash",
+			"engine": "InnoDB",
+			"fields": [
+				{
+					"fieldname": "employee",
+					"label": "Employee",
+					"fieldtype": "Link",
+					"options": "Employee",
+					"in_list_view": 1,
+					"reqd": 0,
+				},
+				{
+					"fieldname": "process_type",
+					"label": "Process Type",
+					"fieldtype": "Select",
+					"options": "Cutting\nStitching\nQuilting\nPacking\nChecking",
+					"in_list_view": 1,
+					"reqd": 0,
+				},
+				{
+					"fieldname": "process_size",
+					"label": "Process Size",
+					"fieldtype": "Select",
+					"options": "No Size\nSingle\nDouble\nKing\nSupper King",
+					"in_list_view": 1,
+					"default": "No Size",
+					"reqd": 0,
+				},
+				{
+					"fieldname": "rate",
+					"label": "Rate",
+					"fieldtype": "Float",
+					"in_list_view": 1,
+					"default": "0",
+					"reqd": 0,
+				},
+			],
+			"permissions": [
+				{
+					"role": "System Manager",
+					"read": 1,
+					"write": 1,
+					"create": 1,
+					"delete": 1,
+					"print": 1,
+					"export": 1,
+					"share": 1,
+					"report": 1,
+				}
+			],
+		}
+		try:
+			frappe.get_doc(doc).insert(ignore_permissions=True)
+			results.append("Created: DocType 'PRD Process and Sizes'")
+		except Exception:
+			results.append("Failed: Could not create DocType 'PRD Process and Sizes'")
+			return
+	else:
+		results.append("No change: DocType 'PRD Process and Sizes'")
+
+	item_table_exists = frappe.db.exists(
+		"DocField", {"parent": "Item", "fieldname": "custom_prd_process_and_sizes"}
+	)
+	if item_table_exists:
+		results.append("No change: DocField 'Item.custom_prd_process_and_sizes'")
+	else:
+		_ensure_custom_field(
+			"custom_prd_process_and_sizes",
+			"PRD Process and Sizes",
+			"Table",
+			"PRD Process and Sizes",
+			"item_group",
+			results,
+			doctype="Item",
+			read_only=0,
+			in_list_view=0,
+			no_copy=0,
+			allow_fieldtype_override=1,
+		)
+
+	process_employee_exists = frappe.db.exists(
+		"DocField", {"parent": "PRD Process and Sizes", "fieldname": "employee"}
+	)
+	if process_employee_exists:
+		results.append("No change: DocField 'PRD Process and Sizes.employee'")
+	else:
+		_ensure_custom_field(
+			"employee",
+			"Employee",
+			"Link",
+			"Employee",
+			"rate",
+			results,
+			doctype="PRD Process and Sizes",
+			read_only=0,
+			in_list_view=1,
+			no_copy=0,
+		)
+
+
 def apply() -> list[str]:
 	results: list[str] = []
 
 	_ensure_core_doctypes(results)
+	_ensure_item_process_size_doctype_and_field(results)
 	if not frappe.db.exists("DocType", "Per Piece") or not frappe.db.exists("DocType", "Per Piece Salary"):
 		results.append("Skipped: Required DocTypes are still missing (Per Piece, Per Piece Salary)")
 		return results
