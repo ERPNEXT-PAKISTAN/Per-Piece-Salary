@@ -2111,6 +2111,7 @@ function setProductQuery(frm) {
     };
 
     frm.set_query("product", CHILD_TABLE_FIELD, getQuery);
+    frm.set_query("item", () => getQuery());
 
     if (
         frm.fields_dict &&
@@ -2123,9 +2124,26 @@ function setProductQuery(frm) {
 
 function loadItemsForGroup(frm) {
     const itemGroup = (frm.doc.item_group || "").trim();
+    const selectedItem = (frm.doc.item || "").trim();
     if (!itemGroup) {
         frm.__per_piece_group_items = [];
         return Promise.resolve([]);
+    }
+
+    if (selectedItem) {
+        return Promise.resolve(frappe.call({
+                method: "per_piece_payroll.api.get_item_process_rows",
+                args: { item: selectedItem },
+            }))
+            .then((response) => {
+                const rows = (response && response.message) || [];
+                frm.__per_piece_group_items = rows.filter((row) => (row.item_group || "") === itemGroup);
+                return frm.__per_piece_group_items;
+            })
+            .catch(() => {
+                frm.__per_piece_group_items = [];
+                return [];
+            });
     }
 
     return Promise.resolve(frappe.call({
@@ -2452,6 +2470,24 @@ frappe.ui.form.on("Per Piece Salary", {
     },
 
     item_group(frm) {
+        setProductQuery(frm);
+        if (frm.doc.item) {
+            frappe.db.get_value("Item", frm.doc.item, "item_group")
+                .then((response) => {
+                    const rowGroup = ((response && response.message && response.message.item_group) || "").trim();
+                    if (rowGroup !== (frm.doc.item_group || "").trim()) {
+                        frm.set_value("item", "");
+                    }
+                }, () => {});
+        }
+        loadItemsForGroup(frm).then(() => {
+            populateRowsFromGroup(frm);
+            frm.refresh_field(CHILD_TABLE_FIELD);
+            return syncRowsToItemGroup(frm);
+        });
+    },
+
+    item(frm) {
         setProductQuery(frm);
         loadItemsForGroup(frm).then(() => {
             populateRowsFromGroup(frm);
@@ -6057,11 +6093,23 @@ def apply() -> list[str]:
 		no_copy=0,
 	)
 	_ensure_custom_field(
+		"item",
+		"Item",
+		"Link",
+		"Item",
+		"item_group",
+		results,
+		doctype="Per Piece Salary",
+		read_only=0,
+		in_list_view=0,
+		no_copy=0,
+	)
+	_ensure_custom_field(
 		"pp_filter_col_break",
 		"Filter Column",
 		"Column Break",
 		None,
-		"item_group",
+		"item",
 		results,
 		doctype="Per Piece Salary",
 		read_only=0,
