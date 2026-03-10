@@ -4342,9 +4342,11 @@ WEB_PAGE_HTML = """
           from_date: r.from_date || "",
           to_date: r.to_date || "",
           po_number: r.po_number || "",
-          item_group: r.item_group || ""
+          item_group: r.item_group || "",
+          total_amount: 0
         };
       }
+      map[key].total_amount += num(r.amount);
     });
     return Object.keys(map).sort().map(function (k) { return map[k]; });
   }
@@ -4785,9 +4787,9 @@ WEB_PAGE_HTML = """
     html += "</tbody></table>";
     if (docs.length) {
       html += "<div class='pp-entry-list'><strong>Recent Docs:</strong></div>";
-      html += "<table class='pp-table' style='margin-top:6px;'><thead><tr><th>Per Piece Salary</th><th>From Date</th><th>To Date</th><th>Item Group</th><th>PO Number</th><th>Edit</th><th>Open</th></tr></thead><tbody>";
+      html += "<table class='pp-table' style='margin-top:6px;'><thead><tr><th>Per Piece Salary</th><th>From Date</th><th>To Date</th><th>Item Group</th><th>PO Number</th><th>Total Amount</th><th>Edit</th><th>Open</th></tr></thead><tbody>";
       docs.slice(0, 10).forEach(function (d) {
-        html += "<tr><td>" + esc(d.name) + "</td><td>" + esc(d.from_date) + "</td><td>" + esc(d.to_date) + "</td><td>" + esc(d.item_group || "") + "</td><td>" + esc(d.po_number) + "</td><td><button type='button' class='btn btn-xs btn-default pp-entry-edit-doc' data-name='" + esc(d.name) + "'>Edit</button></td><td><a target='_blank' href='/app/per-piece-salary/" + encodeURIComponent(d.name) + "'>Open</a></td></tr>";
+        html += "<tr><td>" + esc(d.name) + "</td><td>" + esc(d.from_date) + "</td><td>" + esc(d.to_date) + "</td><td>" + esc(d.item_group || "") + "</td><td>" + esc(d.po_number) + "</td><td class='num pp-amt-col'>" + esc(fmt(d.total_amount)) + "</td><td><button type='button' class='btn btn-xs btn-default pp-entry-edit-doc' data-name='" + esc(d.name) + "'>Edit</button></td><td><a target='_blank' href='/app/per-piece-salary/" + encodeURIComponent(d.name) + "'>Open</a></td></tr>";
       });
       html += "</tbody></table>";
     }
@@ -5938,6 +5940,28 @@ def _migrate_jv_status(results: list[str]) -> None:
 	results.append("Updated: Migrated " + str(old_count) + " row(s) from JV Status Accounted to Posted")
 
 
+def _ensure_per_piece_field_links(results: list[str]) -> None:
+	# Older setups had fetch_from pointing to removed Item fields, which blocks insert/save.
+	changed = False
+	for fieldname in ("process_type", "process_size"):
+		docfield_name = frappe.db.get_value(
+			"DocField",
+			{"parent": "Per Piece", "parenttype": "DocType", "fieldname": fieldname},
+			"name",
+		)
+		if not docfield_name:
+			continue
+		fetch_from_val = frappe.db.get_value("DocField", docfield_name, "fetch_from") or ""
+		if str(fetch_from_val).strip():
+			frappe.db.set_value("DocField", docfield_name, "fetch_from", "", update_modified=False)
+			changed = True
+	if changed:
+		frappe.clear_cache(doctype="Per Piece")
+		results.append("Updated: Cleared invalid Fetch From on Per Piece process fields")
+	else:
+		results.append("No change: Per Piece process field links already valid")
+
+
 def _update_print_format(results: list[str]) -> None:
 	if not frappe.db.exists("Print Format", "Per Piece Print"):
 		results.append("Skipped: Print Format 'Per Piece Print' does not exist")
@@ -6312,6 +6336,7 @@ def apply() -> list[str]:
 	_delete_custom_field("Per Piece Salary", "pp_filter_col_break", results)
 	_delete_custom_field("Per Piece Salary", "pp_filters_section_break", results)
 	_ensure_field_property_setter("Per Piece Salary", "po_number", "reqd", "1", "Check", results)
+	_ensure_per_piece_field_links(results)
 	_migrate_jv_status(results)
 
 	_upsert_doc(
