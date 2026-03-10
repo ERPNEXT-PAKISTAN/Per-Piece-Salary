@@ -852,7 +852,7 @@ def to_float(value):
         return 0.0
 
 def round_amount(value):
-    return float(round(to_float(value), 0))
+    return float(round(to_float(value), 2))
 
 def parse_excluded_employees(raw_value):
     out = []
@@ -2716,6 +2716,7 @@ WEB_PAGE_HTML = """
     <button type="button" class="pp-tab" data-tab="advances">Advances</button>
     <button type="button" class="pp-tab" data-tab="employee_summary">Employee Summary</button>
     <button type="button" class="pp-tab" data-tab="month_year_salary">Month/Year Salary</button>
+    <button type="button" class="pp-tab" data-tab="month_paid_unpaid">Month Paid/Unpaid</button>
     <button type="button" class="pp-tab" data-tab="simple_month_amount">Simple Month Wise</button>
     <button type="button" class="pp-tab" data-tab="product">Product Summary</button>
     <button type="button" class="pp-tab" data-tab="process_product">Process/Product Summary</button>
@@ -2727,7 +2728,6 @@ WEB_PAGE_HTML = """
   <div id="pp-table-wrap" class="pp-table-wrap"></div>
   <div id="pp-totals" class="pp-totals"></div>
   <div id="pp-pagination" class="pp-pagination"></div>
-  <div id="pp-created-list-wrap" class="pp-entry-list"></div>
 
   <div class="pp-jv-card" id="pp-salary-jv-card">
     <h4>Salary Creation Tab (Book Salary To Payable)</h4>
@@ -2774,6 +2774,8 @@ WEB_PAGE_HTML = """
     </div>
     <div id="pp-pay-result" class="pp-jv-result"></div>
   </div>
+
+  <div id="pp-created-list-wrap" class="pp-entry-list"></div>
 
   <div id="pp-summary-modal" class="pp-modal" style="display:none;">
     <div class="pp-modal-card">
@@ -2864,7 +2866,7 @@ WEB_PAGE_HTML = """
   function el(id) { return document.getElementById(id); }
   function esc(v) { var d = document.createElement("div"); d.textContent = v == null ? "" : String(v); return d.innerHTML; }
   function num(v) { var n = Number(v || 0); return isNaN(n) ? 0 : n; }
-  function whole(v) { return Math.max(0, Math.round(num(v))); }
+  function whole(v) { return Math.max(0, Math.round(num(v) * 100) / 100); }
   function fmt(v) { return num(v).toLocaleString(undefined, { maximumFractionDigits: 2 }); }
   function baseProcessSizeOptions() {
     return ["No Size", "Single", "Double", "King", "Supper King"];
@@ -3882,6 +3884,39 @@ WEB_PAGE_HTML = """
     return out;
   }
 
+  function buildMonthPaidUnpaidRows(rows) {
+    var monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    var map = {};
+    (rows || []).forEach(function (r) {
+      var dt = parseDateOnly(r.to_date || r.from_date);
+      if (!dt) return;
+      var yy = String(dt.getFullYear());
+      var mmNo = dt.getMonth() + 1;
+      var mm = pad2(mmNo);
+      var key = yy + "-" + mm;
+      if (!map[key]) {
+        map[key] = {
+          month_year: monthNames[mmNo - 1] + "-" + yy.slice(-2),
+          period_key: key,
+          booked_amount: 0,
+          paid_amount: 0,
+          unpaid_amount: 0
+        };
+      }
+      map[key].booked_amount += num(r.booked_amount);
+      map[key].paid_amount += num(r.paid_amount);
+      map[key].unpaid_amount += num(r.unpaid_amount);
+    });
+
+    return Object.keys(map).sort().map(function (k) {
+      var row = map[k];
+      row.booked_amount = Math.round(num(row.booked_amount) * 100) / 100;
+      row.paid_amount = Math.round(num(row.paid_amount) * 100) / 100;
+      row.unpaid_amount = Math.round(num(row.unpaid_amount) * 100) / 100;
+      return row;
+    });
+  }
+
   function buildAdvanceRows(rows) {
     var map = {};
     var selectedEmployee = (el("pp-employee") && el("pp-employee").value) ? String(el("pp-employee").value) : "";
@@ -4233,9 +4268,9 @@ WEB_PAGE_HTML = """
         + "<td class='num'>" + esc(fmt(r.rate)) + "</td>"
         + "<td class='num pp-amt-col'>" + esc(fmt(r.amount)) + "</td>"
         + "<td class='num pp-amt-col'>" + esc(fmt(r.advance_balance)) + "</td>"
-        + "<td><input class='pp-adj-input' type='number' min='0' step='1' inputmode='numeric' data-employee='" + esc(emp) + "' data-field='advance_deduction' value='" + esc(whole(r.advance_deduction)) + "'></td>"
-        + "<td><input class='pp-adj-input' type='number' min='0' step='1' inputmode='numeric' data-employee='" + esc(emp) + "' data-field='allowance' value='" + esc(whole(r.allowance)) + "'></td>"
-        + "<td><input class='pp-adj-input' type='number' min='0' step='1' inputmode='numeric' data-employee='" + esc(emp) + "' data-field='other_deduction' value='" + esc(whole(r.other_deduction)) + "'></td>"
+        + "<td><input class='pp-adj-input' type='number' min='0' step='0.01' inputmode='decimal' data-employee='" + esc(emp) + "' data-field='advance_deduction' value='" + esc(whole(r.advance_deduction)) + "'></td>"
+        + "<td><input class='pp-adj-input' type='number' min='0' step='0.01' inputmode='decimal' data-employee='" + esc(emp) + "' data-field='allowance' value='" + esc(whole(r.allowance)) + "'></td>"
+        + "<td><input class='pp-adj-input' type='number' min='0' step='0.01' inputmode='decimal' data-employee='" + esc(emp) + "' data-field='other_deduction' value='" + esc(whole(r.other_deduction)) + "'></td>"
         + "<td class='num pp-net-cell pp-amt-col' data-employee='" + esc(emp) + "'>" + esc(fmt(r.net_amount)) + "</td>"
         + "</tr>";
     });
@@ -4317,7 +4352,7 @@ WEB_PAGE_HTML = """
         + "<td class='num pp-amt-col'>" + esc(fmt(r.booked_amount)) + "</td>"
         + "<td class='num pp-amt-col'>" + esc(fmt(r.paid_amount)) + "</td>"
         + "<td class='num pp-amt-col'>" + esc(fmt(r.unpaid_amount)) + "</td>"
-        + "<td><input class='pp-pay-amount pp-pay-input' type='number' min='0' step='1' inputmode='numeric' data-employee='" + esc(emp) + "' value='" + esc(whole(r.payment_amount)) + "'></td>"
+        + "<td><input class='pp-pay-amount pp-pay-input' type='number' min='0' step='0.01' inputmode='decimal' data-employee='" + esc(emp) + "' value='" + esc(whole(r.payment_amount)) + "'></td>"
         + "<td>" + statusBadgeHtml(r.payment_status || "") + "</td>"
         + "</tr>";
     });
@@ -5010,8 +5045,8 @@ WEB_PAGE_HTML = """
         + "<td>" + selectHtml(productOptions, r.product || "", idx, "product") + "</td>"
         + "<td>" + selectHtml(processOptions, r.process_type || "", idx, "process_type") + "</td>"
         + "<td>" + readonlyHtml(r.process_size || "No Size") + "</td>"
-        + "<td><input class='pp-pay-input pp-entry-in' type='number' min='0' step='1' inputmode='numeric' data-idx='" + idx + "' data-field='qty' value='" + esc(whole(r.qty)) + "'></td>"
-        + "<td><input class='pp-pay-input pp-entry-in' type='number' min='0' step='1' inputmode='numeric' data-idx='" + idx + "' data-field='rate' value='" + esc(whole(r.rate)) + "'></td>"
+        + "<td><input class='pp-pay-input pp-entry-in' type='number' min='0' step='0.01' inputmode='decimal' data-idx='" + idx + "' data-field='qty' value='" + esc(whole(r.qty)) + "'></td>"
+        + "<td><input class='pp-pay-input pp-entry-in' type='number' min='0' step='0.01' inputmode='decimal' data-idx='" + idx + "' data-field='rate' value='" + esc(whole(r.rate)) + "'></td>"
         + "<td class='num'>" + esc(fmt(entryAmount(r))) + "</td>"
         + "<td><button class='btn btn-xs btn-danger pp-entry-del' data-idx='" + idx + "' type='button'>Delete</button></td>"
         + "</tr>";
@@ -5408,6 +5443,14 @@ WEB_PAGE_HTML = """
         { fieldname: "unpaid_amount", label: "Unpaid", numeric: true }
       ];
       outRows = buildEmployeeMonthYearRows(rows);
+    } else if (state.currentTab === "month_paid_unpaid") {
+      cols = [
+        { fieldname: "month_year", label: "Month / Year" },
+        { fieldname: "booked_amount", label: "Booked", numeric: true },
+        { fieldname: "paid_amount", label: "Paid", numeric: true },
+        { fieldname: "unpaid_amount", label: "Unpaid", numeric: true }
+      ];
+      outRows = buildMonthPaidUnpaidRows(rows);
     } else if (state.currentTab === "simple_month_amount") {
       var simpleMonths = buildSimpleMonthColumns(rows);
       cols = [{ fieldname: "name1", label: "Employee" }];
@@ -5556,6 +5599,20 @@ WEB_PAGE_HTML = """
       });
       el("pp-totals").innerHTML = "<span>Monthly Qty Total: " + fmt(totalQty) + "</span><span>Monthly Amount Total: " + fmt(totalAmount) + "</span>";
       el("pp-msg").textContent = outRows.length + " row(s) including month-wise and yearly totals";
+      renderCreatedEntriesPanel(state.currentTab);
+      refreshJVAmountsFromAdjustments();
+      refreshPaymentAmounts();
+      return;
+    }
+    if (state.currentTab === "month_paid_unpaid") {
+      var mb = 0, mp = 0, mu = 0;
+      outRows.forEach(function (r) {
+        mb += num(r.booked_amount);
+        mp += num(r.paid_amount);
+        mu += num(r.unpaid_amount);
+      });
+      el("pp-totals").innerHTML = "<span>Total Booked: " + fmt(mb) + "</span><span>Total Paid: " + fmt(mp) + "</span><span>Total Unpaid: " + fmt(mu) + "</span>";
+      el("pp-msg").textContent = outRows.length + " month row(s) in month-wise paid/unpaid report";
       renderCreatedEntriesPanel(state.currentTab);
       refreshJVAmountsFromAdjustments();
       refreshPaymentAmounts();
@@ -6542,72 +6599,23 @@ def apply() -> list[str]:
 		allow_fieldtype_override=1,
 	)
 	_ensure_custom_field(
-		"load_by_item",
-		"Load By Item",
-		"Check",
-		None,
+		"item_group",
+		"Item Group",
+		"Link",
+		"Item Group",
 		"po_number",
 		results,
 		doctype="Per Piece Salary",
 		read_only=0,
 		in_list_view=0,
 		no_copy=0,
-		default="1",
-	)
-	_ensure_custom_field(
-		"pp_filters_col_break_1",
-		"",
-		"Column Break",
-		None,
-		"load_by_item",
-		results,
-		doctype="Per Piece Salary",
-		read_only=0,
-		in_list_view=0,
-		no_copy=0,
-	)
-	_ensure_custom_field(
-		"item_group",
-		"Item Group",
-		"Link",
-		"Item Group",
-		"pp_filters_col_break_1",
-		results,
-		doctype="Per Piece Salary",
-		read_only=0,
-		in_list_view=0,
-		no_copy=0,
-	)
-	_ensure_custom_field(
-		"pp_filters_col_break_2",
-		"",
-		"Column Break",
-		None,
-		"item_group",
-		results,
-		doctype="Per Piece Salary",
-		read_only=0,
-		in_list_view=0,
-		no_copy=0,
 	)
 	_ensure_custom_field(
 		"item",
 		"Item",
 		"Link",
 		"Item",
-		"pp_filters_col_break_2",
-		results,
-		doctype="Per Piece Salary",
-		read_only=0,
-		in_list_view=0,
-		no_copy=0,
-	)
-	_ensure_custom_field(
-		"pp_filters_col_break_3",
-		"",
-		"Column Break",
-		None,
-		"item",
+		"item_group",
 		results,
 		doctype="Per Piece Salary",
 		read_only=0,
@@ -6619,12 +6627,25 @@ def apply() -> list[str]:
 		"Employee",
 		"Link",
 		"Employee",
-		"pp_filters_col_break_3",
+		"item",
 		results,
 		doctype="Per Piece Salary",
 		read_only=0,
 		in_list_view=0,
 		no_copy=0,
+	)
+	_ensure_custom_field(
+		"load_by_item",
+		"Load By Item",
+		"Check",
+		None,
+		"employee",
+		results,
+		doctype="Per Piece Salary",
+		read_only=0,
+		in_list_view=0,
+		no_copy=0,
+		default="1",
 	)
 	_delete_custom_field("Item", "custom_process_type", results)
 	_delete_custom_field("Item", "custom_process_size", results)
@@ -6632,6 +6653,9 @@ def apply() -> list[str]:
 	_delete_custom_field("Per Piece Salary", "selected_items", results)
 	_delete_custom_field("Per Piece Salary", "pp_filter_col_break", results)
 	_delete_custom_field("Per Piece Salary", "pp_filters_section_break", results)
+	_delete_custom_field("Per Piece Salary", "pp_filters_col_break_1", results)
+	_delete_custom_field("Per Piece Salary", "pp_filters_col_break_2", results)
+	_delete_custom_field("Per Piece Salary", "pp_filters_col_break_3", results)
 	_ensure_field_property_setter("Per Piece Salary", "po_number", "reqd", "1", "Check", results)
 	_ensure_per_piece_field_links(results)
 	_migrate_jv_status(results)
