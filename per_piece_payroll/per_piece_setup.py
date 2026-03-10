@@ -4745,10 +4745,10 @@ WEB_PAGE_HTML = """
       + "<label>From Date <input type='date' id='pp-entry-from-date' value='" + esc(state.entryMeta.from_date || "") + "'></label>"
       + "<label>To Date <input type='date' id='pp-entry-to-date' value='" + esc(state.entryMeta.to_date || "") + "'></label>"
       + "<label>Employee " + employeeSelectHtml(state.entryMeta.employee || "") + "</label>"
-      + "<label><span style='display:block;margin-bottom:6px;'>Load By Item</span><input type='checkbox' id='pp-entry-load-by-item'" + (state.entryMeta.load_by_item ? " checked" : "") + "></label>"
       + "<label>Item Group " + itemGroupSelectHtml(state.entryMeta.item_group || "") + "</label>"
       + "<label>Item " + itemSelectHtml(state.entryMeta.item || "") + "</label>"
       + "<label>PO Number * <input type='text' id='pp-entry-po-number' required placeholder='Required' value='" + esc(state.entryMeta.po_number || "") + "'></label>"
+      + "<label><span style='display:block;margin-bottom:6px;'>Load By Item</span><input type='checkbox' id='pp-entry-load-by-item'" + (state.entryMeta.load_by_item ? " checked" : "") + "></label>"
       + "</div>"
       + "<div class='pp-entry-actions'>"
       + "<button id='pp-entry-load-doc' class='btn btn-default' type='button'>Load Entry</button>"
@@ -6225,23 +6225,11 @@ def apply() -> list[str]:
 		allow_fieldtype_override=1,
 	)
 	_ensure_custom_field(
-		"item_group",
-		"Item Group",
-		"Link",
-		"Item Group",
+		"pp_filters_section_break",
+		"Filters",
+		"Section Break",
+		None,
 		"po_number",
-		results,
-		doctype="Per Piece Salary",
-		read_only=0,
-		in_list_view=0,
-		no_copy=0,
-	)
-	_ensure_custom_field(
-		"item",
-		"Item",
-		"Link",
-		"Item",
-		"item_group",
 		results,
 		doctype="Per Piece Salary",
 		read_only=0,
@@ -6253,7 +6241,7 @@ def apply() -> list[str]:
 		"Load By Item",
 		"Check",
 		None,
-		"item",
+		"pp_filters_section_break",
 		results,
 		doctype="Per Piece Salary",
 		read_only=0,
@@ -6262,11 +6250,59 @@ def apply() -> list[str]:
 		default="1",
 	)
 	_ensure_custom_field(
-		"pp_filter_col_break",
-		"Filter Column",
+		"pp_filters_col_break_1",
+		"Filter Col 1",
 		"Column Break",
 		None,
 		"load_by_item",
+		results,
+		doctype="Per Piece Salary",
+		read_only=0,
+		in_list_view=0,
+		no_copy=0,
+	)
+	_ensure_custom_field(
+		"item_group",
+		"Item Group",
+		"Link",
+		"Item Group",
+		"pp_filters_col_break_1",
+		results,
+		doctype="Per Piece Salary",
+		read_only=0,
+		in_list_view=0,
+		no_copy=0,
+	)
+	_ensure_custom_field(
+		"pp_filters_col_break_2",
+		"Filter Col 2",
+		"Column Break",
+		None,
+		"item_group",
+		results,
+		doctype="Per Piece Salary",
+		read_only=0,
+		in_list_view=0,
+		no_copy=0,
+	)
+	_ensure_custom_field(
+		"item",
+		"Item",
+		"Link",
+		"Item",
+		"pp_filters_col_break_2",
+		results,
+		doctype="Per Piece Salary",
+		read_only=0,
+		in_list_view=0,
+		no_copy=0,
+	)
+	_ensure_custom_field(
+		"pp_filters_col_break_3",
+		"Filter Col 3",
+		"Column Break",
+		None,
+		"item",
 		results,
 		doctype="Per Piece Salary",
 		read_only=0,
@@ -6278,7 +6314,7 @@ def apply() -> list[str]:
 		"Employee",
 		"Link",
 		"Employee",
-		"pp_filter_col_break",
+		"pp_filters_col_break_3",
 		results,
 		doctype="Per Piece Salary",
 		read_only=0,
@@ -6289,6 +6325,7 @@ def apply() -> list[str]:
 	_delete_custom_field("Item", "custom_process_size", results)
 	_delete_custom_field("Item", "custom_rate_per_piece", results)
 	_delete_custom_field("Per Piece Salary", "selected_items", results)
+	_delete_custom_field("Per Piece Salary", "pp_filter_col_break", results)
 	_ensure_field_property_setter("Per Piece Salary", "po_number", "reqd", "1", "Check", results)
 	_migrate_jv_status(results)
 
