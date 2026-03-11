@@ -90,11 +90,4 @@ def get_item_process_rows(item_group: str | None = None, item: str | None = None
 			}
 		)
 
-	output.sort(
-		key=lambda row: (
-			str(row.get("item") or ""),
-			str(row.get("process_type") or ""),
-			str(row.get("process_size") or ""),
-		)
-	)
 	return output
