@@ -3718,6 +3718,7 @@ WEB_PAGE_HTML = """
     var selectedEmployee = args.employee || "";
     var months = buildLast6Months(toDate);
     var monthMap = {};
+    var empMap = {};
     months.forEach(function (m) { monthMap[m.key] = true; });
     var firstMonthDate = (months[0] && months[0].key ? months[0].key : toDate.slice(0, 7)) + "-01";
 
@@ -3790,7 +3791,6 @@ WEB_PAGE_HTML = """
     ]).then(function (initialParts) {
       var empRows = initialParts[0] || [];
       var advanceDocs = initialParts[1] || [];
-      var empMap = {};
       empRows.forEach(function (e) {
         if (!e || !e.name) return;
         empMap[e.name] = {
