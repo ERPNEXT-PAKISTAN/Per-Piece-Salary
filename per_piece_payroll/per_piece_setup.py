@@ -3341,26 +3341,46 @@ WEB_PAGE_HTML = """
         html += "<tr class='pp-year-total'><td>Total</td><td></td><td></td><td class='num'>" + esc(fmt(scopedGroup.qty)) + "</td><td class='num'>" + esc(fmt(scopedGroup.rate)) + "</td><td class='num pp-amt-col'>" + esc(fmt(scopedGroup.amount)) + "</td></tr>";
         html += "</tbody></table>";
       } else {
-        html += "<h4 style='margin:10px 0 6px 0;'>Process Wise Summary</h4>";
-        html += "<table class='pp-table'><thead><tr><th>Process</th><th>Size</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>";
-        (detail.processRows || []).forEach(function (r) {
-          html += "<tr><td>" + esc(r.process_type || "") + "</td><td>" + esc(r.process_size || "No Size") + "</td><td class='num'>" + esc(fmt(r.qty)) + "</td><td class='num'>" + esc(fmt(r.rate)) + "</td><td class='num pp-amt-col'>" + esc(fmt(r.amount)) + "</td></tr>";
-        });
-        html += "<tr class='pp-year-total'><td>Total</td><td></td><td class='num'>" + esc(fmt(scopedGroup.qty)) + "</td><td class='num'>" + esc(fmt(scopedGroup.rate)) + "</td><td class='num pp-amt-col'>" + esc(fmt(scopedGroup.amount)) + "</td></tr>";
-        html += "</tbody></table>";
-        html += "<h4 style='margin:12px 0 6px 0;'>Item Wise Summary</h4>";
-        html += "<table class='pp-table'><thead><tr><th>Item</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>";
-        (detail.itemRows || []).forEach(function (r) {
-          html += "<tr><td>" + esc(r.product || "") + "</td><td class='num'>" + esc(fmt(r.qty)) + "</td><td class='num'>" + esc(fmt(r.rate)) + "</td><td class='num pp-amt-col'>" + esc(fmt(r.amount)) + "</td></tr>";
-        });
-        html += "<tr class='pp-year-total'><td>Total</td><td class='num'>" + esc(fmt(scopedGroup.qty)) + "</td><td class='num'>" + esc(fmt(scopedGroup.rate)) + "</td><td class='num pp-amt-col'>" + esc(fmt(scopedGroup.amount)) + "</td></tr>";
-        html += "</tbody></table>";
-        html += "<h4 style='margin:12px 0 6px 0;'>Detail Lines</h4>";
-        html += "<table class='pp-table'><thead><tr><th>Entry No</th><th>From Date</th><th>To Date</th><th>PO Number</th><th>Sales Order</th><th>Product</th><th>Process</th><th>Size</th><th>Qty</th><th>Rate</th><th>Amount</th><th>Booking</th><th>Payment</th><th>Paid</th><th>Unpaid</th></tr></thead><tbody>";
+        var mergedMap = {};
         scopedRows.forEach(function (r) {
-          html += "<tr><td>" + esc(r.per_piece_salary || "") + "</td><td>" + esc(r.from_date || "") + "</td><td>" + esc(r.to_date || "") + "</td><td>" + esc(r.po_number || "") + "</td><td>" + esc(r.sales_order || "") + "</td><td>" + esc(r.product || "") + "</td><td>" + esc(r.process_type || "") + "</td><td>" + esc(r.process_size || "No Size") + "</td><td class='num'>" + esc(fmt(r.qty)) + "</td><td class='num'>" + esc(fmt(lineRate(r.rate, r.qty, r.amount))) + "</td><td class='num pp-amt-col'>" + esc(fmt(r.amount)) + "</td><td>" + statusBadgeHtml(r.booking_status || "") + "</td><td>" + statusBadgeHtml(r.payment_status || "") + "</td><td class='num pp-amt-col'>" + esc(fmt(r.paid_amount)) + "</td><td class='num pp-amt-col'>" + esc(fmt(r.unpaid_amount)) + "</td></tr>";
+          var item = String(r.product || "").trim() || "(Blank)";
+          var pkey = item + "||" + String(r.process_type || "") + "||" + String(r.process_size || "No Size");
+          if (!mergedMap[pkey]) {
+            mergedMap[pkey] = {
+              product: item,
+              process_type: r.process_type || "",
+              process_size: r.process_size || "No Size",
+              qty: 0,
+              amount: 0
+            };
+          }
+          mergedMap[pkey].qty += num(r.qty);
+          mergedMap[pkey].amount += num(r.amount);
         });
-        html += "<tr class='pp-year-total'><td>Total</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td class='num'>" + esc(fmt(scopedGroup.qty)) + "</td><td class='num'>" + esc(fmt(scopedGroup.rate)) + "</td><td class='num pp-amt-col'>" + esc(fmt(scopedGroup.amount)) + "</td><td></td><td></td><td></td><td></td></tr>";
+        var mergedRows = Object.keys(mergedMap).sort().map(function (k) {
+          var row = mergedMap[k];
+          row.rate = avgRate(row.qty, row.amount);
+          return row;
+        });
+        var byItem = {};
+        mergedRows.forEach(function (r) {
+          var item = r.product || "(Blank)";
+          if (!byItem[item]) byItem[item] = [];
+          byItem[item].push(r);
+        });
+        html += "<h4 style='margin:10px 0 6px 0;'>Item Wise Summary (with Process)</h4>";
+        html += "<table class='pp-table'><thead><tr><th>Item</th><th>Process</th><th>Size</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>";
+        Object.keys(byItem).sort().forEach(function (item) {
+          var iQty = 0;
+          var iAmount = 0;
+          (byItem[item] || []).forEach(function (r) {
+            iQty += num(r.qty);
+            iAmount += num(r.amount);
+            html += "<tr><td>" + esc(item) + "</td><td>" + esc(r.process_type || "") + "</td><td>" + esc(r.process_size || "No Size") + "</td><td class='num'>" + esc(fmt(r.qty)) + "</td><td class='num'>" + esc(fmt(r.rate)) + "</td><td class='num pp-amt-col'>" + esc(fmt(r.amount)) + "</td></tr>";
+          });
+          html += "<tr class='pp-year-total'><td>" + esc(item) + " Total</td><td></td><td></td><td class='num'>" + esc(fmt(iQty)) + "</td><td class='num'>" + esc(fmt(avgRate(iQty, iAmount))) + "</td><td class='num pp-amt-col'>" + esc(fmt(iAmount)) + "</td></tr>";
+        });
+        html += "<tr class='pp-year-total'><td>Grand Total</td><td></td><td></td><td class='num'>" + esc(fmt(scopedGroup.qty)) + "</td><td class='num'>" + esc(fmt(scopedGroup.rate)) + "</td><td class='num pp-amt-col'>" + esc(fmt(scopedGroup.amount)) + "</td></tr>";
         html += "</tbody></table>";
       }
 
@@ -5507,6 +5527,8 @@ WEB_PAGE_HTML = """
       if (String(r.per_piece_salary || "").trim() !== target) return;
       rows.push({
         employee: r.name1 || r.employee || "",
+        employee_id: r.employee || "",
+        po_number: r.po_number || "",
         sales_order: r.sales_order || "",
         product: r.product || "",
         process_type: r.process_type || "",
@@ -5519,6 +5541,117 @@ WEB_PAGE_HTML = """
       });
     });
     return rows;
+  }
+
+  function filterDataEntryDocsByDate(docs) {
+    var fromDate = String((state.entryMeta && state.entryMeta.from_date) || "").trim();
+    var toDate = String((state.entryMeta && state.entryMeta.to_date) || "").trim();
+    if (!fromDate && !toDate) return docs || [];
+    return (docs || []).filter(function (d) {
+      var docFrom = String((d && d.from_date) || "").trim();
+      var docTo = String((d && d.to_date) || "").trim();
+      if (!docFrom && !docTo) return false;
+      var start = docFrom || docTo;
+      var end = docTo || docFrom;
+      if (fromDate && end < fromDate) return false;
+      if (toDate && start > toDate) return false;
+      return true;
+    });
+  }
+
+  function getRecentDocEmployeeSummary(docName) {
+    var map = {};
+    getRecentDocDetails(docName).forEach(function (r) {
+      var emp = String(r.employee || "").trim() || String(r.employee_id || "").trim() || "(Blank)";
+      if (!map[emp]) {
+        map[emp] = {
+          employee: emp,
+          po_number: r.po_number || "",
+          qty: 0,
+          amount: 0,
+          booked: 0,
+          paid: 0,
+          unpaid: 0
+        };
+      }
+      map[emp].qty += num(r.qty);
+      map[emp].amount += num(r.amount);
+      var b = String(r.booking_status || "");
+      var p = String(r.payment_status || "");
+      if (b === "Booked") map[emp].booked += 1;
+      if (p === "Paid") map[emp].paid += 1;
+      if (p === "Unpaid") map[emp].unpaid += 1;
+    });
+    return Object.keys(map).sort().map(function (k) {
+      var item = map[k];
+      item.rate = avgRate(item.qty, item.amount);
+      item.booking_status = item.booked > 0 ? (item.unpaid > 0 ? "Partly Booked" : "Booked") : "UnBooked";
+      item.payment_status = item.paid > 0 ? (item.unpaid > 0 ? "Partly Paid" : "Paid") : "Unpaid";
+      return item;
+    });
+  }
+
+  function showDataEntryEmployeeDetails(docName, employee) {
+    var targetEmp = String(employee || "").trim();
+    var rows = getRecentDocDetails(docName).filter(function (r) {
+      return String(r.employee || "").trim() === targetEmp;
+    });
+    if (!rows.length) {
+      setSummaryModal("Data Entry Detail", targetEmp, "<div style='color:#b91c1c;'>No detail rows found.</div>");
+      return;
+    }
+    var qty = 0;
+    var amount = 0;
+    var html = "<table class='pp-table'><thead><tr><th>Employee</th><th>PO Number</th><th>Sales Order</th><th>Product</th><th>Process Type</th><th>Process Size</th><th>Qty</th><th>Rate</th><th>Amount</th><th>JV Status</th><th>Pay Status</th></tr></thead><tbody>";
+    rows.forEach(function (r) {
+      qty += num(r.qty);
+      amount += num(r.amount);
+      html += "<tr>"
+        + "<td>" + esc(r.employee || "") + "</td>"
+        + "<td>" + esc(r.po_number || "") + "</td>"
+        + "<td>" + esc(r.sales_order || "") + "</td>"
+        + "<td>" + esc(r.product || "") + "</td>"
+        + "<td>" + esc(r.process_type || "") + "</td>"
+        + "<td>" + esc(r.process_size || "No Size") + "</td>"
+        + "<td class='num'>" + esc(fmt(r.qty)) + "</td>"
+        + "<td class='num'>" + esc(fmt(lineRate(r.rate, r.qty, r.amount))) + "</td>"
+        + "<td class='num pp-amt-col'>" + esc(fmt(r.amount)) + "</td>"
+        + "<td>" + statusBadgeHtml(r.booking_status || "") + "</td>"
+        + "<td>" + statusBadgeHtml(r.payment_status || "") + "</td>"
+        + "</tr>";
+    });
+    html += "<tr class='pp-year-total'><td>Total</td><td></td><td></td><td></td><td></td><td></td><td class='num'>" + esc(fmt(qty)) + "</td><td class='num'>" + esc(fmt(avgRate(qty, amount))) + "</td><td class='num pp-amt-col'>" + esc(fmt(amount)) + "</td><td></td><td></td></tr>";
+    html += "</tbody></table>";
+    setSummaryModal("Data Entry Detail", targetEmp + " | " + docName, html);
+  }
+
+  function showDataEntryEnteredRows(docName) {
+    var rows = getRecentDocDetails(docName);
+    if (!rows.length) {
+      setSummaryModal("Data Entry Rows", docName || "", "<div style='color:#b91c1c;'>No rows found for this entry.</div>");
+      return;
+    }
+    var qty = 0;
+    var amount = 0;
+    var html = "<table class='pp-table'><thead><tr><th>Employee</th><th>PO Number</th><th>Sales Order</th><th>Product</th><th>Process Type</th><th>Process Size</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>";
+    rows.forEach(function (r) {
+      qty += num(r.qty);
+      amount += num(r.amount);
+      html += "<tr>"
+        + "<td>" + esc(r.employee || "") + "</td>"
+        + "<td>" + esc(r.po_number || "") + "</td>"
+        + "<td>" + esc(r.sales_order || "") + "</td>"
+        + "<td>" + esc(r.product || "") + "</td>"
+        + "<td>" + esc(r.process_type || "") + "</td>"
+        + "<td>" + esc(r.process_size || "No Size") + "</td>"
+        + "<td class='num'>" + esc(fmt(r.qty)) + "</td>"
+        + "<td class='num'>" + esc(fmt(lineRate(r.rate, r.qty, r.amount))) + "</td>"
+        + "<td class='num pp-amt-col'>" + esc(fmt(r.amount)) + "</td>"
+        + "</tr>";
+    });
+    html += "<tr class='pp-year-total'><td>Total</td><td></td><td></td><td></td><td></td><td></td><td class='num'>" + esc(fmt(qty)) + "</td><td class='num'>" + esc(fmt(avgRate(qty, amount))) + "</td><td class='num pp-amt-col'>" + esc(fmt(amount)) + "</td></tr>";
+    html += "</tbody></table>";
+    setSummaryModal("Data Entry Rows", docName || "", html);
   }
 
   function setPageForCurrentTab(page) {
@@ -5623,11 +5756,12 @@ WEB_PAGE_HTML = """
       + "</div>";
 
     html += "<table class='pp-table'><thead><tr>"
-      + "<th>Employee</th><th>Product</th><th>Sales Order</th><th>Process</th><th>Process Size</th><th>Qty</th><th>Rate</th><th>Amount</th><th>Booking</th><th>Payment</th>"
+      + "<th>Employee</th><th>PO Number</th><th>Product</th><th>Sales Order</th><th>Process</th><th>Process Size</th><th>Qty</th><th>Rate</th><th>Amount</th><th>Booking</th><th>Payment</th>"
       + "</tr></thead><tbody>";
     rows.forEach(function (r) {
       html += "<tr>"
         + "<td>" + esc(employeeLabel(r) || "") + "</td>"
+        + "<td>" + esc(r.po_number || first.po_number || "") + "</td>"
         + "<td>" + esc(r.product || "") + "</td>"
         + "<td>" + esc(r.sales_order || "") + "</td>"
         + "<td>" + esc(r.process_type || "") + "</td>"
@@ -6716,7 +6850,7 @@ WEB_PAGE_HTML = """
         loadSelectedItemProcessRows(selectedItemAuto, true);
       }
     }
-    var docs = uniqueSalaryDocs();
+    var docs = filterDataEntryDocsByDate(uniqueSalaryDocs());
     var employeeOptions = state.entryMeta.employeeOptions || [];
     var itemGroupOptions = state.entryMeta.itemGroupOptions || [];
     var productOptions = state.entryMeta.productOptions || [];
@@ -6878,23 +7012,9 @@ WEB_PAGE_HTML = """
     html += "</tbody></table>";
     if (docs.length) {
       html += "<div class='pp-entry-list'><strong>Recent Docs:</strong></div>";
-      html += "<table class='pp-table' style='margin-top:6px;'><thead><tr><th>Per Piece Salary</th><th>From Date</th><th>To Date</th><th>Item Group</th><th>PO Number</th><th>JV Status</th><th>Pay Status</th><th>Total Amount</th><th>Edit</th><th>Open</th></tr></thead><tbody>";
+      html += "<table class='pp-table' style='margin-top:6px;'><thead><tr><th>Per Piece Salary</th><th>From Date</th><th>To Date</th><th>PO Number</th><th>JV Status</th><th>Pay Status</th><th>Total Amount</th><th>View Detail</th><th>View Entered</th><th>Edit</th><th>Open</th></tr></thead><tbody>";
       docs.slice(0, 10).forEach(function (d) {
-        html += "<tr><td>" + esc(d.name) + "</td><td>" + esc(d.from_date) + "</td><td>" + esc(d.to_date) + "</td><td>" + esc(d.item_group || "") + "</td><td>" + esc(d.po_number) + "</td><td>" + statusBadgeHtml(d.booking_status || "UnBooked") + "</td><td>" + statusBadgeHtml(d.payment_status || "Unpaid") + "</td><td class='num pp-amt-col'>" + esc(fmt(d.total_amount)) + "</td><td><button type='button' class='btn btn-xs btn-default pp-entry-edit-doc' data-name='" + esc(d.name) + "'>Edit</button></td><td><a target='_blank' href='/app/per-piece-salary/" + encodeURIComponent(d.name) + "'>Open</a></td></tr>";
-        var recentDetailRows = getRecentDocDetails(d.name);
-        if (recentDetailRows.length) {
-          var recentQty = 0;
-          var recentAmount = 0;
-          var detailHtml = "<table class='pp-table' style='margin:6px 0 0 0;'><thead><tr><th>Employee</th><th>Sales Order</th><th>Product</th><th>Process Type</th><th>Process Size</th><th>Qty</th><th>Rate</th><th>Amount</th><th>JV Status</th><th>Pay Status</th></tr></thead><tbody>";
-          recentDetailRows.forEach(function (drow) {
-            recentQty += num(drow.qty);
-            recentAmount += num(drow.amount);
-            detailHtml += "<tr><td>" + esc(drow.employee) + "</td><td>" + esc(drow.sales_order || "") + "</td><td>" + esc(drow.product) + "</td><td>" + esc(drow.process_type) + "</td><td>" + esc(drow.process_size) + "</td><td class='num'>" + esc(fmt(drow.qty)) + "</td><td class='num'>" + esc(fmt(lineRate(drow.rate, drow.qty, drow.amount))) + "</td><td class='num pp-amt-col'>" + esc(fmt(drow.amount)) + "</td><td>" + statusBadgeHtml(drow.booking_status) + "</td><td>" + statusBadgeHtml(drow.payment_status) + "</td></tr>";
-          });
-          detailHtml += "<tr class='pp-year-total'><td>Sub Total</td><td></td><td></td><td></td><td></td><td class='num'>" + esc(fmt(recentQty)) + "</td><td></td><td class='num pp-amt-col'>" + esc(fmt(recentAmount)) + "</td><td></td><td></td></tr>";
-          detailHtml += "</tbody></table>";
-          html += "<tr class='pp-entry-detail-row'><td colspan='10'>" + detailHtml + "</td></tr>";
-        }
+        html += "<tr><td>" + esc(d.name) + "</td><td>" + esc(d.from_date) + "</td><td>" + esc(d.to_date) + "</td><td>" + esc(d.po_number) + "</td><td>" + statusBadgeHtml(d.booking_status || "UnBooked") + "</td><td>" + statusBadgeHtml(d.payment_status || "Unpaid") + "</td><td class='num pp-amt-col'>" + esc(fmt(d.total_amount)) + "</td><td><button type='button' class='btn btn-xs btn-info pp-entry-view-doc-detail' data-name='" + esc(d.name) + "'>View Detail</button></td><td><button type='button' class='btn btn-xs btn-primary pp-entry-view-entered' data-name='" + esc(d.name) + "'>View Entered</button></td><td><button type='button' class='btn btn-xs btn-default pp-entry-edit-doc' data-name='" + esc(d.name) + "'>Edit</button></td><td><a target='_blank' href='/app/per-piece-salary/" + encodeURIComponent(d.name) + "'>Open</a></td></tr>";
       });
       html += "</tbody></table>";
     }
@@ -7053,6 +7173,16 @@ WEB_PAGE_HTML = """
         loadEntryDocForEdit(btn.getAttribute("data-name") || "");
       });
     });
+    wrap.querySelectorAll(".pp-entry-view-doc-detail").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        showPerPieceSummary(btn.getAttribute("data-name") || "");
+      });
+    });
+    wrap.querySelectorAll(".pp-entry-view-entered").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        showDataEntryEnteredRows(btn.getAttribute("data-name") || "");
+      });
+    });
   }
 
   function loadEntryDocForEdit(entryName) {
@@ -7203,7 +7333,6 @@ WEB_PAGE_HTML = """
         { fieldname: "from_date", label: "From Date" },
         { fieldname: "to_date", label: "To Date" },
         { fieldname: "po_number", label: "PO Number" },
-        { fieldname: "item_group", label: "Item Group" },
         { fieldname: "name1", label: "Employee" },
         { fieldname: "product", label: "Product" },
         { fieldname: "process_type", label: "Process Type" },
@@ -7272,17 +7401,12 @@ WEB_PAGE_HTML = """
       refreshJVAmountsFromAdjustments();
       return;
     } else if (state.currentTab === "advances") {
-      var advanceMonths = state.advanceMonths || [];
       cols = [
         { fieldname: "name1", label: "Employee Name" },
         { fieldname: "employee", label: "Employee ID" },
         { fieldname: "branch", label: "Branch" },
-        { fieldname: "opening_balance", label: "Opening Balance", numeric: true }
+        { fieldname: "closing_balance", label: "Closing Balance", numeric: true }
       ];
-      advanceMonths.forEach(function (m) {
-        cols.push({ fieldname: advanceMonthField(m.key), label: m.label, numeric: true });
-      });
-      cols.push({ fieldname: "closing_balance", label: "Closing Balance", numeric: true });
       outRows = buildAdvanceRows(rows);
     } else if (state.currentTab === "employee_summary") {
       outRows = buildEmployeeSummaryReportRows(rows);
@@ -7460,27 +7584,12 @@ WEB_PAGE_HTML = """
       return;
     }
     if (state.currentTab === "advances") {
-      var advanceMonths = state.advanceMonths || [];
       var totalAdvance = 0;
-      var totalOpening = 0;
-      var monthTotals = {};
-      advanceMonths.forEach(function (m) {
-        monthTotals[m.key] = 0;
-      });
       outRows.forEach(function (r) {
-        totalOpening += num(r.opening_balance);
         totalAdvance += num(r.closing_balance || r.advance_balance);
-        advanceMonths.forEach(function (m) {
-          monthTotals[m.key] += num(r[advanceMonthField(m.key)]);
-        });
       });
-      var totalsHtml = "<span>Opening: " + fmt(totalOpening) + "</span>";
-      advanceMonths.forEach(function (m) {
-        totalsHtml += "<span>" + esc(m.label) + ": " + fmt(monthTotals[m.key]) + "</span>";
-      });
-      totalsHtml += "<span>Closing: " + fmt(totalAdvance) + "</span>";
-      el("pp-totals").innerHTML = totalsHtml;
-      el("pp-msg").textContent = outRows.length + " employee row(s) in advances as on selected To Date (from Employee Advance/GL closing)";
+      el("pp-totals").innerHTML = "<span>Total Closing: " + fmt(totalAdvance) + "</span>";
+      el("pp-msg").textContent = outRows.length + " employee row(s) in advances";
       renderCreatedEntriesPanel(state.currentTab);
       refreshJVAmountsFromAdjustments();
       refreshPaymentAmounts();
