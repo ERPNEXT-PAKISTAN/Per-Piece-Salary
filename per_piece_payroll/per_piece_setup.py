@@ -2729,24 +2729,25 @@ WEB_PAGE_HTML = """
     <label>Search <input type="text" id="pp-search-any" placeholder="Type any word..." /></label>
     <label id="pp-employee-summary-detail-wrap" style="display:none;">Detail <input type="checkbox" id="pp-employee-summary-detail" /></label>
     <button id="pp-load-btn" class="btn btn-primary" type="button">Load Report</button>
+    <button id="pp-print-tab-btn" class="btn btn-default" type="button">Print Tab</button>
   </div>
 
   <div class="pp-tabs">
-    <button type="button" class="pp-tab active" data-tab="all">All Report</button>
+    <button type="button" class="pp-tab active" data-tab="all">History</button>
     <button type="button" class="pp-tab" data-tab="data_entry">Data Enter</button>
     <button type="button" class="pp-tab" data-tab="salary_creation">Salary Creation</button>
+    <button type="button" class="pp-tab" data-tab="payment_manage">Payment Entry</button>
     <button type="button" class="pp-tab" data-tab="jv_created">Salary Status</button>
-    <button type="button" class="pp-tab" data-tab="payment_manage">Payment Entry Create</button>
     <button type="button" class="pp-tab" data-tab="advances">Advances</button>
     <button type="button" class="pp-tab" data-tab="employee_summary">Employee Summary</button>
+    <button type="button" class="pp-tab" data-tab="per_piece_salary">Employee item-wise</button>
     <button type="button" class="pp-tab" data-tab="salary_slip">Salary Slip</button>
+    <button type="button" class="pp-tab" data-tab="po_number">PO Summary</button>
     <button type="button" class="pp-tab" data-tab="month_year_salary">Month/Year Salary</button>
     <button type="button" class="pp-tab" data-tab="month_paid_unpaid">Month Paid/Unpaid</button>
-    <button type="button" class="pp-tab" data-tab="simple_month_amount">Simple Month Wise</button>
+    <button type="button" class="pp-tab" data-tab="simple_month_amount">Month-wise</button>
     <button type="button" class="pp-tab" data-tab="product">Product Summary</button>
-    <button type="button" class="pp-tab" data-tab="process_product">Process/Product Summary</button>
-    <button type="button" class="pp-tab" data-tab="per_piece_salary">Per Piece Salary</button>
-    <button type="button" class="pp-tab" data-tab="po_number">PO Summary</button>
+    <button type="button" class="pp-tab" data-tab="process_product">Process Summary</button>
   </div>
 
   <div id="pp-msg" class="pp-msg"></div>
@@ -2833,6 +2834,7 @@ WEB_PAGE_HTML = """
   .pp-table th, .pp-table td { border: 1px solid #e2e8f0; padding: 7px 9px; }
   .pp-table th { background: #eff6ff; color: #1e3a8a; position: sticky; top: 0; z-index: 2; }
   .pp-table tr.pp-year-total td { background: #f1f5f9; font-weight: 700; color: #0f172a; }
+  .pp-table tr.pp-group-head td { background: #e2e8f0; font-weight: 700; color: #0f172a; }
   .pp-table tbody tr:hover td { background: #f8fafc; }
   .pp-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
   .pp-table td.pp-amt-col { font-weight: 700; color: #0f172a; }
@@ -2869,6 +2871,9 @@ WEB_PAGE_HTML = """
   .pp-modal-body { padding: 14px 16px 16px 16px; }
   .pp-summary-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
   .pp-summary-chip { background: #e0f2fe; color: #0c4a6e; border: 1px solid #bae6fd; border-radius: 999px; padding: 4px 10px; font-size: 12px; font-weight: 600; }
+  .pp-wrap.pp-entry-screen .pp-filters { display: none; }
+  .pp-wrap.pp-entry-screen .pp-tabs { margin-top: 0; }
+  .pp-wrap.pp-entry-screen #pp-msg { margin-top: 2px; }
 </style>
 
 <script>
@@ -2890,9 +2895,11 @@ WEB_PAGE_HTML = """
     employeeSummaryDetail: false,
     pageSize: 20,
     pageByTab: {},
+    historyPageByTab: {},
     forcedEntryNo: "",
     paymentPrefill: null,
-    summaryPrintMeta: { heading: "Per Piece Salary Summary", subtitle: "", company: "", date_range: "" }
+    summaryPrintMeta: { heading: "Per Piece Salary Summary", subtitle: "", company: "", date_range: "" },
+    lastTabRender: { mode: "dom", columns: [], rows: [] }
   };
 
   function el(id) { return document.getElementById(id); }
@@ -2976,6 +2983,42 @@ WEB_PAGE_HTML = """
   }
   function baseProcessSizeOptions() {
     return ["No Size", "Single", "Double", "King", "Supper King"];
+  }
+  function getProcessSortRank(product, processType, processSize) {
+    var p = String(product || "").trim();
+    var t = String(processType || "").trim();
+    var s = String(processSize || "").trim() || "No Size";
+    if (!t) return 999999;
+    var rows = (state.entryMeta && state.entryMeta.masterProcessRows) || [];
+    var best = 999999;
+    var bestType = 999999;
+    rows.forEach(function (r, i) {
+      var rp = String((r && r.item) || "").trim();
+      var rt = String((r && r.process_type) || "").trim();
+      var rs = String((r && r.process_size) || "").trim() || "No Size";
+      var rank = parseInt((r && r.idx) || 0, 10);
+      if (!rank || rank < 0) rank = i + 1;
+      if (p && rp === p && rt === t && rs === s) best = Math.min(best, rank);
+      if (p && rp === p && rt === t) bestType = Math.min(bestType, rank);
+      if (!p && rt === t && rs === s) best = Math.min(best, rank + 10000);
+      if (!p && rt === t) bestType = Math.min(bestType, rank + 10000);
+    });
+    if (best < 999999) return best;
+    if (bestType < 999999) return bestType;
+    return 999999;
+  }
+  function compareByProcessSequence(a, b, productHintA, productHintB) {
+    var pa = String(productHintA || (a && a.product) || "").trim();
+    var pb = String(productHintB || (b && b.product) || "").trim();
+    var ra = getProcessSortRank(pa, a && a.process_type, a && a.process_size);
+    var rb = getProcessSortRank(pb, b && b.process_type, b && b.process_size);
+    if (ra !== rb) return ra - rb;
+    var ta = String((a && a.process_type) || "");
+    var tb = String((b && b.process_type) || "");
+    if (ta !== tb) return ta.localeCompare(tb);
+    var sa = String((a && a.process_size) || "No Size");
+    var sb = String((b && b.process_size) || "No Size");
+    return sa.localeCompare(sb);
   }
   function isStatusField(fieldname) {
     var f = String(fieldname || "");
@@ -3063,6 +3106,11 @@ WEB_PAGE_HTML = """
     if (from && to) return from + " to " + to;
     return from || to || "";
   }
+  function getCurrentTabLabel() {
+    var btn = document.querySelector(".pp-tab.active");
+    if (btn) return String(btn.textContent || "").trim();
+    return String(state.currentTab || "");
+  }
   function setSummaryHeading(text) {
     var titleEl = document.querySelector("#pp-summary-modal .pp-modal-title");
     if (titleEl) titleEl.textContent = text || "Per Piece Salary Summary";
@@ -3124,10 +3172,12 @@ WEB_PAGE_HTML = """
       itemTotals[itemKey].amount += num(r.amount);
     });
     return {
-      processRows: Object.keys(processTotals).sort().map(function (key) {
+      processRows: Object.keys(processTotals).map(function (key) {
         var item = processTotals[key];
         item.rate = avgRate(item.qty, item.amount);
         return item;
+      }).sort(function (a, b) {
+        return compareByProcessSequence(a, b, "", "");
       }),
       itemRows: Object.keys(itemTotals).sort().map(function (key) {
         var item = itemTotals[key];
@@ -3328,10 +3378,15 @@ WEB_PAGE_HTML = """
           productDetailMap[k].qty += num(r.qty);
           productDetailMap[k].amount += num(r.amount);
         });
-        var productDetailRows = Object.keys(productDetailMap).sort().map(function (k) {
+        var productDetailRows = Object.keys(productDetailMap).map(function (k) {
           var row = productDetailMap[k];
           row.rate = avgRate(row.qty, row.amount);
           return row;
+        }).sort(function (a, b) {
+          var pa = String(a.product || "");
+          var pb = String(b.product || "");
+          if (pa !== pb) return pa.localeCompare(pb);
+          return compareByProcessSequence(a, b, pa, pb);
         });
         html += "<h4 style='margin:10px 0 6px 0;'>Product wise Detail Report</h4>";
         html += "<table class='pp-table'><thead><tr><th>Product</th><th>Process</th><th>Size</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>";
@@ -3357,10 +3412,15 @@ WEB_PAGE_HTML = """
           mergedMap[pkey].qty += num(r.qty);
           mergedMap[pkey].amount += num(r.amount);
         });
-        var mergedRows = Object.keys(mergedMap).sort().map(function (k) {
+        var mergedRows = Object.keys(mergedMap).map(function (k) {
           var row = mergedMap[k];
           row.rate = avgRate(row.qty, row.amount);
           return row;
+        }).sort(function (a, b) {
+          var pa = String(a.product || "");
+          var pb = String(b.product || "");
+          if (pa !== pb) return pa.localeCompare(pb);
+          return compareByProcessSequence(a, b, pa, pb);
         });
         var byItem = {};
         mergedRows.forEach(function (r) {
@@ -3693,8 +3753,14 @@ WEB_PAGE_HTML = """
   function getRowsByHeaderFilters(rows) {
     var po = el("pp-po-number") ? String(el("pp-po-number").value || "").trim() : "";
     var entry = String(state.forcedEntryNo || "").trim();
+    var from = String((el("pp-from-date") && el("pp-from-date").value) || "").trim();
+    var to = String((el("pp-to-date") && el("pp-to-date").value) || "").trim();
     if (!entry && el("pp-entry-no")) entry = String(el("pp-entry-no").value || "").trim();
     return (rows || []).filter(function (r) {
+      var rowFrom = String((r && r.from_date) || "").trim();
+      var rowTo = String((r && r.to_date) || "").trim();
+      if (from && rowFrom && rowFrom < from) return false;
+      if (to && rowTo && rowTo > to) return false;
       if (po && String(r.po_number || "") !== po) return false;
       if (entry && String(r.per_piece_salary || "") !== entry) return false;
       return true;
@@ -4312,6 +4378,73 @@ WEB_PAGE_HTML = """
     });
   }
 
+  function buildEmployeeItemWiseReportRows(rows) {
+    var byEmployee = {};
+    var employeeOrder = [];
+    (rows || []).forEach(function (r) {
+      var emp = String(r.employee || "").trim();
+      var name = String(r.name1 || "").trim() || emp || "Unknown Employee";
+      var key = emp + "||" + name;
+      if (!byEmployee[key]) {
+        byEmployee[key] = {
+          employee: emp,
+          name1: name,
+          details: [],
+          subtotal: { qty: 0, amount: 0 }
+        };
+        employeeOrder.push(key);
+      }
+      byEmployee[key].details.push({
+        per_piece_salary: r.per_piece_salary || "",
+        po_number: r.po_number || "",
+        product: r.product || "",
+        process_type: r.process_type || "",
+        process_size: r.process_size || "No Size",
+        qty: num(r.qty),
+        rate: num(r.rate),
+        amount: num(r.amount),
+        booking_status: r.booking_status || "",
+        payment_status: r.payment_status || "",
+        jv_entry_no: r.jv_entry_no || "",
+        payment_jv_no: r.payment_jv_no || ""
+      });
+      byEmployee[key].subtotal.qty += num(r.qty);
+      byEmployee[key].subtotal.amount += num(r.amount);
+    });
+
+    employeeOrder.sort(function (a, b) {
+      var an = String((byEmployee[a] && byEmployee[a].name1) || a);
+      var bn = String((byEmployee[b] && byEmployee[b].name1) || b);
+      return an.localeCompare(bn);
+    });
+
+    var out = [];
+    employeeOrder.forEach(function (key) {
+      var group = byEmployee[key];
+      out.push({
+        _group_header: 1,
+        _group_label: "Employee: " + (group.name1 || group.employee || "Unknown") + (group.employee ? (" (" + group.employee + ")") : "")
+      });
+      (group.details || []).sort(function (a, b) {
+        var ce = String(b.per_piece_salary || "").localeCompare(String(a.per_piece_salary || ""));
+        if (ce !== 0) return ce;
+        var pi = String(a.product || "").localeCompare(String(b.product || ""));
+        if (pi !== 0) return pi;
+        return compareByProcessSequence(a, b, a.product || "", b.product || "");
+      }).forEach(function (d) {
+        out.push(d);
+      });
+      out.push({
+        _is_total: 1,
+        per_piece_salary: "Employee Sub Total",
+        qty: group.subtotal.qty,
+        rate: avgRate(group.subtotal.qty, group.subtotal.amount),
+        amount: group.subtotal.amount
+      });
+    });
+    return out;
+  }
+
   function monthFieldFromKey(key) {
     return "m_" + String(key || "").replace("-", "_");
   }
@@ -4892,9 +5025,16 @@ WEB_PAGE_HTML = """
     html += "</tr></thead><tbody>";
     rows.forEach(function (r) {
       var ptype = String(r.period_type || "");
-      var rowClass = (ptype === "Subtotal" || ptype === "Year" || !!r._is_total) ? " class='pp-year-total'" : "";
+      var rowClass = "";
+      if (r && r._group_header) rowClass = " class='pp-group-head'";
+      else if (ptype === "Subtotal" || ptype === "Year" || !!r._is_total) rowClass = " class='pp-year-total'";
       html += "<tr" + rowClass + ">";
       columns.forEach(function (c) {
+        if (r && r._group_header) {
+          if (c === columns[0]) html += "<td>" + esc(r._group_label || "") + "</td>";
+          else html += "<td></td>";
+          return;
+        }
         var val = r[c.fieldname];
         if ((c.fieldname === "jv_entry_no" || c.fieldname === "payment_jv_no") && val) {
           html += "<td><a target='_blank' href='/app/journal-entry/" + encodeURIComponent(val) + "'>" + esc(val) + "</a></td>";
@@ -5506,7 +5646,7 @@ WEB_PAGE_HTML = """
       if (pay === "Paid") map[key]._paid_count += 1;
       else if (pay === "Unpaid") map[key]._unpaid_count += 1;
     });
-    return Object.keys(map).sort().map(function (k) {
+    return Object.keys(map).sort().reverse().map(function (k) {
       var d = map[k];
       if (d._booked_count === d._row_count) d.booking_status = "Booked";
       else if (d._booked_count > 0) d.booking_status = "Partly Booked";
@@ -5665,6 +5805,7 @@ WEB_PAGE_HTML = """
     var allRows = rows || [];
     var tab = String(state.currentTab || "all");
     var pageSize = Math.max(parseInt(state.pageSize || 20, 10) || 20, 1);
+    if (tab === "salary_creation" || tab === "payment_manage") pageSize = 10;
     var totalPages = Math.max(1, Math.ceil(allRows.length / pageSize));
     var page = parseInt(state.pageByTab[tab] || 1, 10);
     if (!page || page < 1) page = 1;
@@ -5680,6 +5821,40 @@ WEB_PAGE_HTML = """
       start: start + 1,
       end: end
     };
+  }
+
+  function paginateHistoryRows(key, rows, pageSize) {
+    var allRows = rows || [];
+    var size = Math.max(parseInt(pageSize || 10, 10) || 10, 1);
+    var totalPages = Math.max(1, Math.ceil(allRows.length / size));
+    var page = parseInt((state.historyPageByTab || {})[key] || 1, 10);
+    if (!page || page < 1) page = 1;
+    if (page > totalPages) page = totalPages;
+    if (!state.historyPageByTab) state.historyPageByTab = {};
+    state.historyPageByTab[key] = page;
+    var start = (page - 1) * size;
+    var end = Math.min(start + size, allRows.length);
+    return {
+      key: key,
+      rows: allRows.slice(start, end),
+      total: allRows.length,
+      page: page,
+      totalPages: totalPages,
+      start: start + 1,
+      end: end
+    };
+  }
+
+  function historyPagerHtml(meta) {
+    if (!meta || meta.total <= 0 || meta.totalPages <= 1) return "";
+    var prevDisabled = meta.page <= 1 ? " disabled" : "";
+    var nextDisabled = meta.page >= meta.totalPages ? " disabled" : "";
+    return "<div class='pp-pagination' style='justify-content:flex-end;margin-top:6px;'>"
+      + "<span>Rows " + esc(meta.start) + "-" + esc(meta.end) + " of " + esc(meta.total) + "</span>"
+      + "<button type='button' class='btn btn-default btn-xs pp-history-prev' data-key='" + esc(meta.key) + "'" + prevDisabled + ">Previous</button>"
+      + "<span>Page " + esc(meta.page) + " / " + esc(meta.totalPages) + "</span>"
+      + "<button type='button' class='btn btn-default btn-xs pp-history-next' data-key='" + esc(meta.key) + "'" + nextDisabled + ">Next</button>"
+      + "</div>";
   }
 
   function renderPagination(meta) {
@@ -5878,7 +6053,7 @@ WEB_PAGE_HTML = """
       employeeMap[employeeKey].amount += num(r.amount);
     });
 
-    var processRows = Object.keys(processMap).sort().map(function (key) {
+    var processRows = Object.keys(processMap).map(function (key) {
       var item = processMap[key];
       item.rate = avgRate(item.qty, item.amount);
       item.products = Object.keys(item.product_map || {}).sort().map(function (productKey) {
@@ -5890,14 +6065,18 @@ WEB_PAGE_HTML = """
         return productItem;
       });
       return item;
+    }).sort(function (a, b) {
+      return compareByProcessSequence(a, b, "", "");
     });
     var productRows = Object.keys(productMap).sort().map(function (key) {
       var item = productMap[key];
       item.rate = avgRate(item.qty, item.amount);
-      item.processes = Object.keys(item.process_map || {}).sort().map(function (processKey) {
+      item.processes = Object.keys(item.process_map || {}).map(function (processKey) {
         var processItem = item.process_map[processKey];
         processItem.rate = avgRate(processItem.qty, processItem.amount);
         return processItem;
+      }).sort(function (a, b) {
+        return compareByProcessSequence(a, b, item.product || "", item.product || "");
       });
       return item;
     });
@@ -6112,6 +6291,71 @@ WEB_PAGE_HTML = """
     win.print();
   }
 
+  function printCurrentTabReport() {
+    var snap = state.lastTabRender || {};
+    var heading = getCurrentTabLabel() || "Report";
+    var dateRange = currentDateRangeLabel();
+    var company = currentCompanyLabel();
+    var tableHtml = "";
+
+    if (snap.mode === "table" && (snap.columns || []).length) {
+      tableHtml = "<table class='pp-table'><thead><tr>";
+      (snap.columns || []).forEach(function (c) {
+        tableHtml += "<th>" + esc(c.label || "") + "</th>";
+      });
+      tableHtml += "</tr></thead><tbody>";
+      (snap.rows || []).forEach(function (r) {
+        var rowClass = "";
+        if (r && r._group_header) rowClass = " class='pp-group-head'";
+        else if (r && r._is_total) rowClass = " class='pp-year-total'";
+        tableHtml += "<tr" + rowClass + ">";
+        (snap.columns || []).forEach(function (c, idx) {
+          if (r && r._group_header) {
+            if (idx === 0) tableHtml += "<td>" + esc(r._group_label || "") + "</td>";
+            else tableHtml += "<td></td>";
+            return;
+          }
+          var v = r ? r[c.fieldname] : "";
+          var classes = [];
+          if (c.numeric) classes.push("num");
+          if (isAmountField(c.fieldname)) classes.push("pp-amt-col");
+          var cls = classes.length ? " class='" + classes.join(" ") + "'" : "";
+          tableHtml += "<td" + cls + ">" + esc(c.numeric ? fmt(v) : (v || "")) + "</td>";
+        });
+        tableHtml += "</tr>";
+      });
+      tableHtml += "</tbody></table>";
+    } else {
+      var wrap = el("pp-table-wrap");
+      tableHtml = wrap ? (wrap.innerHTML || "<div>No data</div>") : "<div>No data</div>";
+    }
+
+    var win = window.open("", "_blank", "width=1200,height=800");
+    if (!win) return;
+    win.document.open();
+    win.document.write(
+      "<!DOCTYPE html><html><head><title>" + esc(heading) + "</title>"
+      + "<style>"
+      + "body{font-family:Arial,sans-serif;padding:18px;color:#111827;}"
+      + "h1{font-size:20px;margin:0 0 4px 0;} .sub{font-size:12px;color:#475569;margin-bottom:12px;}"
+      + ".pp-table{width:100%;border-collapse:collapse;font-size:12px;}"
+      + ".pp-table th,.pp-table td{border:1px solid #cbd5e1;padding:6px 8px;}"
+      + ".pp-table th{background:#dbeafe !important;text-align:left;-webkit-print-color-adjust:exact;print-color-adjust:exact;}"
+      + ".pp-table td.num{text-align:right;font-variant-numeric:tabular-nums;}"
+      + ".pp-table td.pp-amt-col{font-weight:700;}"
+      + ".pp-year-total td{background:#ecfccb !important;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;}"
+      + ".pp-group-head td{background:#e2e8f0 !important;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;}"
+      + "</style></head><body>"
+      + "<h1>" + esc(company || "Company") + "</h1>"
+      + "<div class='sub'><strong>" + esc(heading) + "</strong>" + (dateRange ? (" | Date: " + esc(dateRange)) : "") + "</div>"
+      + tableHtml
+      + "</body></html>"
+    );
+    win.document.close();
+    win.focus();
+    win.print();
+  }
+
   function setCreatedListHtml(html) {
     var wrap = el("pp-created-list-wrap");
     if (!wrap) return;
@@ -6156,6 +6400,22 @@ WEB_PAGE_HTML = """
         var jvName = btn.getAttribute("data-jv") || "";
         if (!jvName) return;
         showPaymentEntrySummary(jvName, true);
+      });
+    });
+    wrap.querySelectorAll(".pp-history-prev").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var key = String(btn.getAttribute("data-key") || "");
+        if (!key) return;
+        state.historyPageByTab[key] = Math.max(1, (parseInt(state.historyPageByTab[key] || 1, 10) || 1) - 1);
+        renderCreatedEntriesPanel(state.currentTab);
+      });
+    });
+    wrap.querySelectorAll(".pp-history-next").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var key = String(btn.getAttribute("data-key") || "");
+        if (!key) return;
+        state.historyPageByTab[key] = (parseInt(state.historyPageByTab[key] || 1, 10) || 1) + 1;
+        renderCreatedEntriesPanel(state.currentTab);
       });
     });
   }
@@ -6536,11 +6796,12 @@ WEB_PAGE_HTML = """
         setCreatedListHtml("<div style='margin-top:8px;color:#64748b;'>No booking JV created in selected filter.</div>");
         return;
       }
+      var salaryPage = paginateHistoryRows("salary_creation_history", salaryDocs, 10);
       var html = "";
-      if (salaryDocs.length) {
+      if (salaryPage.rows.length) {
         html += "<div style='margin-top:10px;'><strong>Created Salary Entries</strong></div>"
           + "<table class='pp-table' style='margin-top:6px;'><thead><tr><th>Salary Entry</th><th>PO Number</th><th>JV Entry</th><th>Amount</th><th>Rows</th><th>Salary View</th><th>Salary Print</th><th>Salary Open</th><th>JV View</th><th>JV Open</th></tr></thead><tbody>";
-        salaryDocs.forEach(function (r) {
+        (salaryPage.rows || []).forEach(function (r) {
           html += "<tr>"
             + "<td>" + esc(r.name) + "</td>"
             + "<td>" + esc(r.po_number || "") + "</td>"
@@ -6555,6 +6816,7 @@ WEB_PAGE_HTML = """
             + "</tr>";
         });
         html += "</tbody></table>";
+        html += historyPagerHtml(salaryPage);
       }
       setCreatedListHtml(html);
       return;
@@ -6565,12 +6827,13 @@ WEB_PAGE_HTML = """
         setCreatedListHtml("<div style='margin-top:8px;color:#64748b;'>No payment JV created in selected filter.</div>");
         return;
       }
+      var payPage = paginateHistoryRows("payment_manage_history", payRows, 10);
       var phtml = "<div style='margin-top:10px;'><strong>Created Payment JV Entries</strong></div>"
         + "<table class='pp-table' style='margin-top:6px;'><thead><tr><th>Payment Entry</th><th>Salary Entries</th><th>Paid Amount</th><th>Rows</th><th>View</th><th>Print</th><th>Open</th></tr></thead><tbody>";
-      payRows.forEach(function (r) {
+      (payPage.rows || []).forEach(function (r) {
         phtml += "<tr><td>" + esc(r.name) + "</td><td>" + esc((r.salary_entries || []).join(", ")) + "</td><td class='num pp-amt-col'>" + esc(fmt(r.amount)) + "</td><td class='num'>" + esc(r.rows) + "</td><td><button type='button' class='btn btn-xs btn-info pp-view-payment-create' data-jv='" + esc(r.name) + "'>View</button></td><td><button type='button' class='btn btn-xs btn-primary pp-print-payment-create' data-jv='" + esc(r.name) + "'>Print</button></td><td><a target='_blank' href='/app/journal-entry/" + encodeURIComponent(r.name) + "'>Open</a></td></tr>";
       });
-      phtml += "</tbody></table>";
+      phtml += "</tbody></table>" + historyPagerHtml(payPage);
       setCreatedListHtml(phtml);
       return;
     }
@@ -7011,12 +7274,14 @@ WEB_PAGE_HTML = """
       + "</tr>";
     html += "</tbody></table>";
     if (docs.length) {
+      var docsPage = paginateHistoryRows("data_entry_docs", docs, 10);
       html += "<div class='pp-entry-list'><strong>Recent Docs:</strong></div>";
       html += "<table class='pp-table' style='margin-top:6px;'><thead><tr><th>Per Piece Salary</th><th>From Date</th><th>To Date</th><th>PO Number</th><th>JV Status</th><th>Pay Status</th><th>Total Amount</th><th>View Detail</th><th>View Entered</th><th>Edit</th><th>Open</th></tr></thead><tbody>";
-      docs.slice(0, 10).forEach(function (d) {
+      (docsPage.rows || []).forEach(function (d) {
         html += "<tr><td>" + esc(d.name) + "</td><td>" + esc(d.from_date) + "</td><td>" + esc(d.to_date) + "</td><td>" + esc(d.po_number) + "</td><td>" + statusBadgeHtml(d.booking_status || "UnBooked") + "</td><td>" + statusBadgeHtml(d.payment_status || "Unpaid") + "</td><td class='num pp-amt-col'>" + esc(fmt(d.total_amount)) + "</td><td><button type='button' class='btn btn-xs btn-info pp-entry-view-doc-detail' data-name='" + esc(d.name) + "'>View Detail</button></td><td><button type='button' class='btn btn-xs btn-primary pp-entry-view-entered' data-name='" + esc(d.name) + "'>View Entered</button></td><td><button type='button' class='btn btn-xs btn-default pp-entry-edit-doc' data-name='" + esc(d.name) + "'>Edit</button></td><td><a target='_blank' href='/app/per-piece-salary/" + encodeURIComponent(d.name) + "'>Open</a></td></tr>";
       });
       html += "</tbody></table>";
+      html += historyPagerHtml(docsPage);
     }
     html += "</div>";
     wrap.innerHTML = html;
@@ -7183,6 +7448,22 @@ WEB_PAGE_HTML = """
         showDataEntryEnteredRows(btn.getAttribute("data-name") || "");
       });
     });
+    wrap.querySelectorAll(".pp-history-prev").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var key = String(btn.getAttribute("data-key") || "");
+        if (!key) return;
+        state.historyPageByTab[key] = Math.max(1, (parseInt(state.historyPageByTab[key] || 1, 10) || 1) - 1);
+        renderDataEntryTab();
+      });
+    });
+    wrap.querySelectorAll(".pp-history-next").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var key = String(btn.getAttribute("data-key") || "");
+        if (!key) return;
+        state.historyPageByTab[key] = (parseInt(state.historyPageByTab[key] || 1, 10) || 1) + 1;
+        renderDataEntryTab();
+      });
+    });
   }
 
   function loadEntryDocForEdit(entryName) {
@@ -7310,6 +7591,15 @@ WEB_PAGE_HTML = """
     paymentCard.style.display = state.currentTab === "payment_manage" ? "" : "none";
   }
 
+  function toggleEntryScreenMode() {
+    var wrap = document.querySelector(".pp-wrap");
+    if (!wrap) return;
+    var tab = String(state.currentTab || "");
+    var isEntryScreen = tab === "data_entry" || tab === "salary_creation" || tab === "payment_manage";
+    if (isEntryScreen) wrap.classList.add("pp-entry-screen");
+    else wrap.classList.remove("pp-entry-screen");
+  }
+
   function toggleEmployeeSummaryDetailControl() {
     var wrap = el("pp-employee-summary-detail-wrap");
     var input = el("pp-employee-summary-detail");
@@ -7326,10 +7616,11 @@ WEB_PAGE_HTML = """
     var skipColumnSearch = false;
     toggleWorkflowCards();
     toggleEmployeeSummaryDetailControl();
+    toggleEntryScreenMode();
 
     if (state.currentTab === "all") {
       cols = [
-        { fieldname: "per_piece_salary", label: "Per Piece Salary" },
+        { fieldname: "per_piece_salary", label: "Entry No" },
         { fieldname: "from_date", label: "From Date" },
         { fieldname: "to_date", label: "To Date" },
         { fieldname: "po_number", label: "PO Number" },
@@ -7349,8 +7640,12 @@ WEB_PAGE_HTML = """
         { fieldname: "payment_jv_no", label: "Payment JV" },
       ];
       outRows = rows;
+      outRows.sort(function (a, b) {
+        return String(b.per_piece_salary || "").localeCompare(String(a.per_piece_salary || ""));
+      });
     } else if (state.currentTab === "data_entry") {
       renderDataEntryTab();
+      state.lastTabRender = { mode: "dom", columns: [], rows: [] };
       filterRenderedTablesBySearch();
       el("pp-totals").innerHTML = "";
       renderPagination(null);
@@ -7363,6 +7658,21 @@ WEB_PAGE_HTML = """
       outRows = getAdjustedEmployeeRows();
       paged = paginateRows(outRows);
       renderSalaryTable(paged.rows);
+      state.lastTabRender = {
+        mode: "table",
+        columns: [
+          { fieldname: "name1", label: "Employee" },
+          { fieldname: "qty", label: "Qty", numeric: true },
+          { fieldname: "rate", label: "Rate", numeric: true },
+          { fieldname: "amount", label: "Salary Amount", numeric: true },
+          { fieldname: "advance_balance", label: "Advance Balance", numeric: true },
+          { fieldname: "advance_deduction", label: "Advance Deduction", numeric: true },
+          { fieldname: "allowance", label: "Allowance", numeric: true },
+          { fieldname: "other_deduction", label: "Other Deduction", numeric: true },
+          { fieldname: "net_amount", label: "Net Amount", numeric: true }
+        ],
+        rows: outRows
+      };
       filterRenderedTablesBySearch();
       var t = getAdjustedTotals();
       el("pp-totals").innerHTML = "<span>Gross: " + fmt(t.gross_amount) + "</span>"
@@ -7388,6 +7698,27 @@ WEB_PAGE_HTML = """
       outRows = getPaymentActiveRows();
       paged = paginateRows(outRows);
       renderPaymentTable(paged.rows);
+      state.lastTabRender = {
+        mode: "table",
+        columns: [
+          { fieldname: "name1", label: "Employee" },
+          { fieldname: "booked_amount", label: "Booked", numeric: true },
+          { fieldname: "paid_amount", label: "Paid", numeric: true },
+          { fieldname: "unpaid_amount", label: "Unpaid", numeric: true },
+          { fieldname: "payment_amount", label: "Payment Amount", numeric: true },
+          { fieldname: "payment_status", label: "Payment Status" }
+        ],
+        rows: outRows.map(function (r) {
+          return {
+            name1: r.name1 || r.employee || "",
+            booked_amount: r.booked_amount,
+            paid_amount: r.paid_amount,
+            unpaid_amount: r.unpaid_amount,
+            payment_amount: r.payment_amount,
+            payment_status: r.payment_status
+          };
+        })
+      };
       filterRenderedTablesBySearch();
       var p = getPaymentTotals();
       el("pp-totals").innerHTML = "<span>Booked: " + fmt(p.booked) + "</span>"
@@ -7412,6 +7743,22 @@ WEB_PAGE_HTML = """
       outRows = buildEmployeeSummaryReportRows(rows);
       paged = paginateRows(outRows);
       renderEmployeeSummaryTable(paged.rows);
+      state.lastTabRender = {
+        mode: "table",
+        columns: [
+          { fieldname: "name1", label: "Employee" },
+          { fieldname: "qty", label: "Qty", numeric: true },
+          { fieldname: "rate", label: "Rate", numeric: true },
+          { fieldname: "amount", label: "Amount", numeric: true },
+          { fieldname: "booked_amount", label: "Booked", numeric: true },
+          { fieldname: "unbooked_amount", label: "UnBooked", numeric: true },
+          { fieldname: "paid_amount", label: "Paid", numeric: true },
+          { fieldname: "unpaid_amount", label: "Unpaid", numeric: true },
+          { fieldname: "booking_status", label: "Booking Status" },
+          { fieldname: "payment_status", label: "Payment Status" }
+        ],
+        rows: outRows
+      };
       filterRenderedTablesBySearch();
       el("pp-msg").textContent = outRows.length + " row(s)";
       renderPagination(paged);
@@ -7429,6 +7776,7 @@ WEB_PAGE_HTML = """
       outRows = rows;
       paged = paginateRows(outRows);
       renderSalarySlipTable(paged.rows);
+      state.lastTabRender = { mode: "dom", columns: [], rows: [] };
       filterRenderedTablesBySearch();
       el("pp-msg").textContent = "Employee salary slip detail from current filters";
       renderPagination(paged);
@@ -7518,26 +7866,27 @@ WEB_PAGE_HTML = """
       outRows = groupRows(rows, ["process_type", "product"], function (r) {
         return { process_type: r.process_type, product: r.product, qty: 0, amount: 0, rate: 0, booked_amount: 0, paid_amount: 0, unpaid_amount: 0 };
       });
+      outRows.sort(function (a, b) {
+        var c = compareByProcessSequence(a, b, a.product || "", b.product || "");
+        if (c !== 0) return c;
+        return String(a.product || "").localeCompare(String(b.product || ""));
+      });
     } else if (state.currentTab === "per_piece_salary") {
       cols = [
-        { fieldname: "per_piece_salary", label: "Entry No", summary_link: true },
-        { fieldname: "_row_count", label: "Lines", numeric: true },
+        { fieldname: "per_piece_salary", label: "Entry No" },
+        { fieldname: "po_number", label: "PO Number" },
+        { fieldname: "product", label: "Item" },
+        { fieldname: "process_type", label: "Process" },
+        { fieldname: "process_size", label: "Size" },
         { fieldname: "qty", label: "Qty", numeric: true },
         { fieldname: "rate", label: "Rate", numeric: true },
         { fieldname: "amount", label: "Amount", numeric: true },
-        { fieldname: "booked_amount", label: "Booked", numeric: true },
-        { fieldname: "unbooked_amount", label: "UnBooked", numeric: true },
-        { fieldname: "paid_amount", label: "Paid", numeric: true },
-        { fieldname: "unpaid_amount", label: "Unpaid", numeric: true },
         { fieldname: "booking_status", label: "Booking Status" },
-        { fieldname: "payment_status", label: "Payment Status" }
+        { fieldname: "payment_status", label: "Payment Status" },
+        { fieldname: "jv_entry_no", label: "Salary JV No" },
+        { fieldname: "payment_jv_no", label: "Payment JV No" }
       ];
-      outRows = groupRows(rows, ["per_piece_salary"], function (r) {
-        return { per_piece_salary: r.per_piece_salary, qty: 0, amount: 0, rate: 0, booked_amount: 0, unbooked_amount: 0, paid_amount: 0, unpaid_amount: 0 };
-      });
-      outRows.sort(function (a, b) {
-        return String(b.per_piece_salary || "").localeCompare(String(a.per_piece_salary || ""));
-      });
+      outRows = buildEmployeeItemWiseReportRows(rows || []);
     } else if (state.currentTab === "po_number") {
       cols = [
         { fieldname: "po_number", label: "PO Number", po_summary_link: true },
@@ -7565,6 +7914,7 @@ WEB_PAGE_HTML = """
     if (!skipColumnSearch) {
       outRows = filterRowsByColumns(outRows, cols);
     }
+    state.lastTabRender = { mode: "table", columns: cols.slice(), rows: outRows.slice() };
     paged = paginateRows(outRows);
     renderTable(cols, paged.rows);
     renderPagination(paged);
@@ -7649,7 +7999,11 @@ WEB_PAGE_HTML = """
       refreshPaymentAmounts();
       return;
     }
-    outRows.forEach(function (r) { totalQty += num(r.qty); totalAmount += num(r.amount); });
+    outRows.forEach(function (r) {
+      if (!r || r._group_header || r._is_total) return;
+      totalQty += num(r.qty);
+      totalAmount += num(r.amount);
+    });
     el("pp-totals").innerHTML = "<span>Total Qty: " + fmt(totalQty) + "</span><span>Total Amount: " + fmt(totalAmount) + "</span>";
     el("pp-msg").textContent = outRows.length + " row(s)";
     renderCreatedEntriesPanel(state.currentTab);
@@ -8130,6 +8484,9 @@ WEB_PAGE_HTML = """
     if (value) el("pp-pay-payable-account").value = value;
   });
   el("pp-load-btn").addEventListener("click", function () { setPageForCurrentTab(1); loadReport(); });
+  if (el("pp-print-tab-btn")) {
+    el("pp-print-tab-btn").addEventListener("click", printCurrentTabReport);
+  }
   if (el("pp-item-group")) {
     el("pp-item-group").addEventListener("change", function () {
       refreshTopProductOptions();
@@ -8913,6 +9270,7 @@ def apply() -> list[str]:
 		"Data",
 		results,
 	)
+	_ensure_doctype_property_setter("Per Piece Salary", "allow_rename", "0", "Check", results)
 	_ensure_field_property_setter("Per Piece Salary", "po_number", "reqd", "1", "Check", results)
 	_ensure_per_piece_field_links(results)
 	_migrate_jv_status(results)
