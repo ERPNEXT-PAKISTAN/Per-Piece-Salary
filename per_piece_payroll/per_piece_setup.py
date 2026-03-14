@@ -591,9 +591,10 @@ else:
             if item_group and row_item_group != item_group:
                 continue
             jv_status_value = "Posted" if child.get("jv_status") == "Accounted" else (child.get("jv_status") or "Pending")
-            booking_status_value = "Booked" if ((child.get("jv_entry_no") or "") and ((child.get("jv_status") or "") in ("Posted", "Accounted"))) else "UnBooked"
-            booked_amount_value = to_float(child.get("booked_amount"))
-            if booking_status_value == "Booked" and booked_amount_value <= 0:
+            is_booked = bool((child.get("jv_entry_no") or "") and ((child.get("jv_status") or "") in ("Posted", "Accounted")))
+            booking_status_value = "Booked" if is_booked else "UnBooked"
+            booked_amount_value = to_float(child.get("booked_amount")) if is_booked else 0.0
+            if is_booked and booked_amount_value <= 0:
                 booked_amount_value = to_float(child.get("amount"))
             paid_amount_value = max(to_float(child.get("paid_amount")), 0.0)
             if booked_amount_value > 0 and paid_amount_value > booked_amount_value:
@@ -917,6 +918,21 @@ def parse_adjustments(raw_value):
         }
     return out
 
+def parse_name_list(raw_value):
+    out = []
+    seen = {}
+    text = normalize_param(raw_value) or ""
+    if not text:
+        return out
+    text = text.replace("\\n", ",").replace(";", ",")
+    for part in text.split(","):
+        val = normalize_param(part)
+        if not val or seen.get(val):
+            continue
+        seen[val] = 1
+        out.append(val)
+    return out
+
 def cleanup_canceled_jv_links():
     linked_rows = frappe.get_all(
         "Per Piece",
@@ -1004,6 +1020,11 @@ product = normalize_param(args.get("product"))
 process_type = normalize_param(args.get("process_type"))
 po_number = normalize_param(args.get("po_number"))
 entry_no = normalize_param(args.get("entry_no"))
+entry_nos = parse_name_list(args.get("entry_nos"))
+if entry_no and entry_no not in entry_nos:
+    entry_nos.append(entry_no)
+entry_no_count = len(entry_nos)
+entry_no_list = tuple(entry_nos) if entry_nos else ("",)
 employee_wise = to_bool(args.get("employee_wise"))
 dry_run = to_bool(args.get("dry_run"))
 excluded_employees = parse_excluded_employees(args.get("exclude_employees"))
@@ -1042,6 +1063,7 @@ rows = frappe.db.sql(
         AND (%(process_type)s IS NULL OR %(process_type)s = '' OR pp.process_type = %(process_type)s)
         AND (%(po_number)s IS NULL OR %(po_number)s = '' OR pps.po_number = %(po_number)s)
         AND (%(entry_no)s IS NULL OR %(entry_no)s = '' OR pps.name = %(entry_no)s)
+        AND (%(entry_no_count)s = 0 OR pps.name IN %(entry_no_list)s)
         AND IFNULL(pp.jv_entry_no, '') = ''
         AND IFNULL(pp.jv_status, 'Pending') NOT IN ('Posted', 'Accounted')
     ORDER BY pps.from_date ASC, pps.name ASC, pp.idx ASC
@@ -1054,6 +1076,8 @@ rows = frappe.db.sql(
         "process_type": process_type,
         "po_number": po_number,
         "entry_no": entry_no,
+        "entry_no_count": entry_no_count,
+        "entry_no_list": entry_no_list,
     },
     as_dict=True,
 )
@@ -1477,6 +1501,21 @@ def parse_payment_items(raw_value):
             out[emp] = amount
     return out
 
+def parse_name_list(raw_value):
+    out = []
+    seen = {}
+    text = normalize_param(raw_value) or ""
+    if not text:
+        return out
+    text = text.replace("\\n", ",").replace(";", ",")
+    for part in text.split(","):
+        val = normalize_param(part)
+        if not val or seen.get(val):
+            continue
+        seen[val] = 1
+        out.append(val)
+    return out
+
 def parse_payment_refs(text):
     out = []
     raw = str(text or "").strip()
@@ -1577,6 +1616,11 @@ product = normalize_param(args.get("product"))
 process_type = normalize_param(args.get("process_type"))
 po_number = normalize_param(args.get("po_number"))
 entry_no = normalize_param(args.get("entry_no"))
+entry_nos = parse_name_list(args.get("entry_nos"))
+if entry_no and entry_no not in entry_nos:
+    entry_nos.append(entry_no)
+entry_no_count = len(entry_nos)
+entry_no_list = tuple(entry_nos) if entry_nos else ("",)
 dry_run = to_bool(args.get("dry_run"))
 payment_items = parse_payment_items(args.get("payment_items"))
 
@@ -1606,6 +1650,7 @@ rows = frappe.db.sql(
         AND (%(process_type)s IS NULL OR %(process_type)s = '' OR pp.process_type = %(process_type)s)
         AND (%(po_number)s IS NULL OR %(po_number)s = '' OR pps.po_number = %(po_number)s)
         AND (%(entry_no)s IS NULL OR %(entry_no)s = '' OR pps.name = %(entry_no)s)
+        AND (%(entry_no_count)s = 0 OR pps.name IN %(entry_no_list)s)
         AND IFNULL(pp.jv_entry_no, '') != ''
         AND IFNULL(pp.jv_status, 'Pending') IN ('Posted', 'Accounted')
     ORDER BY pps.from_date ASC, pps.name ASC, pp.idx ASC
@@ -1618,6 +1663,8 @@ rows = frappe.db.sql(
         "process_type": process_type,
         "po_number": po_number,
         "entry_no": entry_no,
+        "entry_no_count": entry_no_count,
+        "entry_no_list": entry_no_list,
     },
     as_dict=True,
 )
@@ -2035,6 +2082,8 @@ if parents:
         jv_status_value = "Posted" if child.get("jv_status") == "Accounted" else (child.get("jv_status") or "Pending")
         booking_status_value = "Booked" if ((child.get("jv_entry_no") or "") and ((child.get("jv_status") or "") in ("Posted", "Accounted"))) else "UnBooked"
         booked_amount_value = to_float(child.get("booked_amount"))
+        if booking_status_value != "Booked":
+            booked_amount_value = 0.0
         if booking_status_value == "Booked" and booked_amount_value <= 0:
             booked_amount_value = to_float(child.get("amount"))
         paid_amount_value = max(to_float(child.get("paid_amount")), 0.0)
@@ -2129,23 +2178,49 @@ QUERY_REPORT_QUERY = """SELECT
     pp.jv_line_remark,
     IF(IFNULL(pp.jv_entry_no, '') != '' AND IF(IFNULL(pp.jv_status, 'Pending') = 'Accounted', 'Posted', IFNULL(pp.jv_status, 'Pending')) = 'Posted', 'Booked', 'UnBooked') AS booking_status,
     IF(
-        IFNULL(pp.booked_amount, 0) > 0,
-        IFNULL(pp.booked_amount, 0),
-        IF(IFNULL(pp.jv_entry_no, '') != '' AND IF(IFNULL(pp.jv_status, 'Pending') = 'Accounted', 'Posted', IFNULL(pp.jv_status, 'Pending')) = 'Posted', IFNULL(pp.amount, 0), 0)
+        IFNULL(pp.jv_entry_no, '') != '' AND IF(IFNULL(pp.jv_status, 'Pending') = 'Accounted', 'Posted', IFNULL(pp.jv_status, 'Pending')) = 'Posted',
+        IF(
+            IFNULL(pp.booked_amount, 0) > 0,
+            LEAST(IFNULL(pp.booked_amount, 0), IFNULL(pp.amount, 0)),
+            IFNULL(pp.amount, 0)
+        ),
+        0
     ) AS booked_amount,
-    IFNULL(pp.payment_status, 'Unpaid') AS payment_status,
-    IFNULL(pp.paid_amount, 0) AS paid_amount,
     IF(
-        IFNULL(pp.unpaid_amount, 0) > 0,
-        IFNULL(pp.unpaid_amount, 0),
+        IFNULL(pp.jv_entry_no, '') != '' AND IF(IFNULL(pp.jv_status, 'Pending') = 'Accounted', 'Posted', IFNULL(pp.jv_status, 'Pending')) = 'Posted',
+        IFNULL(pp.payment_status, 'Unpaid'),
+        'Unpaid'
+    ) AS payment_status,
+    IF(
+        IFNULL(pp.jv_entry_no, '') != '' AND IF(IFNULL(pp.jv_status, 'Pending') = 'Accounted', 'Posted', IFNULL(pp.jv_status, 'Pending')) = 'Posted',
+        LEAST(
+            IFNULL(pp.paid_amount, 0),
+            IF(
+                IFNULL(pp.booked_amount, 0) > 0,
+                LEAST(IFNULL(pp.booked_amount, 0), IFNULL(pp.amount, 0)),
+                IFNULL(pp.amount, 0)
+            )
+        ),
+        0
+    ) AS paid_amount,
+    IF(
+        IFNULL(pp.jv_entry_no, '') != '' AND IF(IFNULL(pp.jv_status, 'Pending') = 'Accounted', 'Posted', IFNULL(pp.jv_status, 'Pending')) = 'Posted',
         GREATEST(
             IF(
                 IFNULL(pp.booked_amount, 0) > 0,
-                IFNULL(pp.booked_amount, 0),
-                IF(IFNULL(pp.jv_entry_no, '') != '' AND IF(IFNULL(pp.jv_status, 'Pending') = 'Accounted', 'Posted', IFNULL(pp.jv_status, 'Pending')) = 'Posted', IFNULL(pp.amount, 0), 0)
-            ) - IFNULL(pp.paid_amount, 0),
+                LEAST(IFNULL(pp.booked_amount, 0), IFNULL(pp.amount, 0)),
+                IFNULL(pp.amount, 0)
+            ) - LEAST(
+                IFNULL(pp.paid_amount, 0),
+                IF(
+                    IFNULL(pp.booked_amount, 0) > 0,
+                    LEAST(IFNULL(pp.booked_amount, 0), IFNULL(pp.amount, 0)),
+                    IFNULL(pp.amount, 0)
+                )
+            ),
             0
-        )
+        ),
+        0
     ) AS unpaid_amount,
     pp.payment_jv_no,
     pp.payment_line_remark
@@ -2418,6 +2493,7 @@ function populateRowsFromGroup(frm, forceReload = false) {
         row.process_type = item.process_type || "";
         row.process_size = item.process_size || PROCESS_SIZE_DEFAULT;
         row.rate = flt(item.rate, DECIMALS);
+        row.__manual_rate = 0;
         row.qty = 0;
         row.amount = 0;
         row.from_date = frm.doc.from_date || null;
@@ -2532,7 +2608,8 @@ function applyItemDefaults(frm, cdt, cdn) {
                 processRow.process_size || PROCESS_SIZE_DEFAULT
             );
             const itemRate = flt(processRow.rate, DECIMALS);
-            if (itemRate > 0) {
+            // Keep saved/manual rate stable; only auto-fill when row rate is empty.
+            if (itemRate > 0 && flt(row.rate, DECIMALS) <= 0) {
                 frappe.model.set_value(cdt, cdn, "rate", itemRate);
             }
         })
@@ -2706,6 +2783,20 @@ frappe.ui.form.on("Per Piece", {
     },
 
     product(frm, cdt, cdn) {
+        const row = locals[cdt][cdn];
+        if (row) {
+            row.__manual_rate = 0;
+            row.rate = 0;
+        }
+        applyItemDefaults(frm, cdt, cdn);
+    },
+
+    process_type(frm, cdt, cdn) {
+        const row = locals[cdt][cdn];
+        if (row) {
+            row.__manual_rate = 0;
+            row.rate = 0;
+        }
         applyItemDefaults(frm, cdt, cdn);
     },
 
@@ -2718,6 +2809,7 @@ frappe.ui.form.on("Per Piece", {
 
     rate(frm, cdt, cdn) {
         const row = locals[cdt][cdn];
+        if (row) row.__manual_rate = 1;
         calculateRowAmount(row);
         frappe.model.set_value(cdt, cdn, "amount", row.amount);
         frm.trigger("recalc_amount_and_total");
@@ -2739,6 +2831,8 @@ WEB_PAGE_HTML = """
     <label>From Date <input type="date" id="pp-from-date" /></label>
     <label>To Date <input type="date" id="pp-to-date" /></label>
     <label>Employee <select id="pp-employee"><option value="">All</option></select></label>
+    <label>Booking Status <select id="pp-booking-status"><option value="">All</option><option value="Booked">Booked</option><option value="UnBooked">UnBooked</option><option value="Partly Booked">Partly Booked</option></select></label>
+    <label>Payment Status <select id="pp-payment-status"><option value="">All</option><option value="Paid">Paid</option><option value="Unpaid">Unpaid</option><option value="Partly Paid">Partly Paid</option></select></label>
     <label>Item Group <select id="pp-item-group"><option value="">All</option></select></label>
     <label>Product <select id="pp-product"><option value="">All</option></select></label>
     <label>Process Type <select id="pp-process-type"><option value="">All</option></select></label>
@@ -2747,25 +2841,32 @@ WEB_PAGE_HTML = """
     <label>Search <input type="text" id="pp-search-any" placeholder="Type any word..." /></label>
     <label id="pp-employee-summary-detail-wrap" style="display:none;">Detail <input type="checkbox" id="pp-employee-summary-detail" /></label>
     <button id="pp-load-btn" class="btn btn-primary" type="button">Load Report</button>
+    <button id="pp-sync-status-btn" class="btn btn-default" type="button">Force Sync Status</button>
     <button id="pp-print-tab-btn" class="btn btn-default" type="button">Print Tab</button>
   </div>
 
+  <div class="pp-workspace-switch">
+    <button type="button" class="btn btn-default pp-workspace-btn active" id="pp-workspace-entry">Entry Workspace</button>
+    <button type="button" class="btn btn-default pp-workspace-btn" id="pp-workspace-reporting">Reporting Workspace</button>
+  </div>
+
   <div class="pp-tabs">
-    <button type="button" class="pp-tab active" data-tab="all">History</button>
-    <button type="button" class="pp-tab" data-tab="data_entry">Data Enter</button>
-    <button type="button" class="pp-tab" data-tab="salary_creation">Salary Creation</button>
-    <button type="button" class="pp-tab" data-tab="payment_manage">Payment Entry</button>
-    <button type="button" class="pp-tab" data-tab="jv_created">Salary Status</button>
-    <button type="button" class="pp-tab" data-tab="month_paid_unpaid">Month Paid/Unpaid</button>
-    <button type="button" class="pp-tab" data-tab="advances">Advances</button>
-    <button type="button" class="pp-tab" data-tab="employee_summary">Employee Summary</button>
-    <button type="button" class="pp-tab" data-tab="per_piece_salary">Employee item-wise</button>
-    <button type="button" class="pp-tab" data-tab="salary_slip">Salary Slip</button>
-    <button type="button" class="pp-tab" data-tab="po_number">PO Summary</button>
-    <button type="button" class="pp-tab" data-tab="month_year_salary">Month/Year Salary</button>
-    <button type="button" class="pp-tab" data-tab="simple_month_amount">Month-wise</button>
-    <button type="button" class="pp-tab" data-tab="product">Product Summary</button>
-    <button type="button" class="pp-tab" data-tab="process_product">Process Summary</button>
+    <button type="button" class="pp-tab active" data-workspace="entry" data-tab="data_entry">Data Enter</button>
+    <button type="button" class="pp-tab" data-workspace="entry" data-tab="salary_creation">Salary Creation</button>
+    <button type="button" class="pp-tab" data-workspace="entry" data-tab="payment_manage">Payment Entry</button>
+    <button type="button" class="pp-tab" data-workspace="reporting" data-tab="all">History</button>
+    <button type="button" class="pp-tab" data-workspace="reporting" data-tab="jv_created">Salary Status</button>
+    <button type="button" class="pp-tab" data-workspace="reporting" data-tab="month_paid_unpaid">Month Paid/Unpaid</button>
+    <button type="button" class="pp-tab" data-workspace="reporting" data-tab="advances">Advances</button>
+    <button type="button" class="pp-tab" data-workspace="reporting" data-tab="employee_summary">Employee Summary</button>
+    <button type="button" class="pp-tab" data-workspace="reporting" data-tab="per_piece_salary">Employee item-wise</button>
+    <button type="button" class="pp-tab" data-workspace="reporting" data-tab="salary_slip">Salary Slip</button>
+    <button type="button" class="pp-tab" data-workspace="reporting" data-tab="po_number">PO Summary</button>
+    <button type="button" class="pp-tab" data-workspace="reporting" data-tab="po_detail_all">PO Detail Print</button>
+    <button type="button" class="pp-tab" data-workspace="reporting" data-tab="month_year_salary">Month/Year Salary</button>
+    <button type="button" class="pp-tab" data-workspace="reporting" data-tab="simple_month_amount">Month-wise</button>
+    <button type="button" class="pp-tab" data-workspace="reporting" data-tab="product">Product Summary</button>
+    <button type="button" class="pp-tab" data-workspace="reporting" data-tab="process_product">Process Summary</button>
   </div>
 
   <div id="pp-msg" class="pp-msg"></div>
@@ -2777,6 +2878,7 @@ WEB_PAGE_HTML = """
     <h4>Salary Creation Tab (Book Salary To Payable)</h4>
     <div class="pp-jv-grid">
       <label>Entry Filter (Unbooked) <select id="pp-jv-entry-filter"><option value="">All Unbooked Entries</option></select></label>
+      <label>Selected Entries <input type="text" id="pp-jv-entry-multi" placeholder="Entry1, Entry2, Entry3" /></label>
       <label>Company <select id="pp-jv-company"><option value="">Select Company</option></select></label>
       <label>Posting Date <input type="date" id="pp-jv-posting-date" /></label>
       <label>Salary Account <select id="pp-jv-expense-account"><option value="">Select Salary Account</option></select></label>
@@ -2792,6 +2894,8 @@ WEB_PAGE_HTML = """
     </div>
     <div class="pp-jv-actions">
       <button id="pp-jv-entry-clear" class="btn btn-default" type="button">Clear Entry Filter</button>
+      <button id="pp-jv-entry-add" class="btn btn-default" type="button">Add Filter Entry</button>
+      <button id="pp-jv-entry-remove" class="btn btn-default" type="button">Remove Filter Entry</button>
       <button id="pp-jv-entry-refresh" class="btn btn-default" type="button">Refresh Entries</button>
       <button id="pp-jv-preview-btn" class="btn btn-default" type="button">Quick Preview JV</button>
       <button id="pp-jv-create-btn" class="btn btn-primary" type="button">Post JV Entry</button>
@@ -2806,6 +2910,7 @@ WEB_PAGE_HTML = """
     <h4>Payment Entry Create for Employees (Pay Booked Salary)</h4>
     <div class="pp-jv-grid">
       <label>Entry Filter (Unpaid) <select id="pp-pay-entry-filter"><option value="">All Unpaid Entries</option></select></label>
+      <label>Selected Entries <input type="text" id="pp-pay-entry-multi" placeholder="Entry1, Entry2, Entry3" /></label>
       <label>Company <select id="pp-pay-company"><option value="">Select Company</option></select></label>
       <label>Posting Date <input type="date" id="pp-pay-posting-date" /></label>
       <label>Payable Account <select id="pp-pay-payable-account"><option value="">Select Payable Account</option></select></label>
@@ -2817,6 +2922,8 @@ WEB_PAGE_HTML = """
     </div>
     <div class="pp-jv-actions">
       <button id="pp-pay-entry-clear" class="btn btn-default" type="button">Clear Entry Filter</button>
+      <button id="pp-pay-entry-add" class="btn btn-default" type="button">Add Filter Entry</button>
+      <button id="pp-pay-entry-remove" class="btn btn-default" type="button">Remove Filter Entry</button>
       <button id="pp-pay-entry-refresh" class="btn btn-default" type="button">Refresh Entries</button>
       <button id="pp-pay-preview-btn" class="btn btn-default" type="button">Quick Preview Payment JV</button>
       <button id="pp-pay-create-btn" class="btn btn-primary" type="button">Post Payment JV</button>
@@ -2872,6 +2979,12 @@ WEB_PAGE_HTML = """
   .pp-filters { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
   .pp-filters label { display: flex; flex-direction: column; gap: 4px; min-width: 180px; font-size: 12px; color: #334155; }
   .pp-filters input, .pp-filters select { border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px 10px; font-size: 13px; }
+  .pp-workspace-switch { display: flex; gap: 8px; margin: 6px 0 8px 0; }
+  .pp-workspace-btn { color: #fff !important; border-color: transparent !important; font-weight: 600; }
+  #pp-workspace-entry { background: #0f766e !important; }
+  #pp-workspace-reporting { background: #1d4ed8 !important; }
+  #pp-workspace-entry.active { background: #065f46 !important; color: #fff !important; border-color: #064e3b !important; }
+  #pp-workspace-reporting.active { background: #1e40af !important; color: #fff !important; border-color: #1e3a8a !important; }
   .pp-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
   .pp-tab { border: 1px solid #bfdbfe; background: #eff6ff; color: #1e3a8a; border-radius: 8px; padding: 6px 10px; font-size: 12px; }
   .pp-tab.active { background: #1d4ed8; color: #fff; border-color: #1d4ed8; }
@@ -2939,7 +3052,8 @@ WEB_PAGE_HTML = """
 <script>
 (function () {
   var state = {
-    currentTab: "all",
+    workspaceMode: "entry",
+    currentTab: "data_entry",
     rows: [],
     columns: [],
     filterOptions: { employees: [], item_groups: [], products: [], process_types: [] },
@@ -2950,6 +3064,16 @@ WEB_PAGE_HTML = """
     excludedEmployees: {},
     paymentAdjustments: {},
     paymentExcludedEmployees: {},
+    workflowHistoryDate: {
+      data_entry: { from: "", to: "" },
+      salary_creation: { from: "", to: "" },
+      payment_manage: { from: "", to: "" }
+    },
+    workflowStatusFilter: {
+      data_entry: { booking: "", payment: "" },
+      salary_creation: { booking: "", payment: "" },
+      payment_manage: { booking: "", payment: "" }
+    },
     entryRows: [],
     entryMeta: {},
     employeeSummaryDetail: false,
@@ -3026,13 +3150,13 @@ WEB_PAGE_HTML = """
         if (Object.keys(sizeMap).length === 1) chosen = scoped[0];
       }
       if (!chosen) return;
-      var existingSize = String((row && row.process_size) || "").trim() || "No Size";
       var existingRate = num(row && row.rate);
       var correctedRate = num(chosen.rate);
-      if ((!row.process_size || String(row.process_size).trim() === "No Size") && chosen.process_size) {
+      if ((!row.process_size || String(row.process_size).trim() === "No Size") && chosen.process_size && existingRate <= 0) {
         row.process_size = chosen.process_size;
       }
-      if (correctedRate > 0 && (existingSize === "No Size" || existingRate <= 0 || Math.abs(existingRate - correctedRate) > 0.0001)) {
+      // Never overwrite saved/manual rate. Only backfill missing rate.
+      if (correctedRate > 0 && existingRate <= 0) {
         row.rate = correctedRate;
       }
       var qty = num(row && row.qty);
@@ -3040,7 +3164,7 @@ WEB_PAGE_HTML = """
       if (qty > 0 && finalRate > 0) {
         var correctedAmount = whole(qty * finalRate);
         var existingAmount = num(row && row.amount);
-        if (existingSize === "No Size" || existingAmount <= 0 || Math.abs(existingAmount - correctedAmount) > 0.01) {
+        if (existingAmount <= 0) {
           row.amount = correctedAmount;
         }
       }
@@ -3059,6 +3183,7 @@ WEB_PAGE_HTML = """
 
       var booked = num(row.booked_amount);
       if (booked < 0) booked = 0;
+      if (!isJVPosted) booked = 0;
       if (isJVPosted && booked <= 0) booked = amount;
       if (booked > amount) booked = amount;
 
@@ -3073,7 +3198,7 @@ WEB_PAGE_HTML = """
       }
       var unbooked = isJVPosted ? 0 : Math.max(amount - booked, 0);
 
-      var bookingStatus = isJVPosted ? "Booked" : (booked > 0 ? "Partly Booked" : "UnBooked");
+      var bookingStatus = isJVPosted ? "Booked" : "UnBooked";
       var paymentStatus = "Unpaid";
       if (booked > 0) {
         if (unpaid <= 0.005) paymentStatus = "Paid";
@@ -3486,9 +3611,9 @@ WEB_PAGE_HTML = """
       if (mode === "product") {
         var productDetailMap = {};
         scopedRows.forEach(function (r) {
-          var k = [String(r.product || ""), String(r.process_type || ""), String(r.process_size || "No Size")].join("||");
+          var k = [String(r.po_number || ""), String(r.product || ""), String(r.process_type || ""), String(r.process_size || "No Size")].join("||");
           if (!productDetailMap[k]) {
-            productDetailMap[k] = { product: r.product || "", process_type: r.process_type || "", process_size: r.process_size || "No Size", qty: 0, amount: 0, rate: 0 };
+            productDetailMap[k] = { po_number: r.po_number || "", product: r.product || "", process_type: r.process_type || "", process_size: r.process_size || "No Size", qty: 0, amount: 0, rate: 0 };
           }
           productDetailMap[k].qty += num(r.qty);
           productDetailMap[k].amount += num(r.amount);
@@ -3498,25 +3623,29 @@ WEB_PAGE_HTML = """
           row.rate = avgRate(row.qty, row.amount);
           return row;
         }).sort(function (a, b) {
+          var poa = String(a.po_number || "");
+          var pob = String(b.po_number || "");
+          if (poa !== pob) return poa.localeCompare(pob);
           var pa = String(a.product || "");
           var pb = String(b.product || "");
           if (pa !== pb) return pa.localeCompare(pb);
           return compareByProcessSequence(a, b, pa, pb);
         });
         html += "<h4 style='margin:10px 0 6px 0;'>Product wise Detail Report</h4>";
-        html += "<table class='pp-table'><thead><tr><th>Product</th><th>Process</th><th>Size</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>";
+        html += "<table class='pp-table'><thead><tr><th>PO Number</th><th>Product</th><th>Process</th><th>Size</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>";
         productDetailRows.forEach(function (r) {
-          html += "<tr><td>" + esc(r.product || "") + "</td><td>" + esc(r.process_type || "") + "</td><td>" + esc(r.process_size || "No Size") + "</td><td class='num'>" + esc(fmt(r.qty)) + "</td><td class='num'>" + esc(fmt(r.rate)) + "</td><td class='num pp-amt-col'>" + esc(fmt(r.amount)) + "</td></tr>";
+          html += "<tr><td>" + esc(r.po_number || "") + "</td><td>" + esc(r.product || "") + "</td><td>" + esc(r.process_type || "") + "</td><td>" + esc(r.process_size || "No Size") + "</td><td class='num'>" + esc(fmt(r.qty)) + "</td><td class='num'>" + esc(fmt(r.rate)) + "</td><td class='num pp-amt-col'>" + esc(fmt(r.amount)) + "</td></tr>";
         });
-        html += "<tr class='pp-year-total'><td>Total</td><td></td><td></td><td class='num'>" + esc(fmt(scopedGroup.qty)) + "</td><td class='num'>" + esc(fmt(scopedGroup.rate)) + "</td><td class='num pp-amt-col'>" + esc(fmt(scopedGroup.amount)) + "</td></tr>";
+        html += "<tr class='pp-year-total'><td>Total</td><td></td><td></td><td></td><td class='num'>" + esc(fmt(scopedGroup.qty)) + "</td><td class='num'>" + esc(fmt(scopedGroup.rate)) + "</td><td class='num pp-amt-col'>" + esc(fmt(scopedGroup.amount)) + "</td></tr>";
         html += "</tbody></table>";
       } else {
         var mergedMap = {};
         scopedRows.forEach(function (r) {
           var item = String(r.product || "").trim() || "(Blank)";
-          var pkey = item + "||" + String(r.process_type || "") + "||" + String(r.process_size || "No Size");
+          var pkey = String(r.po_number || "") + "||" + item + "||" + String(r.process_type || "") + "||" + String(r.process_size || "No Size");
           if (!mergedMap[pkey]) {
             mergedMap[pkey] = {
+              po_number: r.po_number || "",
               product: item,
               process_type: r.process_type || "",
               process_size: r.process_size || "No Size",
@@ -3532,6 +3661,9 @@ WEB_PAGE_HTML = """
           row.rate = avgRate(row.qty, row.amount);
           return row;
         }).sort(function (a, b) {
+          var poa = String(a.po_number || "");
+          var pob = String(b.po_number || "");
+          if (poa !== pob) return poa.localeCompare(pob);
           var pa = String(a.product || "");
           var pb = String(b.product || "");
           if (pa !== pb) return pa.localeCompare(pb);
@@ -3539,23 +3671,26 @@ WEB_PAGE_HTML = """
         });
         var byItem = {};
         mergedRows.forEach(function (r) {
-          var item = r.product || "(Blank)";
+          var item = (r.po_number || "") + "||" + (r.product || "(Blank)");
           if (!byItem[item]) byItem[item] = [];
           byItem[item].push(r);
         });
         html += "<h4 style='margin:10px 0 6px 0;'>Item Wise Summary (with Process)</h4>";
-        html += "<table class='pp-table'><thead><tr><th>Item</th><th>Process</th><th>Size</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>";
-        Object.keys(byItem).sort().forEach(function (item) {
+        html += "<table class='pp-table'><thead><tr><th>PO Number</th><th>Item</th><th>Process</th><th>Size</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>";
+        Object.keys(byItem).sort().forEach(function (itemKey) {
+          var itemParts = String(itemKey || "").split("||");
+          var itemPo = itemParts[0] || "";
+          var item = itemParts.slice(1).join("||") || "(Blank)";
           var iQty = 0;
           var iAmount = 0;
-          (byItem[item] || []).forEach(function (r) {
+          (byItem[itemKey] || []).forEach(function (r) {
             iQty += num(r.qty);
             iAmount += num(r.amount);
-            html += "<tr><td>" + esc(item) + "</td><td>" + esc(r.process_type || "") + "</td><td>" + esc(r.process_size || "No Size") + "</td><td class='num'>" + esc(fmt(r.qty)) + "</td><td class='num'>" + esc(fmt(r.rate)) + "</td><td class='num pp-amt-col'>" + esc(fmt(r.amount)) + "</td></tr>";
+            html += "<tr><td>" + esc(itemPo) + "</td><td>" + esc(item) + "</td><td>" + esc(r.process_type || "") + "</td><td>" + esc(r.process_size || "No Size") + "</td><td class='num'>" + esc(fmt(r.qty)) + "</td><td class='num'>" + esc(fmt(r.rate)) + "</td><td class='num pp-amt-col'>" + esc(fmt(r.amount)) + "</td></tr>";
           });
-          html += "<tr class='pp-year-total'><td>" + esc(item) + " Total</td><td></td><td></td><td class='num'>" + esc(fmt(iQty)) + "</td><td class='num'>" + esc(fmt(avgRate(iQty, iAmount))) + "</td><td class='num pp-amt-col'>" + esc(fmt(iAmount)) + "</td></tr>";
+          html += "<tr class='pp-year-total'><td>" + esc(itemPo) + "</td><td>" + esc(item) + " Total</td><td></td><td></td><td class='num'>" + esc(fmt(iQty)) + "</td><td class='num'>" + esc(fmt(avgRate(iQty, iAmount))) + "</td><td class='num pp-amt-col'>" + esc(fmt(iAmount)) + "</td></tr>";
         });
-        html += "<tr class='pp-year-total'><td>Grand Total</td><td></td><td></td><td class='num'>" + esc(fmt(scopedGroup.qty)) + "</td><td class='num'>" + esc(fmt(scopedGroup.rate)) + "</td><td class='num pp-amt-col'>" + esc(fmt(scopedGroup.amount)) + "</td></tr>";
+        html += "<tr class='pp-year-total'><td>Grand Total</td><td></td><td></td><td></td><td class='num'>" + esc(fmt(scopedGroup.qty)) + "</td><td class='num'>" + esc(fmt(scopedGroup.rate)) + "</td><td class='num pp-amt-col'>" + esc(fmt(scopedGroup.amount)) + "</td></tr>";
         html += "</tbody></table>";
       }
 
@@ -3895,6 +4030,8 @@ WEB_PAGE_HTML = """
       item_group: el("pp-item-group") ? (el("pp-item-group").value || "") : "",
       product: el("pp-product").value || "",
       process_type: el("pp-process-type").value || "",
+      booking_status: el("pp-booking-status") ? (el("pp-booking-status").value || "") : "",
+      payment_status: el("pp-payment-status") ? (el("pp-payment-status").value || "") : "",
       po_number: el("pp-po-number") ? (el("pp-po-number").value || "") : "",
       entry_no: el("pp-entry-no") ? (el("pp-entry-no").value || "") : "",
       max_rows: "0",
@@ -3928,11 +4065,21 @@ WEB_PAGE_HTML = """
     var opts = options || {};
     var po = el("pp-po-number") ? String(el("pp-po-number").value || "").trim() : "";
     var entry = String(state.forcedEntryNo || "").trim();
+    var booking = el("pp-booking-status") ? String(el("pp-booking-status").value || "").trim() : "";
+    var payment = el("pp-payment-status") ? String(el("pp-payment-status").value || "").trim() : "";
     var from = String((el("pp-from-date") && el("pp-from-date").value) || "").trim();
     var to = String((el("pp-to-date") && el("pp-to-date").value) || "").trim();
     if (!entry && el("pp-entry-no")) entry = String(el("pp-entry-no").value || "").trim();
     if (opts.ignore_entry_filter) entry = "";
     if (opts.ignore_po_filter) po = "";
+    if (opts.ignore_date_filter) {
+      from = "";
+      to = "";
+    }
+    if (opts.ignore_status_filter) {
+      booking = "";
+      payment = "";
+    }
     return (rows || []).filter(function (r) {
       var rowFrom = String((r && r.from_date) || "").trim();
       var rowTo = String((r && r.to_date) || "").trim();
@@ -3940,6 +4087,8 @@ WEB_PAGE_HTML = """
       if (to && rowTo && rowTo > to) return false;
       if (po && String(r.po_number || "") !== po) return false;
       if (entry && String(r.per_piece_salary || "") !== entry) return false;
+      if (booking && String(r.booking_status || "").trim() !== booking) return false;
+      if (payment && String(r.payment_status || "").trim() !== payment) return false;
       return true;
     });
   }
@@ -3973,6 +4122,60 @@ WEB_PAGE_HTML = """
       out.push({ key: key, label: label });
     }
     return out;
+  }
+
+  function filterRowsByDateRange(rows, fromDate, toDate) {
+    var from = String(fromDate || "").trim();
+    var to = String(toDate || "").trim();
+    if (!from && !to) return (rows || []).slice();
+    return (rows || []).filter(function (r) {
+      var rowFrom = String((r && r.from_date) || "").trim();
+      var rowTo = String((r && r.to_date) || "").trim();
+      if (!rowFrom) rowFrom = rowTo;
+      if (!rowTo) rowTo = rowFrom;
+      if (from && rowTo && rowTo < from) return false;
+      if (to && rowFrom && rowFrom > to) return false;
+      return true;
+    });
+  }
+
+  function getWorkflowHistoryRange(tabName) {
+    var key = String(tabName || "").trim();
+    var src = (state.workflowHistoryDate && state.workflowHistoryDate[key]) || {};
+    return { from: String(src.from || "").trim(), to: String(src.to || "").trim() };
+  }
+
+  function setWorkflowHistoryRange(tabName, fromDate, toDate) {
+    var key = String(tabName || "").trim();
+    if (!state.workflowHistoryDate[key]) state.workflowHistoryDate[key] = { from: "", to: "" };
+    state.workflowHistoryDate[key].from = String(fromDate || "").trim();
+    state.workflowHistoryDate[key].to = String(toDate || "").trim();
+  }
+
+  function getWorkflowStatusFilter(tabName) {
+    var key = String(tabName || "").trim();
+    var src = (state.workflowStatusFilter && state.workflowStatusFilter[key]) || {};
+    return {
+      booking: String(src.booking || "").trim(),
+      payment: String(src.payment || "").trim()
+    };
+  }
+
+  function setWorkflowStatusFilter(tabName, bookingStatus, paymentStatus) {
+    var key = String(tabName || "").trim();
+    if (!state.workflowStatusFilter[key]) state.workflowStatusFilter[key] = { booking: "", payment: "" };
+    state.workflowStatusFilter[key].booking = String(bookingStatus || "").trim();
+    state.workflowStatusFilter[key].payment = String(paymentStatus || "").trim();
+  }
+
+  function filterDocsByStatus(docs, bookingStatus, paymentStatus) {
+    var b = String(bookingStatus || "").trim();
+    var p = String(paymentStatus || "").trim();
+    return (docs || []).filter(function (row) {
+      if (b && String((row && row.booking_status) || "").trim() !== b) return false;
+      if (p && String((row && row.payment_status) || "").trim() !== p) return false;
+      return true;
+    });
   }
 
   function loadAdvancesFromGL() {
@@ -4369,12 +4572,9 @@ WEB_PAGE_HTML = """
       var jvPosted = !!((row.jv_entry_no || "") && String(row.jv_status || "") === "Posted");
       var isBooked = bookingStatus === "Booked" || jvPosted;
       var bookedVal = isBooked ? amount : 0;
-
-      if (bookingStatus === "Partly Booked") {
-        var rawBooked = num(row.booked_amount);
-        if (rawBooked < 0) rawBooked = 0;
-        if (rawBooked > amount) rawBooked = amount;
-        bookedVal = rawBooked;
+      if (!jvPosted) {
+        isBooked = false;
+        bookedVal = 0;
       }
 
       var paidVal = num(row.paid_amount);
@@ -4518,11 +4718,9 @@ WEB_PAGE_HTML = """
       var jvPosted = !!((r.jv_entry_no || "") && String(r.jv_status || "") === "Posted");
       var isBooked = bookingStatus === "Booked" || jvPosted;
       var bookedVal = isBooked ? amount : 0;
-      if (bookingStatus === "Partly Booked") {
-        var rawBooked = num(r.booked_amount);
-        if (rawBooked < 0) rawBooked = 0;
-        if (rawBooked > amount) rawBooked = amount;
-        bookedVal = rawBooked;
+      if (!jvPosted) {
+        isBooked = false;
+        bookedVal = 0;
       }
       var paidVal = num(r.paid_amount);
       if (paidVal < 0) paidVal = 0;
@@ -4892,12 +5090,9 @@ WEB_PAGE_HTML = """
       var jvPosted = !!((row.jv_entry_no || "") && String(row.jv_status || "") === "Posted");
       var isBooked = bookingStatus === "Booked" || jvPosted;
       var bookedVal = isBooked ? amount : 0;
-
-      if (bookingStatus === "Partly Booked") {
-        var rawBooked = num(row.booked_amount);
-        if (rawBooked < 0) rawBooked = 0;
-        if (rawBooked > amount) rawBooked = amount;
-        bookedVal = rawBooked;
+      if (!jvPosted) {
+        isBooked = false;
+        bookedVal = 0;
       }
 
       var paidVal = num(row.paid_amount);
@@ -5136,7 +5331,12 @@ WEB_PAGE_HTML = """
   }
 
   function getUnpostedRows() {
-    return getRowsByHeaderFilters(state.rows || []).filter(function (r) {
+    var range = getWorkflowHistoryRange("salary_creation");
+    return filterRowsBySelectedEntries(filterRowsByDateRange(
+      getRowsByHeaderFilters(state.rows || [], { ignore_date_filter: true }),
+      range.from,
+      range.to
+    ), "salary_creation").filter(function (r) {
       var status = r && r.jv_status ? String(r.jv_status) : "Pending";
       var hasJV = !!String((r && r.jv_entry_no) || "").trim();
       return !hasJV && status !== "Posted";
@@ -5144,7 +5344,12 @@ WEB_PAGE_HTML = """
   }
 
   function getBookedRows() {
-    return getRowsByHeaderFilters(state.rows || []).filter(function (r) {
+    var range = getWorkflowHistoryRange("payment_manage");
+    return filterRowsBySelectedEntries(filterRowsByDateRange(
+      getRowsByHeaderFilters(state.rows || [], { ignore_date_filter: true }),
+      range.from,
+      range.to
+    ), "payment_manage").filter(function (r) {
       var status = r && r.jv_status ? String(r.jv_status) : "Pending";
       var hasJV = !!String((r && r.jv_entry_no) || "").trim();
       return hasJV && status === "Posted";
@@ -5243,7 +5448,12 @@ WEB_PAGE_HTML = """
 
   function getUnbookedEntryOptions() {
     var map = {};
-    getRowsByHeaderFilters(state.rows || [], { ignore_entry_filter: true }).forEach(function (r) {
+    var range = getWorkflowHistoryRange("salary_creation");
+    filterRowsByDateRange(
+      getRowsByHeaderFilters(state.rows || [], { ignore_entry_filter: true, ignore_date_filter: true }),
+      range.from,
+      range.to
+    ).forEach(function (r) {
       var entry = String((r && r.per_piece_salary) || "").trim();
       if (!entry) return;
       var status = String((r && r.jv_status) || "");
@@ -5257,7 +5467,12 @@ WEB_PAGE_HTML = """
 
   function getUnpaidEntryOptions() {
     var map = {};
-    getRowsByHeaderFilters(state.rows || [], { ignore_entry_filter: true }).forEach(function (r) {
+    var range = getWorkflowHistoryRange("payment_manage");
+    filterRowsByDateRange(
+      getRowsByHeaderFilters(state.rows || [], { ignore_entry_filter: true, ignore_date_filter: true }),
+      range.from,
+      range.to
+    ).forEach(function (r) {
       var entry = String((r && r.per_piece_salary) || "").trim();
       if (!entry) return;
       var unpaid = num((r && r.unpaid_amount) || 0);
@@ -5286,6 +5501,7 @@ WEB_PAGE_HTML = """
       var isBooked = String(r.booking_status || "") === "Booked" || (!!String(r.jv_entry_no || "").trim() && String(r.jv_status || "") === "Posted");
       var b = num(r.booked_amount);
       if (b < 0) b = 0;
+      if (!isBooked) b = 0;
       if (isBooked && b <= 0) b = a;
       var p = num(r.paid_amount);
       if (p < 0) p = 0;
@@ -5363,6 +5579,47 @@ WEB_PAGE_HTML = """
           + " | Payment: " + statusBadgeHtml(ps.payment_status || "");
       }
     }
+  }
+
+  function resetEntryFiltersToAll() {
+    state.forcedEntryNo = "";
+    if (el("pp-entry-no")) el("pp-entry-no").value = "";
+    if (el("pp-jv-entry-filter")) el("pp-jv-entry-filter").value = "";
+    if (el("pp-pay-entry-filter")) el("pp-pay-entry-filter").value = "";
+    if (el("pp-jv-entry-multi")) el("pp-jv-entry-multi").value = "";
+    if (el("pp-pay-entry-multi")) el("pp-pay-entry-multi").value = "";
+  }
+
+  function parseEntryNoList(text) {
+    var seen = {};
+    var out = [];
+    String(text || "").split(",").forEach(function (part) {
+      var v = String(part || "").trim();
+      if (!v || seen[v]) return;
+      seen[v] = 1;
+      out.push(v);
+    });
+    return out;
+  }
+
+  function getSelectedEntryNosForTab(tabName) {
+    var raw = "";
+    if (tabName === "salary_creation") raw = (el("pp-jv-entry-multi") && el("pp-jv-entry-multi").value) || "";
+    else if (tabName === "payment_manage") raw = (el("pp-pay-entry-multi") && el("pp-pay-entry-multi").value) || "";
+    var list = parseEntryNoList(raw);
+    if (!list.length && state.forcedEntryNo) list = [String(state.forcedEntryNo).trim()];
+    return list;
+  }
+
+  function filterRowsBySelectedEntries(rows, tabName) {
+    var list = getSelectedEntryNosForTab(tabName);
+    if (!list.length) return (rows || []).slice();
+    var set = {};
+    list.forEach(function (name) { set[String(name || "").trim()] = 1; });
+    return (rows || []).filter(function (r) {
+      var entry = String((r && r.per_piece_salary) || "").trim();
+      return !!set[entry];
+    });
   }
 
   function getPaymentTotals() {
@@ -5576,6 +5833,60 @@ WEB_PAGE_HTML = """
     });
   }
 
+  function renderPoDetailPrintTab(rows) {
+    var wrap = el("pp-table-wrap");
+    if (!wrap) return;
+    var detailRows = rows || [];
+    var byProduct = {};
+    detailRows.forEach(function (r) {
+      var product = String((r && r.product) || "").trim() || "(Blank)";
+      if (!byProduct[product]) byProduct[product] = [];
+      byProduct[product].push(r);
+    });
+    var grandQty = 0;
+    var grandAmount = 0;
+    var html = "<table class='pp-table'><thead><tr><th>PO Number</th><th>Item</th><th>Process</th><th>Size</th><th>Qty</th><th>Rate</th><th>Amount</th><th>Grand Total</th></tr></thead><tbody>";
+    Object.keys(byProduct).sort().forEach(function (product) {
+      var list = byProduct[product] || [];
+      var subQty = 0;
+      var subAmount = 0;
+      html += "<tr class='pp-group-head'><td colspan='8'>" + esc(product) + "</td></tr>";
+      list.sort(function (a, b) {
+        var poCmp = String(a.po_number || "").localeCompare(String(b.po_number || ""));
+        if (poCmp !== 0) return poCmp;
+        return String(a.process_type || "").localeCompare(String(b.process_type || ""));
+      }).forEach(function (r) {
+        var q = num(r.qty);
+        var a = num(r.amount);
+        subQty += q;
+        subAmount += a;
+        grandQty += q;
+        grandAmount += a;
+        html += "<tr><td>" + esc(r.po_number || "") + "</td><td>" + esc(r.product || "") + "</td><td>" + esc(r.process_type || "") + "</td><td>" + esc(r.process_size || "No Size") + "</td><td class='num'>" + esc(fmt(q)) + "</td><td class='num'>" + esc(fmt(num(r.rate))) + "</td><td class='num pp-amt-col'>" + esc(fmt(a)) + "</td><td></td></tr>";
+      });
+      html += "<tr class='pp-year-total'><td></td><td>Sub Total</td><td></td><td></td><td class='num'>" + esc(fmt(subQty)) + "</td><td class='num'>" + esc(fmt(avgRate(subQty, subAmount))) + "</td><td class='num pp-amt-col'>" + esc(fmt(subAmount)) + "</td><td class='num pp-amt-col'>" + esc(fmt(subAmount)) + "</td></tr>";
+    });
+    html += "<tr class='pp-year-total'><td></td><td>Grand Total</td><td></td><td></td><td class='num'>" + esc(fmt(grandQty)) + "</td><td class='num'>" + esc(fmt(avgRate(grandQty, grandAmount))) + "</td><td class='num pp-amt-col'>" + esc(fmt(grandAmount)) + "</td><td class='num pp-amt-col'>" + esc(fmt(grandAmount)) + "</td></tr>";
+    html += "</tbody></table>";
+
+    var byEmployee = {};
+    detailRows.forEach(function (r) {
+      var emp = String((r && (r.name1 || r.employee)) || "").trim() || "(Blank)";
+      if (!byEmployee[emp]) byEmployee[emp] = { employee: emp, qty: 0, amount: 0 };
+      byEmployee[emp].qty += num(r.qty);
+      byEmployee[emp].amount += num(r.amount);
+    });
+    html += "<div style='margin-top:10px;'><strong>Employee-wise Summary</strong></div>";
+    html += "<table class='pp-table' style='margin-top:6px;'><thead><tr><th>Employee</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>";
+    Object.keys(byEmployee).sort().forEach(function (emp) {
+      var row = byEmployee[emp];
+      html += "<tr><td>" + esc(row.employee) + "</td><td class='num'>" + esc(fmt(row.qty)) + "</td><td class='num'>" + esc(fmt(avgRate(row.qty, row.amount))) + "</td><td class='num pp-amt-col'>" + esc(fmt(row.amount)) + "</td></tr>";
+    });
+    html += "<tr class='pp-year-total'><td>Total</td><td class='num'>" + esc(fmt(grandQty)) + "</td><td class='num'>" + esc(fmt(avgRate(grandQty, grandAmount))) + "</td><td class='num pp-amt-col'>" + esc(fmt(grandAmount)) + "</td></tr>";
+    html += "</tbody></table>";
+    wrap.innerHTML = html;
+  }
+
   function renderSalaryTable(rows) {
     var wrap = el("pp-table-wrap");
     if (!wrap) return;
@@ -5760,9 +6071,9 @@ WEB_PAGE_HTML = """
       if (targetBtn) targetBtn.classList.add("active");
       state.currentTab = tabName;
       setPageForCurrentTab(1);
-      renderCurrentTab();
 
       if (tabName === "salary_creation") {
+        setWorkflowHistoryRange("salary_creation", "", "");
         var empMap = {};
         getAdjustedEmployeeRows().forEach(function (row) {
           var emp = row.employee || "";
@@ -5771,12 +6082,14 @@ WEB_PAGE_HTML = """
         });
         state.excludedEmployees = empMap;
         if (el("pp-jv-entry-filter")) el("pp-jv-entry-filter").value = state.forcedEntryNo || "";
+        if (el("pp-jv-entry-multi")) el("pp-jv-entry-multi").value = state.forcedEntryNo || "";
         setPageForCurrentTab(1);
-        renderCurrentTab();
+        loadReport();
         return;
       }
 
       if (tabName === "payment_manage") {
+        setWorkflowHistoryRange("payment_manage", "", "");
         var payMap = {};
         getPaymentActiveRows().forEach(function (row) {
           var emp = row.employee || "";
@@ -5788,9 +6101,12 @@ WEB_PAGE_HTML = """
           applyPaymentPrefill(employee, targetPayAmount);
         }
         if (el("pp-pay-entry-filter")) el("pp-pay-entry-filter").value = state.forcedEntryNo || "";
+        if (el("pp-pay-entry-multi")) el("pp-pay-entry-multi").value = state.forcedEntryNo || "";
         setPageForCurrentTab(1);
-        renderCurrentTab();
+        loadReport();
+        return;
       }
+      loadReport();
     }
 
     wrap.querySelectorAll(".pp-go-book-emp").forEach(function (btn) {
@@ -5940,7 +6256,12 @@ WEB_PAGE_HTML = """
         document.querySelectorAll(".pp-tab").forEach(function (x) { x.classList.remove("active"); });
         var targetBtn = document.querySelector(".pp-tab[data-tab='salary_creation']");
         if (targetBtn) targetBtn.classList.add("active");
+        switchWorkspaceMode("entry", true);
         state.currentTab = "salary_creation";
+        document.querySelectorAll(".pp-tab").forEach(function (x) { x.classList.remove("active"); });
+        var activeSalaryBtn3 = document.querySelector(".pp-tab[data-tab='salary_creation']");
+        if (activeSalaryBtn3) activeSalaryBtn3.classList.add("active");
+        setWorkflowHistoryRange("salary_creation", "", "");
         var onlyEmp = decodeURIComponent(btn.getAttribute("data-employee") || "");
         var empMap = {};
         getAdjustedEmployeeRows().forEach(function (row) {
@@ -5950,7 +6271,7 @@ WEB_PAGE_HTML = """
         });
         state.excludedEmployees = empMap;
         setPageForCurrentTab(1);
-        renderCurrentTab();
+        loadReport();
       });
     });
     wrap.querySelectorAll(".pp-go-pay-entry").forEach(function (btn) {
@@ -5961,7 +6282,12 @@ WEB_PAGE_HTML = """
         document.querySelectorAll(".pp-tab").forEach(function (x) { x.classList.remove("active"); });
         var targetBtn = document.querySelector(".pp-tab[data-tab='payment_manage']");
         if (targetBtn) targetBtn.classList.add("active");
+        switchWorkspaceMode("entry", true);
         state.currentTab = "payment_manage";
+        document.querySelectorAll(".pp-tab").forEach(function (x) { x.classList.remove("active"); });
+        var activePayBtn3 = document.querySelector(".pp-tab[data-tab='payment_manage']");
+        if (activePayBtn3) activePayBtn3.classList.add("active");
+        setWorkflowHistoryRange("payment_manage", "", "");
         var onlyEmp = decodeURIComponent(btn.getAttribute("data-employee") || "");
         var targetPay = num(btn.getAttribute("data-unpaid") || 0);
         var payMap = {};
@@ -5983,7 +6309,7 @@ WEB_PAGE_HTML = """
           state.paymentAdjustments[onlyEmp].payment_amount = Math.min(targetPay, Math.max(0, num(targetRow.unpaid_amount)));
         }
         setPageForCurrentTab(1);
-        renderCurrentTab();
+        loadReport();
       });
     });
   }
@@ -6108,6 +6434,7 @@ WEB_PAGE_HTML = """
       var isBooked = hasJV && jvStatus === "Posted";
       var bookedVal = num(r.booked_amount);
       if (bookedVal < 0) bookedVal = 0;
+      if (!isBooked) bookedVal = 0;
       if (isBooked && bookedVal <= 0) bookedVal = amount;
       var paidVal = num(r.paid_amount);
       if (paidVal < 0) paidVal = 0;
@@ -6161,7 +6488,16 @@ WEB_PAGE_HTML = """
   }
 
   function filterDataEntryDocsByDate(docs) {
-    return docs || [];
+    var fromInput = el("pp-entry-history-from");
+    var toInput = el("pp-entry-history-to");
+    var bookingInput = el("pp-entry-history-booking-status");
+    var paymentInput = el("pp-entry-history-payment-status");
+    var fromDate = fromInput ? (fromInput.value || "") : ((state.workflowHistoryDate.data_entry || {}).from || "");
+    var toDate = toInput ? (toInput.value || "") : ((state.workflowHistoryDate.data_entry || {}).to || "");
+    var status = getWorkflowStatusFilter("data_entry");
+    var bookingStatus = bookingInput ? (bookingInput.value || "") : status.booking;
+    var paymentStatus = paymentInput ? (paymentInput.value || "") : status.payment;
+    return filterDocsByStatus(filterRowsByDateRange((docs || []), fromDate, toDate), bookingStatus, paymentStatus);
   }
 
   function getRecentDocEmployeeSummary(docName) {
@@ -6860,15 +7196,159 @@ WEB_PAGE_HTML = """
         state.forcedEntryNo = entry;
         if (el("pp-entry-no")) el("pp-entry-no").value = entry;
         if (el("pp-pay-entry-filter")) el("pp-pay-entry-filter").value = entry;
+        if (el("pp-pay-entry-multi")) el("pp-pay-entry-multi").value = entry;
+        setWorkflowHistoryRange("payment_manage", "", "");
         document.querySelectorAll(".pp-tab").forEach(function (x) { x.classList.remove("active"); });
         var targetBtn = document.querySelector(".pp-tab[data-tab='payment_manage']");
         if (targetBtn) targetBtn.classList.add("active");
+        switchWorkspaceMode("entry", true);
         state.currentTab = "payment_manage";
+        document.querySelectorAll(".pp-tab").forEach(function (x) { x.classList.remove("active"); });
+        var activePayBtn4 = document.querySelector(".pp-tab[data-tab='payment_manage']");
+        if (activePayBtn4) activePayBtn4.classList.add("active");
         state.paymentExcludedEmployees = {};
         setPageForCurrentTab(1);
-        renderCurrentTab();
+        loadReport();
       });
     });
+    wrap.querySelectorAll(".pp-salary-history-book").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var entry = String(btn.getAttribute("data-entry") || "").trim();
+        if (!entry) return;
+        state.forcedEntryNo = entry;
+        if (el("pp-entry-no")) el("pp-entry-no").value = entry;
+        if (el("pp-jv-entry-filter")) el("pp-jv-entry-filter").value = entry;
+        if (el("pp-jv-entry-multi")) el("pp-jv-entry-multi").value = entry;
+        setWorkflowHistoryRange("salary_creation", "", "");
+        switchWorkspaceMode("entry", true);
+        state.currentTab = "salary_creation";
+        document.querySelectorAll(".pp-tab").forEach(function (x) { x.classList.remove("active"); });
+        var activeSalaryBtn4 = document.querySelector(".pp-tab[data-tab='salary_creation']");
+        if (activeSalaryBtn4) activeSalaryBtn4.classList.add("active");
+        state.excludedEmployees = {};
+        setPageForCurrentTab(1);
+        loadReport();
+      });
+    });
+    wrap.querySelectorAll(".pp-salary-history-select").forEach(function (box) {
+      box.addEventListener("change", function () {
+        state.entryMeta.selected_salary_history = state.entryMeta.selected_salary_history || {};
+        var name = String(box.getAttribute("data-entry") || "").trim();
+        if (!name) return;
+        state.entryMeta.selected_salary_history[name] = !!box.checked;
+        var countEl = el("pp-salary-history-selected-count");
+        if (countEl) {
+          var count = Object.keys(state.entryMeta.selected_salary_history).filter(function (k) { return !!state.entryMeta.selected_salary_history[k]; }).length;
+          countEl.textContent = String(count);
+        }
+      });
+    });
+    if (el("pp-salary-history-select-page")) {
+      el("pp-salary-history-select-page").addEventListener("click", function () {
+        state.entryMeta.selected_salary_history = state.entryMeta.selected_salary_history || {};
+        wrap.querySelectorAll(".pp-salary-history-select").forEach(function (box) {
+          var name = String(box.getAttribute("data-entry") || "").trim();
+          if (!name) return;
+          box.checked = true;
+          state.entryMeta.selected_salary_history[name] = true;
+        });
+        var countEl = el("pp-salary-history-selected-count");
+        if (countEl) {
+          var count = Object.keys(state.entryMeta.selected_salary_history).filter(function (k) { return !!state.entryMeta.selected_salary_history[k]; }).length;
+          countEl.textContent = String(count);
+        }
+      });
+    }
+    if (el("pp-salary-history-clear-selected")) {
+      el("pp-salary-history-clear-selected").addEventListener("click", function () {
+        state.entryMeta.selected_salary_history = {};
+        renderCreatedEntriesPanel("salary_creation");
+      });
+    }
+    if (el("pp-salary-history-pay-selected")) {
+      el("pp-salary-history-pay-selected").addEventListener("click", function () {
+        var selected = Object.keys(state.entryMeta.selected_salary_history || {}).filter(function (k) { return !!state.entryMeta.selected_salary_history[k]; }).sort(compareEntryNoDesc);
+        if (!selected.length) {
+          var jvResult = el("pp-jv-result");
+          if (jvResult) showResult(jvResult, "error", "No Entry Selected", "Select one or more salary entries first.");
+          return;
+        }
+        state.forcedEntryNo = selected.length === 1 ? selected[0] : "";
+        if (el("pp-entry-no")) el("pp-entry-no").value = state.forcedEntryNo;
+        if (el("pp-jv-entry-filter")) el("pp-jv-entry-filter").value = state.forcedEntryNo;
+        if (el("pp-pay-entry-filter")) el("pp-pay-entry-filter").value = state.forcedEntryNo;
+        if (el("pp-pay-entry-multi")) el("pp-pay-entry-multi").value = selected.join(", ");
+        if (el("pp-jv-entry-multi")) el("pp-jv-entry-multi").value = "";
+        setWorkflowHistoryRange("payment_manage", "", "");
+        document.querySelectorAll(".pp-tab").forEach(function (x) { x.classList.remove("active"); });
+        var targetBtn = document.querySelector(".pp-tab[data-tab='payment_manage']");
+        if (targetBtn) targetBtn.classList.add("active");
+        switchWorkspaceMode("entry", true);
+        state.currentTab = "payment_manage";
+        document.querySelectorAll(".pp-tab").forEach(function (x) { x.classList.remove("active"); });
+        var activePayBtn5 = document.querySelector(".pp-tab[data-tab='payment_manage']");
+        if (activePayBtn5) activePayBtn5.classList.add("active");
+        state.paymentExcludedEmployees = {};
+        setPageForCurrentTab(1);
+        loadReport();
+      });
+    }
+    if (el("pp-jv-history-from")) {
+      el("pp-jv-history-from").addEventListener("change", function () {
+        setWorkflowHistoryRange("salary_creation", el("pp-jv-history-from").value || "", (el("pp-jv-history-to") && el("pp-jv-history-to").value) || "");
+        state.historyPageByTab.salary_creation_history = 1;
+        renderCreatedEntriesPanel("salary_creation");
+      });
+    }
+    if (el("pp-jv-history-to")) {
+      el("pp-jv-history-to").addEventListener("change", function () {
+        setWorkflowHistoryRange("salary_creation", (el("pp-jv-history-from") && el("pp-jv-history-from").value) || "", el("pp-jv-history-to").value || "");
+        state.historyPageByTab.salary_creation_history = 1;
+        renderCreatedEntriesPanel("salary_creation");
+      });
+    }
+    if (el("pp-jv-history-booking-status")) {
+      el("pp-jv-history-booking-status").addEventListener("change", function () {
+        setWorkflowStatusFilter("salary_creation", el("pp-jv-history-booking-status").value || "", (el("pp-jv-history-payment-status") && el("pp-jv-history-payment-status").value) || "");
+        state.historyPageByTab.salary_creation_history = 1;
+        renderCreatedEntriesPanel("salary_creation");
+      });
+    }
+    if (el("pp-jv-history-payment-status")) {
+      el("pp-jv-history-payment-status").addEventListener("change", function () {
+        setWorkflowStatusFilter("salary_creation", (el("pp-jv-history-booking-status") && el("pp-jv-history-booking-status").value) || "", el("pp-jv-history-payment-status").value || "");
+        state.historyPageByTab.salary_creation_history = 1;
+        renderCreatedEntriesPanel("salary_creation");
+      });
+    }
+    if (el("pp-pay-history-from")) {
+      el("pp-pay-history-from").addEventListener("change", function () {
+        setWorkflowHistoryRange("payment_manage", el("pp-pay-history-from").value || "", (el("pp-pay-history-to") && el("pp-pay-history-to").value) || "");
+        state.historyPageByTab.payment_manage_history = 1;
+        renderCreatedEntriesPanel("payment_manage");
+      });
+    }
+    if (el("pp-pay-history-to")) {
+      el("pp-pay-history-to").addEventListener("change", function () {
+        setWorkflowHistoryRange("payment_manage", (el("pp-pay-history-from") && el("pp-pay-history-from").value) || "", el("pp-pay-history-to").value || "");
+        state.historyPageByTab.payment_manage_history = 1;
+        renderCreatedEntriesPanel("payment_manage");
+      });
+    }
+    if (el("pp-pay-history-booking-status")) {
+      el("pp-pay-history-booking-status").addEventListener("change", function () {
+        setWorkflowStatusFilter("payment_manage", el("pp-pay-history-booking-status").value || "", (el("pp-pay-history-payment-status") && el("pp-pay-history-payment-status").value) || "");
+        state.historyPageByTab.payment_manage_history = 1;
+        renderCreatedEntriesPanel("payment_manage");
+      });
+    }
+    if (el("pp-pay-history-payment-status")) {
+      el("pp-pay-history-payment-status").addEventListener("change", function () {
+        setWorkflowStatusFilter("payment_manage", (el("pp-pay-history-booking-status") && el("pp-pay-history-booking-status").value) || "", el("pp-pay-history-payment-status").value || "");
+        state.historyPageByTab.payment_manage_history = 1;
+        renderCreatedEntriesPanel("payment_manage");
+      });
+    }
     wrap.querySelectorAll(".pp-view-payment-create").forEach(function (btn) {
       btn.addEventListener("click", function () {
         var jvName = btn.getAttribute("data-jv") || "";
@@ -6918,17 +7398,49 @@ WEB_PAGE_HTML = """
     (state.rows || []).forEach(function (r) {
       var docName = String((r && r.per_piece_salary) || "").trim();
       if (!docName || !String((r && r.jv_entry_no) || "").trim()) return;
-      if (!map[docName]) {
-        map[docName] = {
-          name: docName,
-          po_number: String((r && r.po_number) || "").trim(),
-          jv_entry_no: String((r && r.jv_entry_no) || "").trim(),
+        if (!map[docName]) {
+          map[docName] = {
+            name: docName,
+            po_number: String((r && r.po_number) || "").trim(),
+            jv_entry_no: String((r && r.jv_entry_no) || "").trim(),
+          from_date: String((r && r.from_date) || "").trim(),
+          to_date: String((r && r.to_date) || "").trim(),
           amount: 0,
-          rows: 0
-        };
-      }
+          booked_amount: 0,
+            allowance_amount: 0,
+            advance_deduction_amount: 0,
+            other_deduction_amount: 0,
+            net_salary: 0,
+            rows: 0,
+            _booked_count: 0,
+            _paid_count: 0,
+            _partly_paid_count: 0
+          };
+        }
+      var rf = String((r && r.from_date) || "").trim();
+      var rt = String((r && r.to_date) || "").trim();
+      if (rf && (!map[docName].from_date || rf < map[docName].from_date)) map[docName].from_date = rf;
+      if (rt && (!map[docName].to_date || rt > map[docName].to_date)) map[docName].to_date = rt;
       map[docName].amount += num(r.amount);
+      map[docName].booked_amount += num(r.booked_amount);
       map[docName].rows += 1;
+      if (String(r.booking_status || "") === "Booked") map[docName]._booked_count += 1;
+      var payStatus = String(r.payment_status || "");
+      if (payStatus === "Paid") map[docName]._paid_count += 1;
+      else if (payStatus === "Partly Paid") map[docName]._partly_paid_count += 1;
+    });
+    Object.keys(map).forEach(function (k) {
+      var it = map[k];
+      var salaryAmount = num(it.amount);
+      var netAmount = num(it.booked_amount) > 0 ? num(it.booked_amount) : salaryAmount;
+      it.allowance_amount = Math.max(netAmount - salaryAmount, 0);
+      it.advance_deduction_amount = Math.max(salaryAmount - netAmount, 0);
+      it.other_deduction_amount = 0;
+      it.net_salary = netAmount;
+      it.booking_status = it._booked_count >= it.rows ? "Booked" : (it._booked_count > 0 ? "Partly Booked" : "UnBooked");
+      if (it._paid_count >= it.rows) it.payment_status = "Paid";
+      else if (it._paid_count > 0 || it._partly_paid_count > 0) it.payment_status = "Partly Paid";
+      else it.payment_status = "Unpaid";
     });
     return Object.keys(map).sort().reverse().map(function (k) { return map[k]; });
   }
@@ -6957,13 +7469,26 @@ WEB_PAGE_HTML = """
         if (!map[ref.jv]) {
           map[ref.jv] = {
             name: ref.jv,
+            from_date: String((r && r.from_date) || "").trim(),
+            to_date: String((r && r.to_date) || "").trim(),
             amount: 0,
             rows: 0,
-            salary_map: {}
+            salary_map: {},
+            _booked_count: 0,
+            _paid_count: 0,
+            _partly_paid_count: 0
           };
         }
+        var pf = String((r && r.from_date) || "").trim();
+        var pt = String((r && r.to_date) || "").trim();
+        if (pf && (!map[ref.jv].from_date || pf < map[ref.jv].from_date)) map[ref.jv].from_date = pf;
+        if (pt && (!map[ref.jv].to_date || pt > map[ref.jv].to_date)) map[ref.jv].to_date = pt;
         map[ref.jv].amount += num(ref.amount);
         map[ref.jv].rows += 1;
+        if (String(r.booking_status || "") === "Booked") map[ref.jv]._booked_count += 1;
+        var payStatus = String(r.payment_status || "");
+        if (payStatus === "Paid") map[ref.jv]._paid_count += 1;
+        else if (payStatus === "Partly Paid") map[ref.jv]._partly_paid_count += 1;
         var salaryName = String(r.per_piece_salary || "").trim();
         if (salaryName) map[ref.jv].salary_map[salaryName] = 1;
       });
@@ -6971,14 +7496,18 @@ WEB_PAGE_HTML = """
     return Object.keys(map).sort().reverse().map(function (k) {
       var item = map[k];
       item.salary_entries = Object.keys(item.salary_map || {}).sort().reverse();
+      item.booking_status = item._booked_count >= item.rows ? "Booked" : (item._booked_count > 0 ? "Partly Booked" : "UnBooked");
+      if (item._paid_count >= item.rows) item.payment_status = "Paid";
+      else if (item._paid_count > 0 || item._partly_paid_count > 0) item.payment_status = "Partly Paid";
+      else item.payment_status = "Unpaid";
       return item;
     });
   }
 
-  function getSalaryCreationEntryRows(entryName) {
+  function getSalaryCreationEntryRows(entryName, sourceRows) {
     var target = String(entryName || "").trim();
     var map = {};
-    (state.rows || []).forEach(function (r) {
+    (sourceRows || state.entryMeta.recentRows || state.rows || []).forEach(function (r) {
       if (String(r.per_piece_salary || "").trim() !== target) return;
       var emp = String(r.employee || "").trim();
       if (!emp) return;
@@ -7041,12 +7570,13 @@ WEB_PAGE_HTML = """
   }
 
   function showSalaryCreationEntrySummary(entryName, printNow) {
-    var rows = getSalaryCreationEntryRows(entryName);
+    var sourceRows = state.entryMeta.recentRows || state.rows || [];
+    var rows = getSalaryCreationEntryRows(entryName, sourceRows);
     if (!rows.length) {
       setSummaryModal("Salary Creation Detail", entryName || "", "<div style='color:#b91c1c;'>No salary rows available for this entry under selected filters.</div>");
       return;
     }
-    var first = (state.rows || []).filter(function (r) {
+    var first = (sourceRows || []).filter(function (r) {
       return String(r.per_piece_salary || "").trim() === String(entryName || "").trim();
     })[0] || {};
     setSummaryModal("Salary Creation Detail", entryName || "", "<div style='color:#334155;'>Loading salary creation detail...</div>");
@@ -7272,7 +7802,14 @@ WEB_PAGE_HTML = """
       return;
     }
     if (tab === "salary_creation") {
-      var salaryDocs = uniqueCreatedSalaryDocs();
+      var salaryHistoryFrom = String((el("pp-jv-history-from") && el("pp-jv-history-from").value) || (getWorkflowHistoryRange("salary_creation").from) || "").trim();
+      var salaryHistoryTo = String((el("pp-jv-history-to") && el("pp-jv-history-to").value) || (getWorkflowHistoryRange("salary_creation").to) || "").trim();
+      var salaryStatus = getWorkflowStatusFilter("salary_creation");
+      var salaryBooking = String((el("pp-jv-history-booking-status") && el("pp-jv-history-booking-status").value) || salaryStatus.booking || "").trim();
+      var salaryPayment = String((el("pp-jv-history-payment-status") && el("pp-jv-history-payment-status").value) || salaryStatus.payment || "").trim();
+      setWorkflowHistoryRange("salary_creation", salaryHistoryFrom, salaryHistoryTo);
+      setWorkflowStatusFilter("salary_creation", salaryBooking, salaryPayment);
+      var salaryDocs = filterDocsByStatus(filterRowsByDateRange(uniqueCreatedSalaryDocs(), salaryHistoryFrom, salaryHistoryTo), salaryBooking, salaryPayment);
       if (!salaryDocs.length) {
         setCreatedListHtml("<div style='margin-top:8px;color:#64748b;'>No booking JV created in selected filter.</div>");
         return;
@@ -7280,23 +7817,54 @@ WEB_PAGE_HTML = """
       var salaryPage = paginateHistoryRows("salary_creation_history", salaryDocs, 10);
       var html = "";
       if (salaryPage.rows.length) {
-        html += "<div style='margin-top:10px;'><strong>Created Salary Entries</strong></div>"
-          + "<table class='pp-table' style='margin-top:6px;'><thead><tr><th>Salary Entry</th><th>PO Number</th><th>JV Entry</th><th>Amount</th><th>Rows</th><th>Salary View</th><th>Salary Print</th><th>Pay</th><th>Salary Open</th><th>JV View</th><th>JV Open</th></tr></thead><tbody>";
+        state.entryMeta.selected_salary_history = state.entryMeta.selected_salary_history || {};
+        var selectedHistory = state.entryMeta.selected_salary_history;
+        var selectedCount = Object.keys(selectedHistory).filter(function (k) { return !!selectedHistory[k]; }).length;
+        var tSalary = 0, tAllow = 0, tAdv = 0, tOther = 0, tNet = 0;
+        html += "<div style='margin-top:10px;'><strong>Created Salary Entries</strong></div>";
+        html += "<div class='pp-jv-grid' style='margin-top:6px;'>"
+          + "<label>History From <input type='date' id='pp-jv-history-from' value='" + esc(salaryHistoryFrom || "") + "' /></label>"
+          + "<label>History To <input type='date' id='pp-jv-history-to' value='" + esc(salaryHistoryTo || "") + "' /></label>"
+          + "<label>Booking Status <select id='pp-jv-history-booking-status'>"
+          + "<option value=''>All</option><option value='Booked'" + (salaryBooking === "Booked" ? " selected" : "") + ">Booked</option><option value='UnBooked'" + (salaryBooking === "UnBooked" ? " selected" : "") + ">UnBooked</option><option value='Partly Booked'" + (salaryBooking === "Partly Booked" ? " selected" : "") + ">Partly Booked</option>"
+          + "</select></label>"
+          + "<label>Payment Status <select id='pp-jv-history-payment-status'>"
+          + "<option value=''>All</option><option value='Paid'" + (salaryPayment === "Paid" ? " selected" : "") + ">Paid</option><option value='Unpaid'" + (salaryPayment === "Unpaid" ? " selected" : "") + ">Unpaid</option><option value='Partly Paid'" + (salaryPayment === "Partly Paid" ? " selected" : "") + ">Partly Paid</option>"
+          + "</select></label>"
+          + "</div>";
+        html += "<div class='pp-entry-actions' style='margin-top:6px;'>"
+          + "<button type='button' class='btn btn-default btn-xs' id='pp-salary-history-select-page'>Select Page</button>"
+          + "<button type='button' class='btn btn-default btn-xs' id='pp-salary-history-clear-selected'>Clear Selected</button>"
+          + "<button type='button' class='btn btn-success btn-xs' id='pp-salary-history-pay-selected'>Pay Selected Entry</button>"
+          + "<span style='color:#334155;font-size:12px;'>Selected Entries: <strong id='pp-salary-history-selected-count'>" + esc(selectedCount) + "</strong></span>"
+          + "</div>";
+        html += "<table class='pp-table' style='margin-top:6px;'><thead><tr><th>Select</th><th>Salary Entry</th><th>PO Number</th><th>JV Entry</th><th>Total Salary</th><th>Allowance</th><th>Adv Deduction</th><th>Oth Deduction</th><th>Net Salary</th><th>Book</th><th>Pay</th><th>Salary View</th><th>JV View</th></tr></thead><tbody>";
         (salaryPage.rows || []).forEach(function (r) {
+          tSalary += num(r.amount);
+          tAllow += num(r.allowance_amount);
+          tAdv += num(r.advance_deduction_amount);
+          tOther += num(r.other_deduction_amount);
+          tNet += num(r.net_salary);
+          var checked = selectedHistory[r.name] ? " checked" : "";
+          var bookedDone = String(r.booking_status || "") === "Booked" ? "<span style='color:#64748b;'>Done</span>" : "<button type='button' class='btn btn-xs btn-primary pp-salary-history-book' data-entry='" + esc(r.name) + "'>Book</button>";
+          var payAction = String(r.payment_status || "") === "Paid" ? "<span style='color:#64748b;'>Done</span>" : ("<button type='button' class='btn btn-xs btn-success pp-go-pay-salary-entry' data-entry='" + esc(r.name) + "'>Pay</button>");
           html += "<tr>"
-            + "<td>" + esc(r.name) + "</td>"
+            + "<td><input type='checkbox' class='pp-salary-history-select' data-entry='" + esc(r.name) + "'" + checked + "></td>"
+            + "<td><a target='_blank' href='/app/per-piece-salary/" + encodeURIComponent(r.name) + "'>" + esc(r.name) + "</a></td>"
             + "<td>" + esc(r.po_number || "") + "</td>"
-            + "<td>" + esc(r.jv_entry_no || "") + "</td>"
+            + "<td>" + (r.jv_entry_no ? ("<a target='_blank' href='/app/journal-entry/" + encodeURIComponent(r.jv_entry_no) + "'>" + esc(r.jv_entry_no) + "</a>") : "") + "</td>"
             + "<td class='num pp-amt-col'>" + esc(fmt(r.amount)) + "</td>"
-            + "<td class='num'>" + esc(r.rows) + "</td>"
+            + "<td class='num pp-amt-col'>" + esc(fmt(r.allowance_amount)) + "</td>"
+            + "<td class='num pp-amt-col'>" + esc(fmt(r.advance_deduction_amount)) + "</td>"
+            + "<td class='num pp-amt-col'>" + esc(fmt(r.other_deduction_amount)) + "</td>"
+            + "<td class='num pp-amt-col'>" + esc(fmt(r.net_salary)) + "</td>"
+            + "<td>" + bookedDone + "</td>"
+            + "<td>" + payAction + "</td>"
             + "<td><button type='button' class='btn btn-xs btn-info pp-view-salary-create' data-entry='" + esc(r.name) + "'>View</button></td>"
-            + "<td><button type='button' class='btn btn-xs btn-primary pp-print-salary-create' data-entry='" + esc(r.name) + "'>Print</button></td>"
-            + "<td><button type='button' class='btn btn-xs btn-success pp-go-pay-salary-entry' data-entry='" + esc(r.name) + "'>Pay</button></td>"
-            + "<td><a target='_blank' href='/app/per-piece-salary/" + encodeURIComponent(r.name) + "'>Open</a></td>"
             + "<td>" + (r.jv_entry_no ? ("<button type='button' class='btn btn-xs btn-info pp-view-jv' data-jv='" + esc(r.jv_entry_no) + "'>View Debit/Credit</button>") : "") + "</td>"
-            + "<td>" + (r.jv_entry_no ? ("<a target='_blank' href='/app/journal-entry/" + encodeURIComponent(r.jv_entry_no) + "'>Open</a>") : "") + "</td>"
             + "</tr>";
         });
+        html += "<tr class='pp-year-total'><td></td><td>Total</td><td></td><td></td><td class='num pp-amt-col'>" + esc(fmt(tSalary)) + "</td><td class='num pp-amt-col'>" + esc(fmt(tAllow)) + "</td><td class='num pp-amt-col'>" + esc(fmt(tAdv)) + "</td><td class='num pp-amt-col'>" + esc(fmt(tOther)) + "</td><td class='num pp-amt-col'>" + esc(fmt(tNet)) + "</td><td></td><td></td><td></td><td></td></tr>";
         html += "</tbody></table>";
         html += historyPagerHtml(salaryPage);
       }
@@ -7304,17 +7872,38 @@ WEB_PAGE_HTML = """
       return;
     }
     if (tab === "payment_manage") {
-      var payRows = uniqueCreatedPaymentDocs();
+      var paymentHistoryFrom = String((el("pp-pay-history-from") && el("pp-pay-history-from").value) || (getWorkflowHistoryRange("payment_manage").from) || "").trim();
+      var paymentHistoryTo = String((el("pp-pay-history-to") && el("pp-pay-history-to").value) || (getWorkflowHistoryRange("payment_manage").to) || "").trim();
+      var paymentStatus = getWorkflowStatusFilter("payment_manage");
+      var payBooking = String((el("pp-pay-history-booking-status") && el("pp-pay-history-booking-status").value) || paymentStatus.booking || "").trim();
+      var payPayment = String((el("pp-pay-history-payment-status") && el("pp-pay-history-payment-status").value) || paymentStatus.payment || "").trim();
+      setWorkflowHistoryRange("payment_manage", paymentHistoryFrom, paymentHistoryTo);
+      setWorkflowStatusFilter("payment_manage", payBooking, payPayment);
+      var payRows = filterDocsByStatus(filterRowsByDateRange(uniqueCreatedPaymentDocs(), paymentHistoryFrom, paymentHistoryTo), payBooking, payPayment);
       if (!payRows.length) {
         setCreatedListHtml("<div style='margin-top:8px;color:#64748b;'>No payment JV created in selected filter.</div>");
         return;
       }
       var payPage = paginateHistoryRows("payment_manage_history", payRows, 10);
+      var tPayAmt = 0, tPayRows = 0;
       var phtml = "<div style='margin-top:10px;'><strong>Created Payment JV Entries</strong></div>"
+        + "<div class='pp-jv-grid' style='margin-top:6px;'>"
+        + "<label>History From <input type='date' id='pp-pay-history-from' value='" + esc(paymentHistoryFrom || "") + "' /></label>"
+        + "<label>History To <input type='date' id='pp-pay-history-to' value='" + esc(paymentHistoryTo || "") + "' /></label>"
+        + "<label>Booking Status <select id='pp-pay-history-booking-status'>"
+        + "<option value=''>All</option><option value='Booked'" + (payBooking === "Booked" ? " selected" : "") + ">Booked</option><option value='UnBooked'" + (payBooking === "UnBooked" ? " selected" : "") + ">UnBooked</option><option value='Partly Booked'" + (payBooking === "Partly Booked" ? " selected" : "") + ">Partly Booked</option>"
+        + "</select></label>"
+        + "<label>Payment Status <select id='pp-pay-history-payment-status'>"
+        + "<option value=''>All</option><option value='Paid'" + (payPayment === "Paid" ? " selected" : "") + ">Paid</option><option value='Unpaid'" + (payPayment === "Unpaid" ? " selected" : "") + ">Unpaid</option><option value='Partly Paid'" + (payPayment === "Partly Paid" ? " selected" : "") + ">Partly Paid</option>"
+        + "</select></label>"
+        + "</div>"
         + "<table class='pp-table' style='margin-top:6px;'><thead><tr><th>Payment Entry</th><th>Salary Entries</th><th>Paid Amount</th><th>Rows</th><th>View</th><th>Print</th><th>Open</th></tr></thead><tbody>";
       (payPage.rows || []).forEach(function (r) {
+        tPayAmt += num(r.amount);
+        tPayRows += num(r.rows);
         phtml += "<tr><td>" + esc(r.name) + "</td><td>" + esc((r.salary_entries || []).join(", ")) + "</td><td class='num pp-amt-col'>" + esc(fmt(r.amount)) + "</td><td class='num'>" + esc(r.rows) + "</td><td><button type='button' class='btn btn-xs btn-info pp-view-payment-create' data-jv='" + esc(r.name) + "'>View</button></td><td><button type='button' class='btn btn-xs btn-primary pp-print-payment-create' data-jv='" + esc(r.name) + "'>Print</button></td><td><a target='_blank' href='/app/journal-entry/" + encodeURIComponent(r.name) + "'>Open</a></td></tr>";
       });
+      phtml += "<tr class='pp-year-total'><td>Total</td><td></td><td class='num pp-amt-col'>" + esc(fmt(tPayAmt)) + "</td><td class='num'>" + esc(fmt(tPayRows)) + "</td><td></td><td></td><td></td></tr>";
       phtml += "</tbody></table>" + historyPagerHtml(payPage);
       setCreatedListHtml(phtml);
       return;
@@ -7390,6 +7979,7 @@ WEB_PAGE_HTML = """
       row.process_type = "";
       row.process_size = "No Size";
       row.rate = 0;
+      row.rate_manual = false;
       return;
     }
     if (processRows.length) {
@@ -7424,7 +8014,8 @@ WEB_PAGE_HTML = """
     }
     if (meta.process_type) row.process_type = meta.process_type;
     row.process_size = meta.process_size || "No Size";
-    if (num(meta.rate) > 0) row.rate = whole(meta.rate);
+    // Keep saved/manual rate stable; only auto-fill when row rate is empty.
+    if (num(row.rate) <= 0 && num(meta.rate) > 0) row.rate = whole(meta.rate);
   }
 
   function syncEntryRowsToItemGroup() {
@@ -7447,6 +8038,7 @@ WEB_PAGE_HTML = """
           row.process_type = "";
           row.process_size = "No Size";
           row.rate = 0;
+          row.rate_manual = false;
           productName = "";
         }
       }
@@ -7488,6 +8080,7 @@ WEB_PAGE_HTML = """
         process_size: String((item && item.process_size) || "").trim() || "No Size",
         qty: 0,
         rate: whole(item && item.rate),
+        rate_manual: false,
       };
       return row;
     });
@@ -7524,7 +8117,8 @@ WEB_PAGE_HTML = """
             process_type: String((item && item.process_type) || "").trim(),
             process_size: String((item && item.process_size) || "").trim() || "No Size",
             qty: 0,
-            rate: whole(item && item.rate)
+            rate: whole(item && item.rate),
+            rate_manual: false
           };
         });
       }
@@ -7548,7 +8142,8 @@ WEB_PAGE_HTML = """
       process_type: "",
       process_size: "No Size",
       qty: 0,
-      rate: 0
+      rate: 0,
+      rate_manual: false
     };
     var autoProduct = getAutoEntryProduct();
     if (autoProduct) {
@@ -7569,8 +8164,8 @@ WEB_PAGE_HTML = """
   function renderDataEntryTab() {
     var wrap = el("pp-table-wrap");
     if (!wrap) return;
-    if (!state.entryMeta.from_date) state.entryMeta.from_date = el("pp-from-date").value || "";
-    if (!state.entryMeta.to_date) state.entryMeta.to_date = el("pp-to-date").value || "";
+    if (!state.entryMeta.from_date) state.entryMeta.from_date = defaultDateWindow().from;
+    if (!state.entryMeta.to_date) state.entryMeta.to_date = defaultDateWindow().to;
     if (state.entryMeta.po_number === undefined) state.entryMeta.po_number = "";
     if (state.entryMeta.item_group === undefined) state.entryMeta.item_group = el("pp-item-group") ? (el("pp-item-group").value || "") : "";
     if (state.entryMeta.item === undefined) state.entryMeta.item = "";
@@ -7756,16 +8351,40 @@ WEB_PAGE_HTML = """
       + "</tr>";
     html += "</tbody></table>";
     if (docs.length) {
+      state.entryMeta.selected_docs = state.entryMeta.selected_docs || {};
+      var selectedDocs = state.entryMeta.selected_docs;
       var docsPage = paginateHistoryRows("data_entry_docs", docs, 10);
+      var selectedCount = Object.keys(selectedDocs).filter(function (k) { return !!selectedDocs[k]; }).length;
       html += "<div class='pp-entry-list'><strong>Recent Docs:</strong></div>";
-      html += "<table class='pp-table' style='margin-top:6px;'><thead><tr><th>Entry No</th><th>From Date</th><th>To Date</th><th>PO Number</th><th>JV Status</th><th>Pay Status</th><th>Total Amount</th><th>Book</th><th>Pay</th><th>View Detail</th><th>View Entered</th><th>Edit</th><th>Open</th></tr></thead><tbody>";
+      html += "<div class='pp-jv-grid' style='margin-top:6px;margin-bottom:6px;'>"
+        + "<label>History From <input type='date' id='pp-entry-history-from' value='" + esc((state.workflowHistoryDate.data_entry || {}).from || "") + "'></label>"
+        + "<label>History To <input type='date' id='pp-entry-history-to' value='" + esc((state.workflowHistoryDate.data_entry || {}).to || "") + "'></label>"
+        + "<label>Booking Status <select id='pp-entry-history-booking-status'>"
+        + "<option value=''>All</option><option value='Booked'" + (getWorkflowStatusFilter("data_entry").booking === "Booked" ? " selected" : "") + ">Booked</option><option value='UnBooked'" + (getWorkflowStatusFilter("data_entry").booking === "UnBooked" ? " selected" : "") + ">UnBooked</option><option value='Partly Booked'" + (getWorkflowStatusFilter("data_entry").booking === "Partly Booked" ? " selected" : "") + ">Partly Booked</option>"
+        + "</select></label>"
+        + "<label>Payment Status <select id='pp-entry-history-payment-status'>"
+        + "<option value=''>All</option><option value='Paid'" + (getWorkflowStatusFilter("data_entry").payment === "Paid" ? " selected" : "") + ">Paid</option><option value='Unpaid'" + (getWorkflowStatusFilter("data_entry").payment === "Unpaid" ? " selected" : "") + ">Unpaid</option><option value='Partly Paid'" + (getWorkflowStatusFilter("data_entry").payment === "Partly Paid" ? " selected" : "") + ">Partly Paid</option>"
+        + "</select></label>"
+        + "</div>";
+      html += "<div class='pp-entry-actions' style='margin-top:4px;'>"
+        + "<button type='button' class='btn btn-default btn-xs' id='pp-entry-doc-select-page'>Select Page</button>"
+        + "<button type='button' class='btn btn-default btn-xs' id='pp-entry-doc-clear-select'>Clear Selected</button>"
+        + "<button type='button' class='btn btn-primary btn-xs' id='pp-entry-doc-book-selected'>Book Selected</button>"
+        + "<button type='button' class='btn btn-success btn-xs' id='pp-entry-doc-pay-selected'>Pay Selected</button>"
+        + "<span style='color:#334155;font-size:12px;'>Selected Entries: <strong id='pp-entry-doc-selected-count'>" + esc(selectedCount) + "</strong></span>"
+        + "</div>";
+      html += "<table class='pp-table' style='margin-top:6px;'><thead><tr><th>Select</th><th>Entry No</th><th>From Date</th><th>To Date</th><th>PO Number</th><th>JV Status</th><th>Pay Status</th><th>Total Amount</th><th>Book</th><th>Pay</th><th>View Detail</th><th>View Entered</th><th>Edit</th><th>Open</th></tr></thead><tbody>";
+      var docsTotalAmount = 0;
       (docsPage.rows || []).forEach(function (d) {
+        docsTotalAmount += num(d.total_amount);
         var canBook = String(d.booking_status || "") !== "Booked";
         var canPay = String(d.payment_status || "") !== "Paid";
         var bookBtn = canBook ? ("<button type='button' class='btn btn-xs btn-primary pp-entry-book-doc' data-name='" + esc(d.name) + "'>Book</button>") : "<span style='color:#64748b;'>Done</span>";
         var payBtn = canPay ? ("<button type='button' class='btn btn-xs btn-success pp-entry-pay-doc' data-name='" + esc(d.name) + "' data-unpaid='" + esc(d.unpaid_amount) + "'>Pay</button>") : "<span style='color:#64748b;'>Done</span>";
-        html += "<tr><td>" + esc(d.name) + "</td><td>" + esc(d.from_date) + "</td><td>" + esc(d.to_date) + "</td><td>" + esc(d.po_number) + "</td><td>" + statusBadgeHtml(d.booking_status || "UnBooked") + "</td><td>" + statusBadgeHtml(d.payment_status || "Unpaid") + "</td><td class='num pp-amt-col'>" + esc(fmt(d.total_amount)) + "</td><td>" + bookBtn + "</td><td>" + payBtn + "</td><td><button type='button' class='btn btn-xs btn-info pp-entry-view-doc-detail' data-name='" + esc(d.name) + "'>View Detail</button></td><td><button type='button' class='btn btn-xs btn-primary pp-entry-view-entered' data-name='" + esc(d.name) + "'>View Entered</button></td><td><button type='button' class='btn btn-xs btn-default pp-entry-edit-doc' data-name='" + esc(d.name) + "'>Edit</button></td><td><a target='_blank' href='/app/per-piece-salary/" + encodeURIComponent(d.name) + "'>Open</a></td></tr>";
+        var checked = selectedDocs[d.name] ? " checked" : "";
+        html += "<tr><td><input type='checkbox' class='pp-entry-doc-select' data-name='" + esc(d.name) + "'" + checked + "></td><td>" + esc(d.name) + "</td><td>" + esc(d.from_date) + "</td><td>" + esc(d.to_date) + "</td><td>" + esc(d.po_number) + "</td><td>" + statusBadgeHtml(d.booking_status || "UnBooked") + "</td><td>" + statusBadgeHtml(d.payment_status || "Unpaid") + "</td><td class='num pp-amt-col'>" + esc(fmt(d.total_amount)) + "</td><td>" + bookBtn + "</td><td>" + payBtn + "</td><td><button type='button' class='btn btn-xs btn-info pp-entry-view-doc-detail' data-name='" + esc(d.name) + "'>View Detail</button></td><td><button type='button' class='btn btn-xs btn-primary pp-entry-view-entered' data-name='" + esc(d.name) + "'>View Entered</button></td><td><button type='button' class='btn btn-xs btn-default pp-entry-edit-doc' data-name='" + esc(d.name) + "'>Edit</button></td><td><a target='_blank' href='/app/per-piece-salary/" + encodeURIComponent(d.name) + "'>Open</a></td></tr>";
       });
+      html += "<tr class='pp-year-total'><td></td><td>Total</td><td></td><td></td><td></td><td></td><td></td><td class='num pp-amt-col'>" + esc(fmt(docsTotalAmount)) + "</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>";
       html += "</tbody></table>";
       html += historyPagerHtml(docsPage);
     }
@@ -7778,6 +8397,38 @@ WEB_PAGE_HTML = """
     if (fromInput) fromInput.addEventListener("change", function () { state.entryMeta.from_date = fromInput.value || ""; });
     var toInput = el("pp-entry-to-date");
     if (toInput) toInput.addEventListener("change", function () { state.entryMeta.to_date = toInput.value || ""; });
+    var historyFromInput = el("pp-entry-history-from");
+    if (historyFromInput) {
+      historyFromInput.addEventListener("change", function () {
+        setWorkflowHistoryRange("data_entry", historyFromInput.value || "", (state.workflowHistoryDate.data_entry || {}).to || "");
+        state.historyPageByTab.data_entry_docs = 1;
+        renderDataEntryTab();
+      });
+    }
+    var historyToInput = el("pp-entry-history-to");
+    if (historyToInput) {
+      historyToInput.addEventListener("change", function () {
+        setWorkflowHistoryRange("data_entry", (state.workflowHistoryDate.data_entry || {}).from || "", historyToInput.value || "");
+        state.historyPageByTab.data_entry_docs = 1;
+        renderDataEntryTab();
+      });
+    }
+    var historyBookingInput = el("pp-entry-history-booking-status");
+    if (historyBookingInput) {
+      historyBookingInput.addEventListener("change", function () {
+        setWorkflowStatusFilter("data_entry", historyBookingInput.value || "", getWorkflowStatusFilter("data_entry").payment || "");
+        state.historyPageByTab.data_entry_docs = 1;
+        renderDataEntryTab();
+      });
+    }
+    var historyPaymentInput = el("pp-entry-history-payment-status");
+    if (historyPaymentInput) {
+      historyPaymentInput.addEventListener("change", function () {
+        setWorkflowStatusFilter("data_entry", getWorkflowStatusFilter("data_entry").booking || "", historyPaymentInput.value || "");
+        state.historyPageByTab.data_entry_docs = 1;
+        renderDataEntryTab();
+      });
+    }
     var poInput = el("pp-entry-po-number");
     if (poInput) poInput.addEventListener("change", function () { state.entryMeta.po_number = poInput.value || ""; });
     var employeeInput = el("pp-entry-employee");
@@ -7835,11 +8486,12 @@ WEB_PAGE_HTML = """
     });
     var newDocBtn = el("pp-entry-new-doc");
     if (newDocBtn) newDocBtn.addEventListener("click", function () {
+      var win = defaultDateWindow();
       state.entryMeta.edit_name = "";
-      state.entryMeta.from_date = el("pp-from-date").value || "";
-      state.entryMeta.to_date = el("pp-to-date").value || "";
-      state.entryMeta.employee = el("pp-employee") ? (el("pp-employee").value || "") : "";
-      state.entryMeta.item_group = el("pp-item-group") ? (el("pp-item-group").value || "") : "";
+      state.entryMeta.from_date = win.from;
+      state.entryMeta.to_date = win.to;
+      state.entryMeta.employee = "";
+      state.entryMeta.item_group = "";
       state.entryMeta.item = "";
       state.entryMeta.load_by_item = true;
       state.entryMeta.po_number = "";
@@ -7870,11 +8522,16 @@ WEB_PAGE_HTML = """
         } else {
           state.entryRows[idx][field] = input.value || "";
         }
+        if (field === "rate") {
+          state.entryRows[idx].rate_manual = true;
+        }
         if (field === "employee") {
           state.entryRows[idx].name1 = (state.entryMeta.employeeNameMap || {})[state.entryRows[idx].employee || ""] || "";
         }
         if (field === "product" || field === "process_type") {
           var row = state.entryRows[idx];
+          row.rate_manual = false;
+          row.rate = 0;
           applyEntryItemDefaults(row);
         }
         renderDataEntryTab();
@@ -7934,19 +8591,119 @@ WEB_PAGE_HTML = """
         showDataEntryEnteredRows(btn.getAttribute("data-name") || "");
       });
     });
+    wrap.querySelectorAll(".pp-entry-doc-select").forEach(function (box) {
+      box.addEventListener("change", function () {
+        var name = String(box.getAttribute("data-name") || "").trim();
+        if (!name) return;
+        state.entryMeta.selected_docs = state.entryMeta.selected_docs || {};
+        state.entryMeta.selected_docs[name] = !!box.checked;
+        var countEl = el("pp-entry-doc-selected-count");
+        if (countEl) {
+          var c = Object.keys(state.entryMeta.selected_docs).filter(function (k) { return !!state.entryMeta.selected_docs[k]; }).length;
+          countEl.textContent = String(c);
+        }
+      });
+    });
+    var clearSelectedBtn = el("pp-entry-doc-clear-select");
+    if (clearSelectedBtn) {
+      clearSelectedBtn.addEventListener("click", function () {
+        state.entryMeta.selected_docs = {};
+        renderDataEntryTab();
+      });
+    }
+    var selectPageBtn = el("pp-entry-doc-select-page");
+    if (selectPageBtn) {
+      selectPageBtn.addEventListener("click", function () {
+        state.entryMeta.selected_docs = state.entryMeta.selected_docs || {};
+        wrap.querySelectorAll(".pp-entry-doc-select").forEach(function (box) {
+          var name = String(box.getAttribute("data-name") || "").trim();
+          if (!name) return;
+          box.checked = true;
+          state.entryMeta.selected_docs[name] = true;
+        });
+        var countEl = el("pp-entry-doc-selected-count");
+        if (countEl) {
+          var c = Object.keys(state.entryMeta.selected_docs).filter(function (k) { return !!state.entryMeta.selected_docs[k]; }).length;
+          countEl.textContent = String(c);
+        }
+      });
+    }
+    var bookSelectedBtn = el("pp-entry-doc-book-selected");
+    if (bookSelectedBtn) {
+      bookSelectedBtn.addEventListener("click", function () {
+        var selected = Object.keys(state.entryMeta.selected_docs || {}).filter(function (k) { return !!state.entryMeta.selected_docs[k]; }).sort(compareEntryNoDesc);
+        if (!selected.length) {
+          showResult(el("pp-entry-result"), "error", "No Entry Selected", "Select one or more entries from Recent Docs first.");
+          return;
+        }
+        state.forcedEntryNo = selected.length === 1 ? selected[0] : "";
+        if (el("pp-entry-no")) el("pp-entry-no").value = state.forcedEntryNo;
+        if (el("pp-jv-entry-filter")) el("pp-jv-entry-filter").value = state.forcedEntryNo;
+        if (el("pp-pay-entry-filter")) el("pp-pay-entry-filter").value = state.forcedEntryNo;
+        if (el("pp-jv-entry-multi")) el("pp-jv-entry-multi").value = selected.join(", ");
+        if (el("pp-pay-entry-multi")) el("pp-pay-entry-multi").value = "";
+        setWorkflowHistoryRange("salary_creation", "", "");
+        document.querySelectorAll(".pp-tab").forEach(function (x) { x.classList.remove("active"); });
+        var targetBtn = document.querySelector(".pp-tab[data-tab='salary_creation']");
+        if (targetBtn) targetBtn.classList.add("active");
+        switchWorkspaceMode("entry", true);
+        state.currentTab = "salary_creation";
+        document.querySelectorAll(".pp-tab").forEach(function (x) { x.classList.remove("active"); });
+        var activeSalaryBtn = document.querySelector(".pp-tab[data-tab='salary_creation']");
+        if (activeSalaryBtn) activeSalaryBtn.classList.add("active");
+        state.excludedEmployees = {};
+        setPageForCurrentTab(1);
+        loadReport();
+      });
+    }
+    var paySelectedBtn = el("pp-entry-doc-pay-selected");
+    if (paySelectedBtn) {
+      paySelectedBtn.addEventListener("click", function () {
+        var selected = Object.keys(state.entryMeta.selected_docs || {}).filter(function (k) { return !!state.entryMeta.selected_docs[k]; }).sort(compareEntryNoDesc);
+        if (!selected.length) {
+          showResult(el("pp-entry-result"), "error", "No Entry Selected", "Select one or more entries from Recent Docs first.");
+          return;
+        }
+        state.forcedEntryNo = selected.length === 1 ? selected[0] : "";
+        if (el("pp-entry-no")) el("pp-entry-no").value = state.forcedEntryNo;
+        if (el("pp-pay-entry-filter")) el("pp-pay-entry-filter").value = state.forcedEntryNo;
+        if (el("pp-jv-entry-filter")) el("pp-jv-entry-filter").value = state.forcedEntryNo;
+        if (el("pp-pay-entry-multi")) el("pp-pay-entry-multi").value = selected.join(", ");
+        if (el("pp-jv-entry-multi")) el("pp-jv-entry-multi").value = "";
+        setWorkflowHistoryRange("payment_manage", "", "");
+        document.querySelectorAll(".pp-tab").forEach(function (x) { x.classList.remove("active"); });
+        var targetBtn = document.querySelector(".pp-tab[data-tab='payment_manage']");
+        if (targetBtn) targetBtn.classList.add("active");
+        switchWorkspaceMode("entry", true);
+        state.currentTab = "payment_manage";
+        document.querySelectorAll(".pp-tab").forEach(function (x) { x.classList.remove("active"); });
+        var activePayBtn = document.querySelector(".pp-tab[data-tab='payment_manage']");
+        if (activePayBtn) activePayBtn.classList.add("active");
+        state.paymentExcludedEmployees = {};
+        setPageForCurrentTab(1);
+        loadReport();
+      });
+    }
     wrap.querySelectorAll(".pp-entry-book-doc").forEach(function (btn) {
       btn.addEventListener("click", function () {
         var entry = String(btn.getAttribute("data-name") || "").trim();
         state.forcedEntryNo = entry;
         if (el("pp-entry-no")) el("pp-entry-no").value = entry;
         if (el("pp-jv-entry-filter")) el("pp-jv-entry-filter").value = entry;
+        if (el("pp-jv-entry-multi")) el("pp-jv-entry-multi").value = entry;
+        if (el("pp-pay-entry-multi")) el("pp-pay-entry-multi").value = "";
+        setWorkflowHistoryRange("salary_creation", "", "");
         document.querySelectorAll(".pp-tab").forEach(function (x) { x.classList.remove("active"); });
         var targetBtn = document.querySelector(".pp-tab[data-tab='salary_creation']");
         if (targetBtn) targetBtn.classList.add("active");
+        switchWorkspaceMode("entry", true);
         state.currentTab = "salary_creation";
+        document.querySelectorAll(".pp-tab").forEach(function (x) { x.classList.remove("active"); });
+        var activeSalaryBtn2 = document.querySelector(".pp-tab[data-tab='salary_creation']");
+        if (activeSalaryBtn2) activeSalaryBtn2.classList.add("active");
         state.excludedEmployees = {};
         setPageForCurrentTab(1);
-        renderCurrentTab();
+        loadReport();
       });
     });
     wrap.querySelectorAll(".pp-entry-pay-doc").forEach(function (btn) {
@@ -7955,13 +8712,20 @@ WEB_PAGE_HTML = """
         state.forcedEntryNo = entry;
         if (el("pp-entry-no")) el("pp-entry-no").value = entry;
         if (el("pp-pay-entry-filter")) el("pp-pay-entry-filter").value = entry;
+        if (el("pp-pay-entry-multi")) el("pp-pay-entry-multi").value = entry;
+        if (el("pp-jv-entry-multi")) el("pp-jv-entry-multi").value = "";
+        setWorkflowHistoryRange("payment_manage", "", "");
         document.querySelectorAll(".pp-tab").forEach(function (x) { x.classList.remove("active"); });
         var targetBtn = document.querySelector(".pp-tab[data-tab='payment_manage']");
         if (targetBtn) targetBtn.classList.add("active");
+        switchWorkspaceMode("entry", true);
         state.currentTab = "payment_manage";
+        document.querySelectorAll(".pp-tab").forEach(function (x) { x.classList.remove("active"); });
+        var activePayBtn2 = document.querySelector(".pp-tab[data-tab='payment_manage']");
+        if (activePayBtn2) activePayBtn2.classList.add("active");
         state.paymentExcludedEmployees = {};
         setPageForCurrentTab(1);
-        renderCurrentTab();
+        loadReport();
       });
     });
     wrap.querySelectorAll(".pp-history-prev").forEach(function (btn) {
@@ -8010,6 +8774,7 @@ WEB_PAGE_HTML = """
       state.entryMeta.load_by_item = doc.load_by_item === undefined ? true : !!Number(doc.load_by_item);
       state.entryMeta.po_number = doc.po_number || "";
       state.entryRows = (doc.perpiece || []).map(function (r) {
+        var stableRate = lineRate(r.rate, r.qty, r.amount);
         return {
           employee: r.employee || "",
           name1: r.name1 || "",
@@ -8018,7 +8783,8 @@ WEB_PAGE_HTML = """
           process_type: r.process_type || "",
           process_size: r.process_size || "No Size",
           qty: whole(r.qty),
-          rate: whole(r.rate)
+          rate: whole(stableRate),
+          rate_manual: true
         };
       });
       ensureEntryRows();
@@ -8040,9 +8806,34 @@ WEB_PAGE_HTML = """
     var selectedItemSingle = (el("pp-entry-item") && el("pp-entry-item").value) || state.entryMeta.item || "";
     var po = (el("pp-entry-po-number").value || state.entryMeta.po_number || "");
     var editName = state.entryMeta.edit_name || "";
+
+    // Always capture the latest typed row values from DOM before save.
+    var wrap = el("pp-table-wrap");
+    if (wrap) {
+      wrap.querySelectorAll(".pp-entry-in").forEach(function (input) {
+        var idx = parseInt(input.getAttribute("data-idx") || "0", 10);
+        var field = input.getAttribute("data-field") || "";
+        if (!state.entryRows[idx]) return;
+        if (field === "qty" || field === "rate") {
+          state.entryRows[idx][field] = whole(input.value);
+          if (field === "rate") state.entryRows[idx].rate_manual = true;
+        } else {
+          state.entryRows[idx][field] = input.value || "";
+        }
+      });
+    }
+
     if (!po) {
       showResult(result, "error", "PO Number Required", "Enter PO Number before saving.");
       return;
+    }
+    var hasManualProductRows = (state.entryRows || []).some(function (r) {
+      return whole(r.qty) > 0 && !!String(r.product || "").trim();
+    });
+    if (loadByItem && !selectedItemSingle && hasManualProductRows) {
+      // Allow direct/manual row entry without forcing top item filter selection.
+      loadByItem = false;
+      state.entryMeta.load_by_item = false;
     }
     if (loadByItem && !selectedItemSingle) {
       showResult(result, "error", "Item Required", "Select Item or uncheck Load By Item.");
@@ -8084,10 +8875,7 @@ WEB_PAGE_HTML = """
       var link = "<a target='_blank' href='/app/per-piece-salary/" + encodeURIComponent(msg.name) + "'>" + esc(msg.name) + "</a>";
       result.style.color = "#0f766e";
       result.innerHTML = (msg.action === "updated" ? "Updated: " : "Saved: ") + link + " | Rows: " + esc(msg.rows) + " | Qty: " + esc(fmt(msg.total_qty)) + " | Amount: " + esc(fmt(msg.total_amount));
-      state.forcedEntryNo = "";
-      if (el("pp-entry-no")) el("pp-entry-no").value = "";
-      if (el("pp-jv-entry-filter")) el("pp-jv-entry-filter").value = "";
-      if (el("pp-pay-entry-filter")) el("pp-pay-entry-filter").value = "";
+      resetEntryFiltersToAll();
       state.entryRows = [newEntryRow()];
       state.entryMeta.edit_name = "";
       state.entryMeta.employee = "";
@@ -8129,7 +8917,14 @@ WEB_PAGE_HTML = """
   }
 
   function renderCurrentTab() {
-    var rows = getRowsByHeaderFilters(state.rows || []);
+    var currentTabName = String(state.currentTab || "");
+    var headerFilterOpts = {};
+    if (currentTabName === "data_entry" || currentTabName === "salary_creation" || currentTabName === "payment_manage") {
+      headerFilterOpts.ignore_date_filter = true;
+      headerFilterOpts.ignore_po_filter = true;
+      headerFilterOpts.ignore_entry_filter = true;
+    }
+    var rows = getRowsByHeaderFilters(state.rows || [], headerFilterOpts);
     var cols = [];
     var outRows = [];
     var paged = null;
@@ -8447,6 +9242,21 @@ WEB_PAGE_HTML = """
       outRows.sort(function (a, b) {
         return String(b.po_number || "").localeCompare(String(a.po_number || ""));
       });
+    } else if (state.currentTab === "po_detail_all") {
+      outRows = (rows || []).slice();
+      renderPoDetailPrintTab(outRows);
+      state.lastTabRender = { mode: "dom", columns: [], rows: [] };
+      filterRenderedTablesBySearch();
+      renderPagination(null);
+      var pdQty = 0;
+      var pdAmount = 0;
+      outRows.forEach(function (r) { pdQty += num(r.qty); pdAmount += num(r.amount); });
+      el("pp-totals").innerHTML = "<span>Total Qty: " + fmt(pdQty) + "</span><span>Total Amount: " + fmt(pdAmount) + "</span>";
+      el("pp-msg").textContent = outRows.length + " row(s) in PO Detail Print";
+      renderCreatedEntriesPanel(state.currentTab);
+      refreshJVAmountsFromAdjustments();
+      refreshPaymentAmounts();
+      return;
     }
 
     if (!skipColumnSearch) {
@@ -8552,7 +9362,24 @@ WEB_PAGE_HTML = """
   function loadReport() {
     setPageForCurrentTab(1);
     el("pp-msg").textContent = "Loading...";
-    callApi("get_per_piece_salary_report", getReportArgs()).then(function (msg) {
+    var args = getReportArgs();
+    if (state.currentTab === "data_entry" || state.currentTab === "salary_creation" || state.currentTab === "payment_manage") {
+      args.from_date = "2000-01-01";
+      args.to_date = "2099-12-31";
+      args.employee = "";
+      args.item_group = "";
+      args.product = "";
+      args.process_type = "";
+      args.booking_status = "";
+      args.payment_status = "";
+      args.po_number = "";
+      args.entry_no = "";
+    } else if (String(args.entry_no || "").trim()) {
+      // When a specific entry is selected in reporting, do not hide it behind date filter.
+      args.from_date = "2000-01-01";
+      args.to_date = "2099-12-31";
+    }
+    callApi("get_per_piece_salary_report", args).then(function (msg) {
       state.rows = (msg && msg.data) || [];
       applyReportRateProcessFix(state.rows);
       normalizeReportStatusValues(state.rows);
@@ -8751,6 +9578,14 @@ WEB_PAGE_HTML = """
 
   function getJVArgs(dryRun) {
     var args = getReportArgs();
+    var range = getWorkflowHistoryRange("salary_creation");
+    args.from_date = range.from || "2000-01-01";
+    args.to_date = range.to || "2099-12-31";
+    args.employee = "";
+    args.item_group = "";
+    args.product = "";
+    args.process_type = "";
+    args.po_number = "";
     args.company = el("pp-jv-company").value || "";
     args.posting_date = el("pp-jv-posting-date").value || args.to_date || "";
     args.expense_account = el("pp-jv-expense-account").value || "";
@@ -8779,12 +9614,23 @@ WEB_PAGE_HTML = """
     args.employee_adjustments = lines.join(";;");
     args.exclude_employees = Object.keys(state.excludedEmployees || {}).filter(function (k) { return !!state.excludedEmployees[k]; }).join(",");
     args.employee_wise = 1;
+    var selectedEntries = parseEntryNoList((el("pp-jv-entry-multi") && el("pp-jv-entry-multi").value) || "");
+    if (args.entry_no && selectedEntries.indexOf(String(args.entry_no)) < 0) selectedEntries.unshift(String(args.entry_no));
+    args.entry_nos = selectedEntries.join(",");
     args.dry_run = dryRun ? 1 : 0;
     return args;
   }
 
   function getPaymentJVArgs(dryRun) {
     var args = getReportArgs();
+    var range = getWorkflowHistoryRange("payment_manage");
+    args.from_date = range.from || "2000-01-01";
+    args.to_date = range.to || "2099-12-31";
+    args.employee = "";
+    args.item_group = "";
+    args.product = "";
+    args.process_type = "";
+    args.po_number = "";
     args.company = el("pp-pay-company").value || "";
     args.posting_date = el("pp-pay-posting-date").value || args.to_date || "";
     args.payable_account = el("pp-pay-payable-account").value || "";
@@ -8800,6 +9646,9 @@ WEB_PAGE_HTML = """
       lines.push(String(emp).trim() + "::" + String(amount));
     });
     args.payment_items = lines.join(";;");
+    var selectedEntries = parseEntryNoList((el("pp-pay-entry-multi") && el("pp-pay-entry-multi").value) || "");
+    if (args.entry_no && selectedEntries.indexOf(String(args.entry_no)) < 0) selectedEntries.unshift(String(args.entry_no));
+    args.entry_nos = selectedEntries.join(",");
     args.dry_run = dryRun ? 1 : 0;
     return args;
   }
@@ -8893,6 +9742,7 @@ WEB_PAGE_HTML = """
         });
         state.paymentAdjustments = {};
         state.paymentExcludedEmployees = {};
+        resetEntryFiltersToAll();
         loadReport();
       }).catch(function (e) {
         showResult(result, "error", "Payment Post Failed", prettyError(errText(e)));
@@ -8949,6 +9799,7 @@ WEB_PAGE_HTML = """
             if (jv) showJournalEntrySummary(jv);
           });
         });
+        resetEntryFiltersToAll();
         loadReport();
       }).catch(function (e) {
         showResult(result, "error", "JV Post Failed", prettyError(errText(e)));
@@ -8978,33 +9829,91 @@ WEB_PAGE_HTML = """
     });
   }
 
+  function isEntryTab(tabName) {
+    return ["data_entry", "salary_creation", "payment_manage"].indexOf(String(tabName || "").trim()) >= 0;
+  }
+
+  function switchWorkspaceMode(mode, skipReload) {
+    state.workspaceMode = (mode === "entry") ? "entry" : "reporting";
+    var filters = document.querySelector(".pp-filters");
+    if (filters) filters.style.display = state.workspaceMode === "entry" ? "none" : "";
+    if (el("pp-workspace-reporting")) el("pp-workspace-reporting").classList.toggle("active", state.workspaceMode === "reporting");
+    if (el("pp-workspace-entry")) el("pp-workspace-entry").classList.toggle("active", state.workspaceMode === "entry");
+    document.querySelectorAll(".pp-tab").forEach(function (btn) {
+      var ws = String(btn.getAttribute("data-workspace") || "reporting");
+      btn.style.display = ws === state.workspaceMode ? "" : "none";
+    });
+    if (state.workspaceMode === "entry" && !isEntryTab(state.currentTab)) state.currentTab = "data_entry";
+    if (state.workspaceMode === "reporting" && isEntryTab(state.currentTab)) state.currentTab = "all";
+    document.querySelectorAll(".pp-tab").forEach(function (x) { x.classList.remove("active"); });
+    var activeBtn = document.querySelector(".pp-tab[data-tab='" + state.currentTab + "']");
+    if (activeBtn) activeBtn.classList.add("active");
+    if (!skipReload) {
+      setPageForCurrentTab(1);
+      loadReport();
+    }
+  }
+
   function initTabs() {
+    if (el("pp-workspace-reporting")) {
+      el("pp-workspace-reporting").addEventListener("click", function () {
+        switchWorkspaceMode("reporting", false);
+      });
+    }
+    if (el("pp-workspace-entry")) {
+      el("pp-workspace-entry").addEventListener("click", function () {
+        switchWorkspaceMode("entry", false);
+      });
+    }
+
     document.querySelectorAll(".pp-tab").forEach(function (btn) {
       btn.addEventListener("click", function () {
+        var ws = String(btn.getAttribute("data-workspace") || "reporting");
+        state.workspaceMode = ws === "entry" ? "entry" : "reporting";
+        switchWorkspaceMode(state.workspaceMode, true);
         document.querySelectorAll(".pp-tab").forEach(function (x) { x.classList.remove("active"); });
         btn.classList.add("active");
         state.currentTab = btn.getAttribute("data-tab");
         setPageForCurrentTab(1);
-        renderCurrentTab();
+        loadReport();
       });
     });
+    switchWorkspaceMode("entry", true);
   }
 
   function setDefaultDates() {
-    var now = new Date();
-    var to = now.toISOString().slice(0, 10);
-    var start = new Date(now.getTime());
-    start.setDate(start.getDate() - 16);
-    var from = start.toISOString().slice(0, 10);
+    var win = defaultDateWindow();
+    var from = win.from;
+    var to = win.to;
     try {
       state.employeeSummaryDetail = (window.localStorage.getItem("pp_employee_summary_detail") || "") === "1";
     } catch (e) {}
     el("pp-from-date").value = from;
     el("pp-to-date").value = to;
+    // Workflow tabs are independent from main report date filters.
+    setWorkflowHistoryRange("data_entry", "", "");
+    setWorkflowHistoryRange("salary_creation", "", "");
+    setWorkflowHistoryRange("payment_manage", "", "");
+    setWorkflowStatusFilter("data_entry", "", "");
+    setWorkflowStatusFilter("salary_creation", "", "");
+    setWorkflowStatusFilter("payment_manage", "", "");
+    if (el("pp-jv-history-from")) el("pp-jv-history-from").value = "";
+    if (el("pp-jv-history-to")) el("pp-jv-history-to").value = "";
+    if (el("pp-pay-history-from")) el("pp-pay-history-from").value = "";
+    if (el("pp-pay-history-to")) el("pp-pay-history-to").value = "";
     el("pp-jv-posting-date").value = to;
     el("pp-pay-posting-date").value = to;
     el("pp-jv-employee-wise").checked = true;
     el("pp-jv-employee-wise").disabled = true;
+  }
+
+  function defaultDateWindow() {
+    var now = new Date();
+    var to = now.toISOString().slice(0, 10);
+    var start = new Date(now.getTime());
+    start.setDate(start.getDate() - 16);
+    var from = start.toISOString().slice(0, 10);
+    return { from: from, to: to };
   }
 
   setDefaultDates();
@@ -9033,6 +9942,33 @@ WEB_PAGE_HTML = """
     if (value) el("pp-pay-payable-account").value = value;
   });
   el("pp-load-btn").addEventListener("click", function () { setPageForCurrentTab(1); loadReport(); });
+  if (el("pp-sync-status-btn")) {
+    el("pp-sync-status-btn").addEventListener("click", function () {
+      var msgEl = el("pp-msg");
+      if (msgEl) msgEl.textContent = "Force syncing status from JV links...";
+      callApi("per_piece_payroll.api.force_sync_per_piece_status", {}).then(function (res) {
+        var checked = num(res && res.rows_checked);
+        var updated = num(res && res.rows_updated);
+        if (msgEl) msgEl.textContent = "Status sync done. Checked: " + fmt(checked) + " | Updated: " + fmt(updated);
+        loadReport();
+      }).catch(function (e) {
+        var err = prettyError(errText(e));
+        // Fallback for servers where Python API method is not deployed yet.
+        if (String(err).indexOf("force_sync_per_piece_status") >= 0) {
+          callApi("get_per_piece_salary_report", { from_date: "2000-01-01", to_date: "2099-12-31" })
+            .then(function () {
+              if (msgEl) msgEl.textContent = "Fallback sync done via report refresh. Please update app code on server for full sync API.";
+              loadReport();
+            })
+            .catch(function () {
+              if (msgEl) msgEl.textContent = "Status sync failed: " + err;
+            });
+          return;
+        }
+        if (msgEl) msgEl.textContent = "Status sync failed: " + err;
+      });
+    });
+  }
   if (el("pp-print-tab-btn")) {
     el("pp-print-tab-btn").addEventListener("click", printCurrentTabReport);
   }
@@ -9042,14 +9978,21 @@ WEB_PAGE_HTML = """
       renderCurrentTab();
     });
   }
+  if (el("pp-booking-status")) {
+    el("pp-booking-status").addEventListener("change", function () { setPageForCurrentTab(1); renderCurrentTab(); });
+  }
+  if (el("pp-payment-status")) {
+    el("pp-payment-status").addEventListener("change", function () { setPageForCurrentTab(1); renderCurrentTab(); });
+  }
   if (el("pp-po-number")) {
     el("pp-po-number").addEventListener("change", function () { setPageForCurrentTab(1); renderCurrentTab(); });
   }
   if (el("pp-entry-no")) {
     el("pp-entry-no").addEventListener("change", function () {
-      state.forcedEntryNo = "";
-      if (el("pp-jv-entry-filter")) el("pp-jv-entry-filter").value = "";
-      if (el("pp-pay-entry-filter")) el("pp-pay-entry-filter").value = "";
+      var v = String(el("pp-entry-no").value || "").trim();
+      state.forcedEntryNo = v;
+      if (el("pp-jv-entry-filter")) el("pp-jv-entry-filter").value = v;
+      if (el("pp-pay-entry-filter")) el("pp-pay-entry-filter").value = v;
       setPageForCurrentTab(1);
       renderCurrentTab();
     });
@@ -9058,18 +10001,60 @@ WEB_PAGE_HTML = """
     el("pp-jv-entry-filter").addEventListener("change", function () {
       var v = String(el("pp-jv-entry-filter").value || "").trim();
       state.forcedEntryNo = v;
+      state.excludedEmployees = {};
       if (el("pp-entry-no")) el("pp-entry-no").value = v;
       if (el("pp-pay-entry-filter")) el("pp-pay-entry-filter").value = v;
+      if (el("pp-jv-entry-multi")) el("pp-jv-entry-multi").value = v;
+      setPageForCurrentTab(1);
+      renderCurrentTab();
+    });
+  }
+  if (el("pp-jv-entry-multi")) {
+    el("pp-jv-entry-multi").addEventListener("change", function () {
+      var list = parseEntryNoList(el("pp-jv-entry-multi").value || "");
+      var single = list.length === 1 ? list[0] : "";
+      state.forcedEntryNo = single;
+      state.excludedEmployees = {};
+      if (el("pp-entry-no")) el("pp-entry-no").value = single;
+      if (el("pp-jv-entry-filter")) el("pp-jv-entry-filter").value = single;
+      if (el("pp-pay-entry-filter")) el("pp-pay-entry-filter").value = single;
       setPageForCurrentTab(1);
       renderCurrentTab();
     });
   }
   if (el("pp-jv-entry-clear")) {
     el("pp-jv-entry-clear").addEventListener("click", function () {
-      state.forcedEntryNo = "";
-      if (el("pp-entry-no")) el("pp-entry-no").value = "";
-      if (el("pp-jv-entry-filter")) el("pp-jv-entry-filter").value = "";
-      if (el("pp-pay-entry-filter")) el("pp-pay-entry-filter").value = "";
+      resetEntryFiltersToAll();
+      setPageForCurrentTab(1);
+      renderCurrentTab();
+    });
+  }
+  if (el("pp-jv-entry-add")) {
+    el("pp-jv-entry-add").addEventListener("click", function () {
+      var current = parseEntryNoList((el("pp-jv-entry-multi") && el("pp-jv-entry-multi").value) || "");
+      var addOne = String((el("pp-jv-entry-filter") && el("pp-jv-entry-filter").value) || "").trim();
+      if (!addOne) return;
+      if (current.indexOf(addOne) < 0) current.push(addOne);
+      if (el("pp-jv-entry-multi")) el("pp-jv-entry-multi").value = current.join(", ");
+      state.forcedEntryNo = current.length === 1 ? current[0] : "";
+      state.excludedEmployees = {};
+      if (el("pp-entry-no")) el("pp-entry-no").value = state.forcedEntryNo;
+      setPageForCurrentTab(1);
+      renderCurrentTab();
+    });
+  }
+  if (el("pp-jv-entry-remove")) {
+    el("pp-jv-entry-remove").addEventListener("click", function () {
+      var current = parseEntryNoList((el("pp-jv-entry-multi") && el("pp-jv-entry-multi").value) || "");
+      var removeOne = String((el("pp-jv-entry-filter") && el("pp-jv-entry-filter").value) || "").trim();
+      if (!removeOne) return;
+      current = current.filter(function (x) { return x !== removeOne; });
+      if (el("pp-jv-entry-multi")) el("pp-jv-entry-multi").value = current.join(", ");
+      state.forcedEntryNo = current.length === 1 ? current[0] : "";
+      state.excludedEmployees = {};
+      if (el("pp-entry-no")) el("pp-entry-no").value = state.forcedEntryNo;
+      if (el("pp-jv-entry-filter")) el("pp-jv-entry-filter").value = state.forcedEntryNo;
+      if (el("pp-pay-entry-filter")) el("pp-pay-entry-filter").value = state.forcedEntryNo;
       setPageForCurrentTab(1);
       renderCurrentTab();
     });
@@ -9080,22 +10065,78 @@ WEB_PAGE_HTML = """
       loadReport();
     });
   }
+  if (el("pp-jv-history-from")) {
+    el("pp-jv-history-from").addEventListener("change", function () {
+      setWorkflowHistoryRange("salary_creation", el("pp-jv-history-from").value || "", (el("pp-jv-history-to") && el("pp-jv-history-to").value) || "");
+      state.historyPageByTab.salary_creation_history = 1;
+      renderCreatedEntriesPanel("salary_creation");
+    });
+  }
+  if (el("pp-jv-history-to")) {
+    el("pp-jv-history-to").addEventListener("change", function () {
+      setWorkflowHistoryRange("salary_creation", (el("pp-jv-history-from") && el("pp-jv-history-from").value) || "", el("pp-jv-history-to").value || "");
+      state.historyPageByTab.salary_creation_history = 1;
+      renderCreatedEntriesPanel("salary_creation");
+    });
+  }
   if (el("pp-pay-entry-filter")) {
     el("pp-pay-entry-filter").addEventListener("change", function () {
       var v = String(el("pp-pay-entry-filter").value || "").trim();
       state.forcedEntryNo = v;
+      state.paymentExcludedEmployees = {};
       if (el("pp-entry-no")) el("pp-entry-no").value = v;
       if (el("pp-jv-entry-filter")) el("pp-jv-entry-filter").value = v;
+      if (el("pp-pay-entry-multi")) el("pp-pay-entry-multi").value = v;
+      setPageForCurrentTab(1);
+      renderCurrentTab();
+    });
+  }
+  if (el("pp-pay-entry-multi")) {
+    el("pp-pay-entry-multi").addEventListener("change", function () {
+      var list = parseEntryNoList(el("pp-pay-entry-multi").value || "");
+      var single = list.length === 1 ? list[0] : "";
+      state.forcedEntryNo = single;
+      state.paymentExcludedEmployees = {};
+      if (el("pp-entry-no")) el("pp-entry-no").value = single;
+      if (el("pp-pay-entry-filter")) el("pp-pay-entry-filter").value = single;
+      if (el("pp-jv-entry-filter")) el("pp-jv-entry-filter").value = single;
       setPageForCurrentTab(1);
       renderCurrentTab();
     });
   }
   if (el("pp-pay-entry-clear")) {
     el("pp-pay-entry-clear").addEventListener("click", function () {
-      state.forcedEntryNo = "";
-      if (el("pp-entry-no")) el("pp-entry-no").value = "";
-      if (el("pp-jv-entry-filter")) el("pp-jv-entry-filter").value = "";
-      if (el("pp-pay-entry-filter")) el("pp-pay-entry-filter").value = "";
+      resetEntryFiltersToAll();
+      setPageForCurrentTab(1);
+      renderCurrentTab();
+    });
+  }
+  if (el("pp-pay-entry-add")) {
+    el("pp-pay-entry-add").addEventListener("click", function () {
+      var current = parseEntryNoList((el("pp-pay-entry-multi") && el("pp-pay-entry-multi").value) || "");
+      var addOne = String((el("pp-pay-entry-filter") && el("pp-pay-entry-filter").value) || "").trim();
+      if (!addOne) return;
+      if (current.indexOf(addOne) < 0) current.push(addOne);
+      if (el("pp-pay-entry-multi")) el("pp-pay-entry-multi").value = current.join(", ");
+      state.forcedEntryNo = current.length === 1 ? current[0] : "";
+      state.paymentExcludedEmployees = {};
+      if (el("pp-entry-no")) el("pp-entry-no").value = state.forcedEntryNo;
+      setPageForCurrentTab(1);
+      renderCurrentTab();
+    });
+  }
+  if (el("pp-pay-entry-remove")) {
+    el("pp-pay-entry-remove").addEventListener("click", function () {
+      var current = parseEntryNoList((el("pp-pay-entry-multi") && el("pp-pay-entry-multi").value) || "");
+      var removeOne = String((el("pp-pay-entry-filter") && el("pp-pay-entry-filter").value) || "").trim();
+      if (!removeOne) return;
+      current = current.filter(function (x) { return x !== removeOne; });
+      if (el("pp-pay-entry-multi")) el("pp-pay-entry-multi").value = current.join(", ");
+      state.forcedEntryNo = current.length === 1 ? current[0] : "";
+      state.paymentExcludedEmployees = {};
+      if (el("pp-entry-no")) el("pp-entry-no").value = state.forcedEntryNo;
+      if (el("pp-pay-entry-filter")) el("pp-pay-entry-filter").value = state.forcedEntryNo;
+      if (el("pp-jv-entry-filter")) el("pp-jv-entry-filter").value = state.forcedEntryNo;
       setPageForCurrentTab(1);
       renderCurrentTab();
     });
@@ -9104,6 +10145,20 @@ WEB_PAGE_HTML = """
     el("pp-pay-entry-refresh").addEventListener("click", function () {
       setPageForCurrentTab(1);
       loadReport();
+    });
+  }
+  if (el("pp-pay-history-from")) {
+    el("pp-pay-history-from").addEventListener("change", function () {
+      setWorkflowHistoryRange("payment_manage", el("pp-pay-history-from").value || "", (el("pp-pay-history-to") && el("pp-pay-history-to").value) || "");
+      state.historyPageByTab.payment_manage_history = 1;
+      renderCreatedEntriesPanel("payment_manage");
+    });
+  }
+  if (el("pp-pay-history-to")) {
+    el("pp-pay-history-to").addEventListener("change", function () {
+      setWorkflowHistoryRange("payment_manage", (el("pp-pay-history-from") && el("pp-pay-history-from").value) || "", el("pp-pay-history-to").value || "");
+      state.historyPageByTab.payment_manage_history = 1;
+      renderCreatedEntriesPanel("payment_manage");
     });
   }
   if (el("pp-search-any")) {
@@ -9375,7 +10430,7 @@ def _migrate_jv_status(results: list[str]) -> None:
 def _ensure_per_piece_field_links(results: list[str]) -> None:
 	# Older setups had fetch_from pointing to removed Item fields, which blocks insert/save.
 	changed = False
-	for fieldname in ("process_type", "process_size"):
+	for fieldname in ("process_type", "process_size", "rate"):
 		custom_field_name = frappe.db.get_value(
 			"Custom Field",
 			{"dt": "Per Piece", "fieldname": fieldname},
@@ -9401,7 +10456,7 @@ def _ensure_per_piece_field_links(results: list[str]) -> None:
 			changed = True
 	if changed:
 		frappe.clear_cache(doctype="Per Piece")
-		results.append("Updated: Cleared invalid Fetch From on Per Piece process fields")
+		results.append("Updated: Cleared invalid Fetch From on Per Piece process/rate fields")
 	else:
 		results.append("No change: Per Piece process field links already valid")
 
