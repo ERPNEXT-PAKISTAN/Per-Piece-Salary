@@ -715,6 +715,132 @@ def to_float(value):
 def round2(value):
     return round(to_float(value), 2)
 
+def parse_payment_refs(text):
+  out = []
+  raw = str(text or "").strip()
+  if not raw:
+    return out
+  for part in raw.split(";;"):
+    bits = part.split("::")
+    if len(bits) < 2:
+      continue
+    jv_no = str(bits[0] or "").strip()
+    try:
+      amount = float(bits[1] or 0)
+    except Exception:
+      amount = 0.0
+    if jv_no and amount > 0:
+      out.append({"jv": jv_no, "amount": amount})
+  return out
+
+def serialize_payment_refs(refs):
+  parts = []
+  for ref in refs or []:
+    jv_no = str((ref or {}).get("jv") or "").strip()
+    amount = to_float((ref or {}).get("amount"))
+    if jv_no and amount > 0:
+      parts.append(jv_no + "::" + str(round(amount, 2)))
+  return ";;".join(parts)
+
+def cleanup_canceled_links_for_entry(entry_name):
+  if not entry_name:
+    return
+
+  rows = frappe.get_all(
+    "Per Piece",
+    filters={"parent": entry_name, "parenttype": "Per Piece Salary", "parentfield": "perpiece"},
+    fields=[
+      "name",
+      "amount",
+      "jv_entry_no",
+      "jv_status",
+      "booked_amount",
+      "paid_amount",
+      "unpaid_amount",
+      "payment_status",
+      "payment_jv_no",
+      "payment_refs",
+      "payment_line_remark",
+    ],
+  )
+  if not rows:
+    return
+
+  jv_names = []
+  for row in rows:
+    if row.get("jv_entry_no"):
+      jv_names.append(row.get("jv_entry_no"))
+    if row.get("payment_jv_no"):
+      jv_names.append(row.get("payment_jv_no"))
+    for ref in parse_payment_refs(row.get("payment_refs")):
+      if ref.get("jv"):
+        jv_names.append(ref.get("jv"))
+
+  jv_names = sorted(set([j for j in jv_names if j]))
+  jv_map = {}
+  if jv_names:
+    for je in frappe.get_all("Journal Entry", filters={"name": ["in", jv_names]}, fields=["name", "docstatus"]):
+      jv_map[je.get("name")] = int(je.get("docstatus") or 0)
+
+  for row in rows:
+    row_name = row.get("name")
+    jv_no = str(row.get("jv_entry_no") or "").strip()
+    is_salary_booked = bool(jv_no and jv_map.get(jv_no) == 1)
+
+    if not is_salary_booked:
+      frappe.db.set_value("Per Piece", row_name, "jv_entry_no", "", update_modified=False)
+      frappe.db.set_value("Per Piece", row_name, "jv_status", "Pending", update_modified=False)
+      frappe.db.set_value("Per Piece", row_name, "booked_amount", 0, update_modified=False)
+      frappe.db.set_value("Per Piece", row_name, "paid_amount", 0, update_modified=False)
+      frappe.db.set_value("Per Piece", row_name, "unpaid_amount", 0, update_modified=False)
+      frappe.db.set_value("Per Piece", row_name, "payment_status", "Unpaid", update_modified=False)
+      frappe.db.set_value("Per Piece", row_name, "payment_jv_no", "", update_modified=False)
+      frappe.db.set_value("Per Piece", row_name, "payment_refs", "", update_modified=False)
+      frappe.db.set_value("Per Piece", row_name, "payment_line_remark", "", update_modified=False)
+      continue
+
+    booked = max(to_float(row.get("booked_amount")), 0.0)
+    if booked <= 0:
+      booked = max(to_float(row.get("amount")), 0.0)
+
+    refs = parse_payment_refs(row.get("payment_refs"))
+    active_refs = []
+    for ref in refs:
+      if jv_map.get(ref.get("jv")) == 1:
+        active_refs.append(ref)
+
+    paid = 0.0
+    last_jv = ""
+    for ref in active_refs:
+      paid = paid + max(to_float(ref.get("amount")), 0.0)
+      last_jv = ref.get("jv") or last_jv
+
+    payment_jv_no = str(row.get("payment_jv_no") or "").strip()
+    if payment_jv_no and jv_map.get(payment_jv_no) != 1:
+      payment_jv_no = ""
+
+    if booked > 0 and paid > booked:
+      paid = booked
+    unpaid = max(booked - paid, 0.0)
+
+    if booked <= 0:
+      status = "Unpaid"
+    elif paid <= 0:
+      status = "Unpaid"
+    elif unpaid <= 0:
+      status = "Paid"
+    else:
+      status = "Partly Paid"
+
+    frappe.db.set_value("Per Piece", row_name, "booked_amount", round(booked, 2), update_modified=False)
+    frappe.db.set_value("Per Piece", row_name, "paid_amount", round(paid, 2), update_modified=False)
+    frappe.db.set_value("Per Piece", row_name, "unpaid_amount", round(unpaid, 2), update_modified=False)
+    frappe.db.set_value("Per Piece", row_name, "payment_status", status, update_modified=False)
+    frappe.db.set_value("Per Piece", row_name, "payment_refs", serialize_payment_refs(active_refs), update_modified=False)
+    frappe.db.set_value("Per Piece", row_name, "payment_jv_no", (payment_jv_no or last_jv) if paid > 0 else "", update_modified=False)
+    if paid <= 0:
+      frappe.db.set_value("Per Piece", row_name, "payment_line_remark", "", update_modified=False)
+
 def parse_rows(raw_value):
     out = []
     text = normalize_param(raw_value) or ""
@@ -782,6 +908,10 @@ if not rows:
 if entry_name:
     if not frappe.db.exists("Per Piece Salary", entry_name):
         frappe.throw("Per Piece Salary not found: " + str(entry_name))
+
+  # If JV(s) were canceled directly from Journal Entry screen, unlink stale refs first.
+  cleanup_canceled_links_for_entry(entry_name)
+
     doc = frappe.get_doc("Per Piece Salary", entry_name)
     if int(doc.docstatus or 0) != 0:
         frappe.throw("Only Draft Per Piece Salary can be edited.")

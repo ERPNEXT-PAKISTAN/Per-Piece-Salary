@@ -51,10 +51,13 @@ bench --site site1.local execute per_piece_payroll.api.apply_per_piece_payroll_s
 
 ### Update on Existing Client Server
 
-If app is already installed, use:
+If app is already installed, do not run `bench get-app` again. Use:
 
 ```bash
 cd /home/frappe/frappe-bench
+
+# 0) Recommended backup before update
+bench --site site1.local backup --with-files
 
 # 1) Pull latest app code from GitHub
 git -C apps/per_piece_payroll remote -v
@@ -65,13 +68,18 @@ grep -nE "pp-po-number|pp-entry-no|pp-search-any|simple_month_amount" apps/per_p
 
 # 3) Apply to your site
 bench --site site1.local migrate
-bench --site site1.local execute per_piece_payroll.api.apply_per_piece_payroll_setup
 bench --site site1.local clear-cache
 bench --site site1.local clear-website-cache
 
 # 4) Rebuild and restart
 bench build --app per_piece_payroll
 bench restart
+```
+
+Optional only when setup drift is suspected (normally not needed because migrate already runs setup):
+
+```bash
+bench --site site1.local execute per_piece_payroll.api.apply_per_piece_payroll_setup
 ```
 
 If `bench restart` is not available on your hosting platform, restart services from your platform panel/container instead.
@@ -85,8 +93,8 @@ cd /home/frappe/frappe-bench
 git -C apps/per_piece_payroll remote -v
 git -C apps/per_piece_payroll pull origin main || git -C apps/per_piece_payroll pull upstream main
 grep -nE "pp-po-number|pp-entry-no|pp-search-any|simple_month_amount" apps/per_piece_payroll/per_piece_payroll/per_piece_setup.py
+bench --site site1.local backup --with-files
 bench --site site1.local migrate
-bench --site site1.local execute per_piece_payroll.api.apply_per_piece_payroll_setup
 bench --site site1.local clear-cache
 bench --site site1.local clear-website-cache
 bench build --app per_piece_payroll
@@ -124,6 +132,7 @@ bench --site site1.local execute per_piece_payroll.api.apply_per_piece_payroll_s
 - `appe` is **not** required by `per_piece_payroll`.
 - The app now uses `Item.custom_prd_process_and_sizes` as the Item-side source of process, size, and rate.
 - In container/cloud setups without `supervisorctl`, `bench get-app` may end with a restart error. This does not always mean app fetch/install failed.
+- Historical data protection: submitted or booked/paid `Per Piece Salary` entries are locked by server-side guard logic. App updates (`pull`, `migrate`, `build`) are intended to affect new entries, not change old posted qty/rate/amount rows.
 
 ### Troubleshooting (new server)
 
@@ -148,7 +157,29 @@ bench --site site1.local execute per_piece_payroll.api.apply_per_piece_payroll_s
    git -C apps/per_piece_payroll pull upstream main
    ```
 
-4. If you want to remove `appe` from a site/bench:
+4. If `bench get-app` fails with `Directory not empty` for `Per-Piece-Salary` -> `per_piece_payroll`:
+  - This usually means either:
+  ```text
+  - the app is already present in apps/per_piece_payroll
+  - a failed clone left apps/Per-Piece-Salary behind
+  ```
+  - For an existing installation, do not use `bench get-app` again. Update like this instead:
+  ```bash
+  cd /home/frappe/frappe-bench
+  git -C apps/per_piece_payroll pull origin main || git -C apps/per_piece_payroll pull upstream main
+  bench --site site1.local migrate
+  bench --site site1.local clear-cache
+  bench --site site1.local clear-website-cache
+  bench build --app per_piece_payroll
+  bench restart
+  ```
+  - If this was a failed fresh install and the extra folder exists, remove only the failed clone folder and retry:
+  ```bash
+  rm -rf /home/frappe/frappe-bench/apps/Per-Piece-Salary
+  bench get-app https://github.com/ERPNEXT-PAKISTAN/Per-Piece-Salary.git --branch main
+  ```
+
+5. If you want to remove `appe` from a site/bench:
    - First remove it from site installed apps:
    ```bash
    bench --site site1.local remove-from-installed-apps appe
@@ -161,6 +192,29 @@ bench --site site1.local execute per_piece_payroll.api.apply_per_piece_payroll_s
    bench remove-app appe
    ```
    - If your host blocks `bench restart`, restart services from hosting panel/container supervisor.
+
+### Troubleshooting (existing server data entry)
+
+If a Salary JV or Payment JV was canceled directly from ERPNext `Journal Entry` screen, some old links may remain on `Per Piece` rows until sync runs.
+
+Symptom during Data Entry update:
+
+```text
+Save Failed
+This entry is already booked/paid and cannot be edited from Data Enter.
+```
+
+Immediate fix on server:
+
+```bash
+cd /home/frappe/frappe-bench
+bench --site site1.local execute per_piece_payroll.api.force_sync_per_piece_status
+bench --site site1.local clear-cache
+```
+
+Then try update again from web Data Entry.
+
+Permanent fix (code): update app to latest `main` and run migrate. Latest code auto-cleans canceled Salary JV and Payment JV links before Data Entry edit validation.
 
 ### Contributing
 
