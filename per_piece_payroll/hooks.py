@@ -137,13 +137,12 @@ after_install = "per_piece_payroll.install.after_install"
 # ---------------
 # Hook on document methods and events
 
-# doc_events = {
-# 	"*": {
-# 		"on_update": "method",
-# 		"on_cancel": "method",
-# 		"on_trash": "method"
-# 	}
-# }
+doc_events = {
+	"Per Piece Salary": {
+		"validate": "per_piece_payroll.guards.protect_per_piece_salary_mutations",
+		"before_update_after_submit": "per_piece_payroll.guards.protect_per_piece_salary_mutations",
+	}
+}
 
 # Scheduled Tasks
 # ---------------

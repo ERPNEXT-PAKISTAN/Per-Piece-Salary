@@ -2280,6 +2280,10 @@ function isLoadByItem(frm) {
     return raw === undefined || raw === null || raw === 1 || String(raw) === "1";
 }
 
+function isSubmittedDoc(frm) {
+  return Number(frm.doc.docstatus || 0) === 1;
+}
+
 function setProductQuery(frm) {
     const byItem = isLoadByItem(frm);
     const getProductQuery = () => {
@@ -2628,6 +2632,10 @@ function applyItemDefaults(frm, cdt, cdn) {
 
 frappe.ui.form.on("Per Piece Salary", {
     onload(frm) {
+    if (isSubmittedDoc(frm)) {
+      setProductQuery(frm);
+      return;
+    }
         if (frm.doc.load_by_item === undefined || frm.doc.load_by_item === null || frm.doc.load_by_item === "") {
             frm.set_value("load_by_item", 1);
         }
@@ -2650,26 +2658,31 @@ frappe.ui.form.on("Per Piece Salary", {
     },
 
     validate(frm) {
+      if (isSubmittedDoc(frm)) return;
         validateDateRange(frm);
         frm.trigger("sync_parent_to_child");
         frm.trigger("recalc_amount_and_total");
     },
 
     from_date(frm) {
+      if (isSubmittedDoc(frm)) return;
         validateDateRange(frm);
         frm.trigger("sync_parent_to_child");
     },
 
     to_date(frm) {
+      if (isSubmittedDoc(frm)) return;
         validateDateRange(frm);
         frm.trigger("sync_parent_to_child");
     },
 
     po_number(frm) {
+      if (isSubmittedDoc(frm)) return;
         frm.trigger("sync_parent_to_child");
     },
 
     employee(frm) {
+      if (isSubmittedDoc(frm)) return;
         loadParentEmployeeName(frm).then(() => {
             frm.trigger("sync_parent_to_child");
             frm.refresh_field(CHILD_TABLE_FIELD);
@@ -2677,6 +2690,7 @@ frappe.ui.form.on("Per Piece Salary", {
     },
 
     item_group(frm) {
+      if (isSubmittedDoc(frm)) return;
         setProductQuery(frm);
         if (frm.doc.item) {
             frm.set_value("item", "");
@@ -2691,6 +2705,7 @@ frappe.ui.form.on("Per Piece Salary", {
     },
 
     item(frm) {
+      if (isSubmittedDoc(frm)) return;
         setProductQuery(frm);
         loadItemsForGroup(frm).then(() => {
             populateRowsFromGroup(frm, true);
@@ -2700,6 +2715,7 @@ frappe.ui.form.on("Per Piece Salary", {
     },
 
     load_by_item(frm) {
+      if (isSubmittedDoc(frm)) return;
         setProductQuery(frm);
         loadItemsForGroup(frm).then(() => {
             populateRowsFromGroup(frm, true);
@@ -2709,6 +2725,7 @@ frappe.ui.form.on("Per Piece Salary", {
     },
 
     sync_parent_to_child(frm) {
+      if (isSubmittedDoc(frm)) return;
         const rows = frm.doc[CHILD_TABLE_FIELD] || [];
         if (!rows.length) return;
 
@@ -2732,6 +2749,7 @@ frappe.ui.form.on("Per Piece Salary", {
     },
 
     recalc_amount_and_total(frm) {
+      if (isSubmittedDoc(frm)) return;
         const rows = frm.doc[CHILD_TABLE_FIELD] || [];
         let totalAmount = 0;
         let totalQty = 0;
@@ -2751,17 +2769,20 @@ frappe.ui.form.on("Per Piece Salary", {
     },
 
     perpiece_add(frm) {
+      if (isSubmittedDoc(frm)) return;
         frm.trigger("sync_parent_to_child");
         loadItemsForGroup(frm).then(() => syncRowsToItemGroup(frm));
     },
 
     perpiece_remove(frm) {
+      if (isSubmittedDoc(frm)) return;
         frm.trigger("recalc_amount_and_total");
     },
 });
 
 frappe.ui.form.on("Per Piece", {
     form_render(frm, cdt, cdn) {
+      if (isSubmittedDoc(frm)) return;
         const row = locals[cdt][cdn];
         row.from_date = frm.doc.from_date || null;
         row.to_date = frm.doc.to_date || null;
@@ -2783,6 +2804,7 @@ frappe.ui.form.on("Per Piece", {
     },
 
     product(frm, cdt, cdn) {
+      if (isSubmittedDoc(frm)) return;
         const row = locals[cdt][cdn];
         if (row) {
             row.__manual_rate = 0;
@@ -2792,6 +2814,7 @@ frappe.ui.form.on("Per Piece", {
     },
 
     process_type(frm, cdt, cdn) {
+      if (isSubmittedDoc(frm)) return;
         const row = locals[cdt][cdn];
         if (row) {
             row.__manual_rate = 0;
@@ -2801,6 +2824,7 @@ frappe.ui.form.on("Per Piece", {
     },
 
     qty(frm, cdt, cdn) {
+      if (isSubmittedDoc(frm)) return;
         const row = locals[cdt][cdn];
         calculateRowAmount(row);
         frappe.model.set_value(cdt, cdn, "amount", row.amount);
@@ -2808,6 +2832,7 @@ frappe.ui.form.on("Per Piece", {
     },
 
     rate(frm, cdt, cdn) {
+      if (isSubmittedDoc(frm)) return;
         const row = locals[cdt][cdn];
         if (row) row.__manual_rate = 1;
         calculateRowAmount(row);
@@ -2816,6 +2841,7 @@ frappe.ui.form.on("Per Piece", {
     },
 
     process_size(frm, cdt, cdn) {
+      if (isSubmittedDoc(frm)) return;
         const row = locals[cdt][cdn];
         if (!row.process_size) {
             frappe.model.set_value(cdt, cdn, "process_size", PROCESS_SIZE_DEFAULT);
