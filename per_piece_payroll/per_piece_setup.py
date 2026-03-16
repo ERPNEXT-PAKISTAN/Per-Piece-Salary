@@ -3789,8 +3789,39 @@ WEB_PAGE_HTML = """
         });
         html += "<h4 style='margin:10px 0 6px 0;'>Product wise Detail Report</h4>";
         html += "<table class='pp-table'><thead><tr><th>PO Number</th><th>Product</th><th>Process</th><th>Size</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>";
+        var byPoProduct = {};
         productDetailRows.forEach(function (r) {
-          html += "<tr><td>" + esc(r.po_number || "") + "</td><td>" + esc(r.product || "") + "</td><td>" + esc(r.process_type || "") + "</td><td>" + esc(r.process_size || "No Size") + "</td><td class='num'>" + esc(fmt(r.qty)) + "</td><td class='num'>" + esc(fmt(r.rate)) + "</td><td class='num pp-amt-col'>" + esc(fmt(r.amount)) + "</td></tr>";
+          var po = String(r.po_number || "").trim() || "(Blank)";
+          var product = String(r.product || "").trim() || "(Blank)";
+          if (!byPoProduct[po]) byPoProduct[po] = {};
+          if (!byPoProduct[po][product]) byPoProduct[po][product] = [];
+          byPoProduct[po][product].push(r);
+        });
+
+        Object.keys(byPoProduct).sort().forEach(function (po) {
+          var poQty = 0;
+          var poAmount = 0;
+          html += "<tr class='pp-group-head'><td colspan='7'>PO Number: " + esc(po) + "</td></tr>";
+
+          Object.keys(byPoProduct[po] || {}).sort().forEach(function (product) {
+            var rowsByProduct = byPoProduct[po][product] || [];
+            var productQty = 0;
+            var productAmount = 0;
+
+            rowsByProduct.forEach(function (r) {
+              var q = num(r.qty);
+              var a = num(r.amount);
+              productQty += q;
+              productAmount += a;
+              poQty += q;
+              poAmount += a;
+              html += "<tr><td>" + esc(po) + "</td><td>" + esc(product) + "</td><td>" + esc(r.process_type || "") + "</td><td>" + esc(r.process_size || "No Size") + "</td><td class='num'>" + esc(fmt(q)) + "</td><td class='num'>" + esc(fmt(r.rate)) + "</td><td class='num pp-amt-col'>" + esc(fmt(a)) + "</td></tr>";
+            });
+
+            html += "<tr class='pp-year-total'><td>" + esc(po) + "</td><td>" + esc(product) + " Sub Total</td><td></td><td></td><td class='num'>" + esc(fmt(productQty)) + "</td><td class='num'>" + esc(fmt(avgRate(productQty, productAmount))) + "</td><td class='num pp-amt-col'>" + esc(fmt(productAmount)) + "</td></tr>";
+          });
+
+          html += "<tr class='pp-year-total'><td>" + esc(po) + "</td><td>PO Sub Total</td><td></td><td></td><td class='num'>" + esc(fmt(poQty)) + "</td><td class='num'>" + esc(fmt(avgRate(poQty, poAmount))) + "</td><td class='num pp-amt-col'>" + esc(fmt(poAmount)) + "</td></tr>";
         });
         html += "<tr class='pp-year-total'><td>Total</td><td></td><td></td><td></td><td class='num'>" + esc(fmt(scopedGroup.qty)) + "</td><td class='num'>" + esc(fmt(scopedGroup.rate)) + "</td><td class='num pp-amt-col'>" + esc(fmt(scopedGroup.amount)) + "</td></tr>";
         html += "</tbody></table>";
@@ -5993,34 +6024,48 @@ WEB_PAGE_HTML = """
     var wrap = el("pp-table-wrap");
     if (!wrap) return;
     var detailRows = rows || [];
-    var byProduct = {};
+    var byPO = {};
     detailRows.forEach(function (r) {
+      var po = String((r && r.po_number) || "").trim() || "(Blank)";
       var product = String((r && r.product) || "").trim() || "(Blank)";
-      if (!byProduct[product]) byProduct[product] = [];
-      byProduct[product].push(r);
+      if (!byPO[po]) byPO[po] = {};
+      if (!byPO[po][product]) byPO[po][product] = [];
+      byPO[po][product].push(r);
     });
     var grandQty = 0;
     var grandAmount = 0;
     var html = "<table class='pp-table'><thead><tr><th>PO Number</th><th>Item</th><th>Process</th><th>Size</th><th>Qty</th><th>Rate</th><th>Amount</th><th>Grand Total</th></tr></thead><tbody>";
-    Object.keys(byProduct).sort().forEach(function (product) {
-      var list = byProduct[product] || [];
-      var subQty = 0;
-      var subAmount = 0;
-      html += "<tr class='pp-group-head'><td colspan='8'>" + esc(product) + "</td></tr>";
-      list.sort(function (a, b) {
-        var poCmp = String(a.po_number || "").localeCompare(String(b.po_number || ""));
-        if (poCmp !== 0) return poCmp;
-        return String(a.process_type || "").localeCompare(String(b.process_type || ""));
-      }).forEach(function (r) {
-        var q = num(r.qty);
-        var a = num(r.amount);
-        subQty += q;
-        subAmount += a;
-        grandQty += q;
-        grandAmount += a;
-        html += "<tr><td>" + esc(r.po_number || "") + "</td><td>" + esc(r.product || "") + "</td><td>" + esc(r.process_type || "") + "</td><td>" + esc(r.process_size || "No Size") + "</td><td class='num'>" + esc(fmt(q)) + "</td><td class='num'>" + esc(fmt(num(r.rate))) + "</td><td class='num pp-amt-col'>" + esc(fmt(a)) + "</td><td></td></tr>";
+    Object.keys(byPO).sort().forEach(function (po) {
+      var poQty = 0;
+      var poAmount = 0;
+      html += "<tr class='pp-group-head'><td colspan='8'>PO Number: " + esc(po) + "</td></tr>";
+
+      Object.keys(byPO[po] || {}).sort().forEach(function (product) {
+        var list = byPO[po][product] || [];
+        var productQty = 0;
+        var productAmount = 0;
+
+        html += "<tr class='pp-group-head'><td></td><td colspan='7'>Item: " + esc(product) + "</td></tr>";
+        list.sort(function (a, b) {
+          var processCmp = String(a.process_type || "").localeCompare(String(b.process_type || ""));
+          if (processCmp !== 0) return processCmp;
+          return String(a.process_size || "No Size").localeCompare(String(b.process_size || "No Size"));
+        }).forEach(function (r) {
+          var q = num(r.qty);
+          var a = num(r.amount);
+          productQty += q;
+          productAmount += a;
+          poQty += q;
+          poAmount += a;
+          grandQty += q;
+          grandAmount += a;
+          html += "<tr><td>" + esc(po) + "</td><td>" + esc(product) + "</td><td>" + esc(r.process_type || "") + "</td><td>" + esc(r.process_size || "No Size") + "</td><td class='num'>" + esc(fmt(q)) + "</td><td class='num'>" + esc(fmt(num(r.rate))) + "</td><td class='num pp-amt-col'>" + esc(fmt(a)) + "</td><td></td></tr>";
+        });
+
+        html += "<tr class='pp-year-total'><td>" + esc(po) + "</td><td>" + esc(product) + " Sub Total</td><td></td><td></td><td class='num'>" + esc(fmt(productQty)) + "</td><td class='num'>" + esc(fmt(avgRate(productQty, productAmount))) + "</td><td class='num pp-amt-col'>" + esc(fmt(productAmount)) + "</td><td class='num pp-amt-col'>" + esc(fmt(productAmount)) + "</td></tr>";
       });
-      html += "<tr class='pp-year-total'><td></td><td>Sub Total</td><td></td><td></td><td class='num'>" + esc(fmt(subQty)) + "</td><td class='num'>" + esc(fmt(avgRate(subQty, subAmount))) + "</td><td class='num pp-amt-col'>" + esc(fmt(subAmount)) + "</td><td class='num pp-amt-col'>" + esc(fmt(subAmount)) + "</td></tr>";
+
+      html += "<tr class='pp-year-total'><td>" + esc(po) + "</td><td>PO Sub Total</td><td></td><td></td><td class='num'>" + esc(fmt(poQty)) + "</td><td class='num'>" + esc(fmt(avgRate(poQty, poAmount))) + "</td><td class='num pp-amt-col'>" + esc(fmt(poAmount)) + "</td><td class='num pp-amt-col'>" + esc(fmt(poAmount)) + "</td></tr>";
     });
     html += "<tr class='pp-year-total'><td></td><td>Grand Total</td><td></td><td></td><td class='num'>" + esc(fmt(grandQty)) + "</td><td class='num'>" + esc(fmt(avgRate(grandQty, grandAmount))) + "</td><td class='num pp-amt-col'>" + esc(fmt(grandAmount)) + "</td><td class='num pp-amt-col'>" + esc(fmt(grandAmount)) + "</td></tr>";
     html += "</tbody></table>";
