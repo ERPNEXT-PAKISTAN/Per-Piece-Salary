@@ -909,8 +909,8 @@ if entry_name:
     if not frappe.db.exists("Per Piece Salary", entry_name):
         frappe.throw("Per Piece Salary not found: " + str(entry_name))
 
-  # If JV(s) were canceled directly from Journal Entry screen, unlink stale refs first.
-  cleanup_canceled_links_for_entry(entry_name)
+    # Clean stale Journal Entry links first when cancellation was done from Desk.
+    cleanup_canceled_links_for_entry(entry_name)
 
     doc = frappe.get_doc("Per Piece Salary", entry_name)
     if int(doc.docstatus or 0) != 0:
