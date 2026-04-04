@@ -430,6 +430,7 @@ if from_date and to_date and from_date > to_date:
 employee = normalize_param(args.get("employee"))
 product = normalize_param(args.get("product"))
 process_type = normalize_param(args.get("process_type"))
+sales_order = normalize_param(args.get("sales_order"))
 item_group = normalize_param(args.get("item_group"))
 po_number = normalize_param(args.get("po_number"))
 entry_no = normalize_param(args.get("entry_no"))
@@ -487,6 +488,7 @@ if not parents:
         "employees": [],
         "products": [],
         "process_types": [],
+        "sales_orders": [],
         "item_groups": [],
         "advance_balances": all_advance_balances,
         "advance_rows": all_advance_rows,
@@ -505,6 +507,20 @@ else:
     process_types = sorted(
         set((row.get("process_type") or "").strip() for row in option_rows if row.get("process_type"))
     )
+    sales_order_set = set((row.get("sales_order") or "").strip() for row in option_rows if row.get("sales_order"))
+    if frappe.db.exists("DocType", "Sales Order"):
+        so_rows = frappe.get_all(
+            "Sales Order",
+            filters={"docstatus": ["<", 2]},
+            fields=["name"],
+            order_by="transaction_date desc, modified desc",
+            limit_page_length=5000,
+        )
+        for so_row in so_rows:
+            so_name = str((so_row or {}).get("name") or "").strip()
+            if so_name:
+                sales_order_set.add(so_name)
+    sales_orders = sorted(sales_order_set)
     product_names = [p for p in products if p]
     item_group_map = {}
     if product_names:
@@ -533,6 +549,7 @@ else:
             "employees": employees,
             "products": products,
             "process_types": process_types,
+            "sales_orders": sales_orders,
             "item_groups": item_groups,
             "advance_balances": advance_balances,
             "advance_rows": all_advance_rows,
@@ -550,6 +567,8 @@ else:
             child_filters["product"] = product
         if process_type:
             child_filters["process_type"] = process_type
+        if sales_order:
+            child_filters["sales_order"] = sales_order
 
         children = frappe.get_all(
             "Per Piece",
@@ -680,6 +699,7 @@ else:
             "employees": employees,
             "products": products,
             "process_types": process_types,
+            "sales_orders": sales_orders,
             "item_groups": item_groups,
             "advance_balances": advance_balances,
             "advance_rows": all_advance_rows,
@@ -2992,6 +3012,7 @@ WEB_PAGE_HTML = """
     <label>Item Group <select id="pp-item-group"><option value="">All</option></select></label>
     <label>Product <select id="pp-product"><option value="">All</option></select></label>
     <label>Process Type <select id="pp-process-type"><option value="">All</option></select></label>
+    <label>Sales Order <select id="pp-sales-order"><option value="">All</option></select></label>
     <label>PO Number <select id="pp-po-number"><option value="">All</option></select></label>
     <label>Entry No <select id="pp-entry-no"><option value="">All</option></select></label>
     <label>Search <input type="text" id="pp-search-any" placeholder="Type any word..." /></label>
@@ -3212,7 +3233,7 @@ WEB_PAGE_HTML = """
     currentTab: "data_entry",
     rows: [],
     columns: [],
-    filterOptions: { employees: [], item_groups: [], products: [], process_types: [] },
+    filterOptions: { employees: [], item_groups: [], products: [], process_types: [], sales_orders: [] },
     adjustments: {},
     advanceBalances: {},
     advanceRows: [],
@@ -3247,6 +3268,24 @@ WEB_PAGE_HTML = """
   function num(v) { var n = Number(v || 0); return isNaN(n) ? 0 : n; }
   function whole(v) { return Math.max(0, Math.round(num(v) * 100) / 100); }
   function fmt(v) { return num(v).toLocaleString(undefined, { maximumFractionDigits: 2 }); }
+  function isGuestSession() {
+    try {
+      if (typeof frappe !== "undefined" && frappe.session && String(frappe.session.user || "") === "Guest") return true;
+    } catch (e) {}
+    return document.cookie.indexOf("sid=Guest") >= 0;
+  }
+  function redirectToLogin() {
+    if (window.location.pathname === "/login") return;
+    var next = window.location.pathname + (window.location.search || "") + (window.location.hash || "");
+    window.location.href = "/login?redirect-to=" + encodeURIComponent(next || "/per-piece-report");
+  }
+  function ensureLoggedInOrRedirect() {
+    if (!isGuestSession()) return false;
+    var msgEl = el("pp-msg");
+    if (msgEl) msgEl.textContent = "Please login to access this report. Redirecting...";
+    window.setTimeout(redirectToLogin, 120);
+    return true;
+  }
   function entrySequenceNo(name) {
     var txt = String(name || "").trim();
     var m = txt.match(/-(\\d+)\\s*$/);
@@ -4111,6 +4150,11 @@ WEB_PAGE_HTML = """
       })
       .then(function (res) {
         return res.json().catch(function () { return {}; }).then(function (body) {
+          var errText = String((body && body._error_message) || (body && body.exception) || "");
+          var permissionDenied = errText.indexOf("PermissionError") >= 0 || errText.toLowerCase().indexOf("not permitted") >= 0;
+          if ((res.status === 401 || res.status === 403 || permissionDenied) && isGuestSession()) {
+            redirectToLogin();
+          }
           if (!res.ok || body.exc || body.exception || body._error_message) {
             throw body;
           }
@@ -4194,6 +4238,26 @@ WEB_PAGE_HTML = """
     } else if (selectedItemGroup) {
       productSelect.value = "";
     }
+
+    // Fallback: if selected Item Group has no products in report/process caches,
+    // load directly from Item master for that Item Group.
+    if (selectedItemGroup && !productRows.length) {
+      callGetList("Item", ["name"], [["disabled", "=", 0], ["item_group", "=", selectedItemGroup]], 2000)
+        .then(function (rows) {
+          var masterRows = (rows || []).map(function (r) {
+            var n = String((r && r.name) || "").trim();
+            return n ? { value: n, label: n } : null;
+          }).filter(function (r) { return !!r; });
+          masterRows.sort(function (a, b) {
+            return String(a.label || "").localeCompare(String(b.label || ""));
+          });
+          setOptions(productSelect, masterRows, "value", "label", "All");
+          if (currentProduct && masterRows.some(function (r) { return r.value === currentProduct; })) {
+            productSelect.value = currentProduct;
+          }
+        })
+        .catch(function () {});
+    }
   }
 
   function getReportArgs() {
@@ -4217,6 +4281,7 @@ WEB_PAGE_HTML = """
       item_group: el("pp-item-group") ? (el("pp-item-group").value || "") : "",
       product: el("pp-product").value || "",
       process_type: el("pp-process-type").value || "",
+      sales_order: el("pp-sales-order") ? (el("pp-sales-order").value || "") : "",
       booking_status: el("pp-booking-status") ? (el("pp-booking-status").value || "") : "",
       payment_status: el("pp-payment-status") ? (el("pp-payment-status").value || "") : "",
       po_number: el("pp-po-number") ? (el("pp-po-number").value || "") : "",
@@ -4251,6 +4316,7 @@ WEB_PAGE_HTML = """
   function getRowsByHeaderFilters(rows, options) {
     var opts = options || {};
     var po = el("pp-po-number") ? String(el("pp-po-number").value || "").trim() : "";
+    var salesOrder = el("pp-sales-order") ? String(el("pp-sales-order").value || "").trim() : "";
     var entry = String(state.forcedEntryNo || "").trim();
     var booking = el("pp-booking-status") ? String(el("pp-booking-status").value || "").trim() : "";
     var payment = el("pp-payment-status") ? String(el("pp-payment-status").value || "").trim() : "";
@@ -4259,6 +4325,7 @@ WEB_PAGE_HTML = """
     if (!entry && el("pp-entry-no")) entry = String(el("pp-entry-no").value || "").trim();
     if (opts.ignore_entry_filter) entry = "";
     if (opts.ignore_po_filter) po = "";
+    if (opts.ignore_sales_order_filter) salesOrder = "";
     if (opts.ignore_date_filter) {
       from = "";
       to = "";
@@ -4273,6 +4340,7 @@ WEB_PAGE_HTML = """
       if (from && rowFrom && rowFrom < from) return false;
       if (to && rowTo && rowTo > to) return false;
       if (po && String(r.po_number || "") !== po) return false;
+      if (salesOrder && String(r.sales_order || "") !== salesOrder) return false;
       if (entry && String(r.per_piece_salary || "") !== entry) return false;
       if (booking && String(r.booking_status || "").trim() !== booking) return false;
       if (payment && String(r.payment_status || "").trim() !== payment) return false;
@@ -4501,24 +4569,32 @@ WEB_PAGE_HTML = """
       var currentEmployee = el("pp-employee") ? (el("pp-employee").value || "") : "";
       var currentItemGroup = el("pp-item-group") ? (el("pp-item-group").value || "") : "";
       var currentProcessType = el("pp-process-type") ? (el("pp-process-type").value || "") : "";
+      var currentSalesOrder = el("pp-sales-order") ? (el("pp-sales-order").value || "") : "";
       state.filterOptions = {
         employees: (m && m.employees) || [],
         item_groups: (m && m.item_groups) || [],
         products: (m && m.products) || [],
-        process_types: (m && m.process_types) || []
+        process_types: (m && m.process_types) || [],
+        sales_orders: (m && m.sales_orders) || []
       };
       var emps = (state.filterOptions.employees || []).map(function (v) { return { value: v, label: v }; });
       var itemGroups = (state.filterOptions.item_groups || []).map(function (v) { return { value: v, label: v }; });
       var ptypes = (m && m.process_types || []).map(function (v) { return { value: v, label: v }; });
+      var salesOrders = (state.filterOptions.sales_orders || []).map(function (v) { return { value: v, label: v }; });
+      salesOrders.sort(function (a, b) {
+        return compareEntryNoDesc(a && a.value, b && b.value);
+      });
       state.advanceBalances = (m && m.advance_balances) || {};
       state.advanceRows = (m && m.advance_rows) || [];
       state.advanceMonths = (m && m.advance_months) || [];
       setOptions(el("pp-employee"), emps, "value", "label", "All");
       setOptions(el("pp-item-group"), itemGroups, "value", "label", "All");
       setOptions(el("pp-process-type"), ptypes, "value", "label", "All");
+      setOptions(el("pp-sales-order"), salesOrders, "value", "label", "All");
       if (el("pp-employee")) el("pp-employee").value = currentEmployee;
       if (el("pp-item-group")) el("pp-item-group").value = currentItemGroup;
       if (el("pp-process-type")) el("pp-process-type").value = currentProcessType;
+      if (el("pp-sales-order")) el("pp-sales-order").value = currentSalesOrder;
       refreshTopProductOptions();
       setOptions(el("pp-po-number"), [], "value", "label", "All");
       setOptions(el("pp-entry-no"), [], "value", "label", "All");
@@ -8395,6 +8471,9 @@ WEB_PAGE_HTML = """
     var employeeOptions = state.entryMeta.employeeOptions || [];
     var itemGroupOptions = state.entryMeta.itemGroupOptions || [];
     var productOptions = state.entryMeta.productOptions || [];
+    var salesOrderOptions = (state.filterOptions.sales_orders || []).map(function (v) {
+      return { value: String(v || "").trim(), label: String(v || "").trim() };
+    }).filter(function (r) { return !!r.value; });
     var employeeNameMap = state.entryMeta.employeeNameMap || {};
     var itemOptions = [];
     (state.entryMeta.masterProcessRows || []).forEach(function (r) {
@@ -8427,8 +8506,65 @@ WEB_PAGE_HTML = """
       return htmlParts.join("");
     }
 
+    function datalistInputHtml(options, value, idx, field, listPrefix) {
+      var htmlParts = [];
+      var selectedValue = String(value || "");
+      var listId = String(listPrefix || "pp-datalist") + "-" + String(idx);
+      htmlParts.push("<input class='pp-pay-input pp-entry-in' data-idx='" + idx + "' data-field='" + field + "' list='" + listId + "' value='" + esc(selectedValue) + "' placeholder='Type or select'>");
+      htmlParts.push("<datalist id='" + listId + "'>");
+      (options || []).forEach(function (opt) {
+        var v = String((opt && opt.value) || "").trim();
+        if (!v) return;
+        htmlParts.push("<option value='" + esc(v) + "'>" + esc((opt && opt.label) || v) + "</option>");
+      });
+      htmlParts.push("</datalist>");
+      return htmlParts.join("");
+    }
+
     function readonlyHtml(value) {
       return "<input class='pp-pay-input pp-entry-view' readonly tabindex='-1' value='" + esc(value || "") + "'>";
+    }
+
+    function entrySalesOrderOptions(row) {
+      var selectedGroup = String(state.entryMeta.item_group || "").trim();
+      var selectedItem = String(state.entryMeta.item || "").trim();
+      var rowProduct = String((row && row.product) || "").trim();
+      var byItem = state.entryMeta.load_by_item !== false;
+      var optMap = {};
+      var options = [];
+
+      function addOption(value) {
+        var key = String(value || "").trim();
+        if (!key || optMap[key]) return;
+        optMap[key] = true;
+        options.push({ value: key, label: key });
+      }
+
+      function rowMatches(sourceRow) {
+        if (!sourceRow) return false;
+        var so = String(sourceRow.sales_order || "").trim();
+        if (!so) return false;
+        var srcGroup = String(sourceRow.item_group || "").trim();
+        var srcProduct = String(sourceRow.product || "").trim();
+        if (selectedGroup && srcGroup && srcGroup !== selectedGroup) return false;
+        if (byItem && selectedItem && srcProduct && srcProduct !== selectedItem) return false;
+        if (rowProduct && srcProduct && srcProduct !== rowProduct) return false;
+        return true;
+      }
+
+      (state.entryMeta.recentRows || state.rows || []).forEach(function (sourceRow) {
+        if (!rowMatches(sourceRow)) return;
+        addOption(sourceRow.sales_order);
+      });
+
+      (salesOrderOptions || []).forEach(function (opt) {
+        addOption(opt && opt.value);
+      });
+
+      options.sort(function (a, b) {
+        return compareEntryNoDesc(a && a.value, b && b.value);
+      });
+      return options;
     }
 
     function docsSelectHtml(selectedName) {
@@ -8527,7 +8663,7 @@ WEB_PAGE_HTML = """
       html += "<tr>"
         + "<td>" + selectHtml(employeeOptions, r.employee || "", idx, "employee") + "</td>"
         + "<td><input class='pp-pay-input pp-entry-in' data-idx='" + idx + "' data-field='name1' value='" + esc(name1) + "'></td>"
-        + "<td><input class='pp-pay-input pp-entry-in' data-idx='" + idx + "' data-field='sales_order' value='" + esc(r.sales_order || "") + "'></td>"
+        + "<td>" + datalistInputHtml(entrySalesOrderOptions(r), r.sales_order || "", idx, "sales_order", "pp-entry-sales-order-list") + "</td>"
         + "<td>" + selectHtml(productOptions, r.product || "", idx, "product") + "</td>"
         + "<td>" + selectHtml(getEntryProcessOptions(r.product || ""), r.process_type || "", idx, "process_type") + "</td>"
         + "<td>" + readonlyHtml(r.process_size || "No Size") + "</td>"
@@ -10117,6 +10253,8 @@ WEB_PAGE_HTML = """
     return { from: from, to: to };
   }
 
+  if (ensureLoggedInOrRedirect()) return;
+
   setDefaultDates();
   initTabs();
   Promise.all([loadFilterOptions(), loadDataEntryMasters()]).then(loadReport).catch(function (e) {
@@ -10187,6 +10325,9 @@ WEB_PAGE_HTML = """
   }
   if (el("pp-po-number")) {
     el("pp-po-number").addEventListener("change", function () { setPageForCurrentTab(1); renderCurrentTab(); });
+  }
+  if (el("pp-sales-order")) {
+    el("pp-sales-order").addEventListener("change", function () { setPageForCurrentTab(1); renderCurrentTab(); });
   }
   if (el("pp-entry-no")) {
     el("pp-entry-no").addEventListener("change", function () {
