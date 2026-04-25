@@ -2155,7 +2155,7 @@ def get_employee_advance_balances(employee_list, upto_date):
             AND (%(upto_date)s IS NULL OR posting_date <= %(upto_date)s)
         GROUP BY employee
         \"\"\",
-        {"employees": tuple(employee_list), "upto_date": to_date},
+        {"employees": tuple(employee_list), "upto_date": upto_date},
         as_dict=True,
     )
     for row in rows:
@@ -2322,7 +2322,7 @@ QUERY_REPORT_QUERY = """SELECT
         WHERE
             ea.docstatus = 1
             AND ea.employee = pp.employee
-            AND (%(to_date)s IS NULL OR %(to_date)s = '' OR ea.posting_date <= %(to_date)s)
+            AND (pps.to_date IS NULL OR ea.posting_date <= pps.to_date)
     ) AS advance_balance,
     IF(IFNULL(pp.jv_status, 'Pending') = 'Accounted', 'Posted', IFNULL(pp.jv_status, 'Pending')) AS jv_status,
     pp.jv_entry_no,
@@ -2382,7 +2382,6 @@ LEFT JOIN `tabPer Piece` pp
     AND pp.parentfield = 'perpiece'
 WHERE pps.docstatus < 2
     AND (%(from_date)s IS NULL OR %(from_date)s = '' OR pps.to_date >= %(from_date)s)
-    AND (%(to_date)s IS NULL OR %(to_date)s = '' OR pps.from_date <= %(to_date)s)
     AND (%(item_group)s IS NULL OR %(item_group)s = '' OR pps.item_group = %(item_group)s)
     AND (%(employee)s IS NULL OR %(employee)s = '' OR pp.employee = %(employee)s)
     AND (%(product)s IS NULL OR %(product)s = '' OR pp.product = %(product)s)
