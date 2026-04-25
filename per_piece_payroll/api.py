@@ -1,9 +1,19 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import frappe
 from frappe.utils import flt
 
-from per_piece_payroll.per_piece_setup import apply
+from per_piece_payroll.per_piece_setup import (
+	CANCEL_JV_SERVER_SCRIPT,
+	CANCEL_PAYMENT_JV_SERVER_SCRIPT,
+	CREATE_ENTRY_SERVER_SCRIPT,
+	CREATE_JV_SERVER_SCRIPT,
+	CREATE_PAYMENT_JV_SERVER_SCRIPT,
+	GET_REPORT_SERVER_SCRIPT,
+	apply,
+)
 
 
 @frappe.whitelist()
@@ -231,3 +241,176 @@ def force_sync_per_piece_status() -> dict:
 	)
 	frappe.db.commit()
 	return {"ok": True, "rows_checked": len(rows), "rows_updated": updated}
+
+
+@frappe.whitelist()
+def get_per_piece_report_page_payload() -> dict:
+	html_path = Path(
+		frappe.get_app_path(
+			"per_piece_payroll",
+			"public",
+			"html",
+			"per_piece_report_main_section.html",
+		)
+	)
+	main_section_html = ""
+	if html_path.exists():
+		main_section_html = html_path.read_text(encoding="utf-8")
+	else:
+		# Fallback only if file is unexpectedly missing
+		main_section_html = frappe.db.get_value("Web Page", "per-piece-report", "main_section_html") or ""
+	if not main_section_html:
+		frappe.throw("Web Page 'per-piece-report' is missing main_section_html.")
+	return {"html": main_section_html}
+
+
+@frappe.whitelist()
+def search_delivery_notes(txt: str | None = None, limit: int | str | None = None) -> list[dict]:
+	if not frappe.has_permission("Delivery Note", ptype="read"):
+		frappe.throw("Insufficient Permission for Delivery Note", frappe.PermissionError)
+
+	search_txt = (txt or "").strip()
+	try:
+		limit_n = int(limit or 20)
+	except Exception:
+		limit_n = 20
+	limit_n = max(1, min(limit_n, 100))
+
+	filters: list[list] = [["docstatus", "=", 1]]
+	if search_txt:
+		filters.append(["name", "like", f"%{search_txt}%"])
+
+	rows = frappe.get_all(
+		"Delivery Note",
+		filters=filters,
+		fields=["name", "posting_date", "customer"],
+		order_by="posting_date desc, name desc",
+		limit_page_length=limit_n,
+	)
+	out: list[dict] = []
+	for row in rows:
+		name = str(row.get("name") or "").strip()
+		if not name:
+			continue
+		posting_date = str(row.get("posting_date") or "").strip()
+		customer = str(row.get("customer") or "").strip()
+		label_parts = [name]
+		if posting_date:
+			label_parts.append(posting_date)
+		if customer:
+			label_parts.append(customer)
+		out.append(
+			{
+				"name": name,
+				"posting_date": posting_date,
+				"customer": customer,
+				"label": " | ".join(label_parts),
+			}
+		)
+	return out
+
+
+@frappe.whitelist()
+def get_delivery_note_items(delivery_note: str) -> list[dict]:
+	dn_name = (delivery_note or "").strip()
+	if not dn_name:
+		return []
+
+	if not frappe.has_permission("Delivery Note", ptype="read"):
+		frappe.throw("Insufficient Permission for Delivery Note", frappe.PermissionError)
+
+	if not frappe.db.exists("Delivery Note", dn_name):
+		return []
+
+	docstatus = int(frappe.db.get_value("Delivery Note", dn_name, "docstatus") or 0)
+	if docstatus != 1:
+		return []
+
+	rows = frappe.get_all(
+		"Delivery Note Item",
+		filters={"parent": dn_name, "parenttype": "Delivery Note"},
+		fields=["item_code", "item_name", "qty", "against_sales_order"],
+		order_by="idx asc",
+		limit_page_length=5000,
+		ignore_permissions=True,
+	)
+
+	item_codes = sorted(
+		{str(r.get("item_code") or "").strip() for r in rows if str(r.get("item_code") or "").strip()}
+	)
+	item_group_map: dict[str, str] = {}
+	if item_codes:
+		for item_row in frappe.get_all(
+			"Item",
+			filters={"name": ["in", item_codes]},
+			fields=["name", "item_group"],
+			limit_page_length=5000,
+		):
+			item_group_map[str(item_row.get("name") or "").strip()] = str(
+				item_row.get("item_group") or ""
+			).strip()
+
+	out: list[dict] = []
+	for row in rows:
+		item_code = str(row.get("item_code") or "").strip()
+		if not item_code:
+			continue
+		out.append(
+			{
+				"delivery_note": dn_name,
+				"item_code": item_code,
+				"item_name": str(row.get("item_name") or "").strip() or item_code,
+				"item_group": item_group_map.get(item_code, ""),
+				"qty": flt(row.get("qty")),
+				"against_sales_order": str(row.get("against_sales_order") or "").strip(),
+			}
+		)
+	return out
+
+
+def _run_legacy_api_script(script_text: str, kwargs: dict | None = None):
+	kwargs = kwargs or {}
+	old_form_dict = getattr(frappe.local, "form_dict", frappe._dict())
+	old_message = frappe.response.get("message")
+	try:
+		frappe.local.form_dict = frappe._dict(kwargs)
+		frappe.response["message"] = None
+		exec_scope = {"frappe": frappe, "__builtins__": __builtins__}
+		exec(compile(script_text, "<legacy_per_piece_api>", "exec"), exec_scope, exec_scope)
+		return frappe.response.get("message")
+	finally:
+		frappe.local.form_dict = old_form_dict
+		if old_message is None:
+			frappe.response.pop("message", None)
+		else:
+			frappe.response["message"] = old_message
+
+
+@frappe.whitelist()
+def get_per_piece_salary_report(**kwargs):
+	return _run_legacy_api_script(GET_REPORT_SERVER_SCRIPT, kwargs)
+
+
+@frappe.whitelist()
+def create_per_piece_salary_entry(**kwargs):
+	return _run_legacy_api_script(CREATE_ENTRY_SERVER_SCRIPT, kwargs)
+
+
+@frappe.whitelist()
+def create_per_piece_salary_jv(**kwargs):
+	return _run_legacy_api_script(CREATE_JV_SERVER_SCRIPT, kwargs)
+
+
+@frappe.whitelist()
+def cancel_per_piece_salary_jv(**kwargs):
+	return _run_legacy_api_script(CANCEL_JV_SERVER_SCRIPT, kwargs)
+
+
+@frappe.whitelist()
+def create_per_piece_salary_payment_jv(**kwargs):
+	return _run_legacy_api_script(CREATE_PAYMENT_JV_SERVER_SCRIPT, kwargs)
+
+
+@frappe.whitelist()
+def cancel_per_piece_salary_payment_jv(**kwargs):
+	return _run_legacy_api_script(CANCEL_PAYMENT_JV_SERVER_SCRIPT, kwargs)

@@ -212,27 +212,6 @@ fixtures = [
 		],
 	},
 	{
-		"dt": "Server Script",
-		"filters": [
-			[
-				"name",
-				"in",
-				[
-					"get_per_piece_salary_report",
-					"create_per_piece_salary_entry",
-					"create_per_piece_salary_jv",
-					"cancel_per_piece_salary_jv",
-					"create_per_piece_salary_payment_jv",
-					"cancel_per_piece_salary_payment_jv",
-				],
-			]
-		],
-	},
-	{
-		"dt": "Client Script",
-		"filters": [["name", "in", ["Per Piece Salary Update Child"]]],
-	},
-	{
 		"dt": "Report",
 		"filters": [["name", "in", ["Per Piece Salary Report", "Per Piece Query Report Simple"]]],
 	},
@@ -241,8 +220,8 @@ fixtures = [
 		"filters": [["name", "in", ["Per Piece Print"]]],
 	},
 	{
-		"dt": "Web Page",
-		"filters": [["name", "in", ["per-piece-report"]]],
+		"dt": "Page",
+		"filters": [["name", "in", ["per-piece-entry", "per-piece-reporting"]]],
 	},
 	{
 		"dt": "Custom HTML Block",
