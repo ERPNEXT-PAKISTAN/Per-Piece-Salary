@@ -433,6 +433,7 @@ product = normalize_param(args.get("product"))
 process_type = normalize_param(args.get("process_type"))
 sales_order = normalize_param(args.get("sales_order"))
 item_group = normalize_param(args.get("item_group"))
+delivery_note = normalize_param(args.get("delivery_note"))
 po_number = normalize_param(args.get("po_number"))
 entry_no = normalize_param(args.get("entry_no"))
 max_rows = to_int(args.get("max_rows"), 0)
@@ -471,13 +472,15 @@ if to_date:
     parent_filters["from_date"] = ["<=", to_date]
 if po_number:
     parent_filters["po_number"] = po_number
+if delivery_note and frappe.get_meta("Per Piece Salary").has_field("delivery_note"):
+    parent_filters["delivery_note"] = delivery_note
 if entry_no:
     parent_filters["name"] = entry_no
 
 parents = frappe.get_all(
     "Per Piece Salary",
     filters=parent_filters,
-    fields=["name", "from_date", "to_date", "po_number", "item_group", "total_qty", "total_amount"],
+    fields=["name", "from_date", "to_date", "po_number", "item_group", "delivery_note", "total_qty", "total_amount"],
     order_by="from_date desc, creation desc",
     limit_page_length=(max_rows * 2 if max_rows > 0 else 200000),
 )
@@ -584,6 +587,7 @@ else:
                 "process_type",
                 "process_size",
                 "sales_order",
+                "delivery_note",
                 "qty",
                 "rate",
                 "amount",
@@ -640,6 +644,7 @@ else:
                     "to_date": parent.get("to_date"),
                     "po_number": parent.get("po_number"),
                     "item_group": row_item_group,
+                    "delivery_note": child.get("delivery_note") or parent.get("delivery_note") or "",
                     "total_qty": parent.get("total_qty"),
                     "total_amount": parent.get("total_amount"),
                     "employee": child.get("employee"),
@@ -672,6 +677,7 @@ else:
             {"label": "To Date", "fieldname": "to_date", "fieldtype": "Date", "width": 95},
             {"label": "PO Number", "fieldname": "po_number", "fieldtype": "Data", "width": 110},
             {"label": "Item Group", "fieldname": "item_group", "fieldtype": "Link", "options": "Item Group", "width": 130},
+            {"label": "Delivery Note", "fieldname": "delivery_note", "fieldtype": "Link", "options": "Delivery Note", "width": 150},
             {"label": "Employee", "fieldname": "employee", "fieldtype": "Link", "options": "Employee", "width": 120},
             {"label": "Employee First Name", "fieldname": "name1", "fieldtype": "Data", "width": 140},
             {"label": "Product", "fieldname": "product", "fieldtype": "Link", "options": "Item", "width": 140},
@@ -877,6 +883,7 @@ def parse_rows(raw_value):
         process_type = normalize_param(parts[3]) or ""
         process_size = "No Size"
         sales_order = None
+        delivery_note = None
         qty_index = 4
         rate_index = 5
         if len(parts) >= 7:
@@ -885,6 +892,8 @@ def parse_rows(raw_value):
             rate_index = 6
         if len(parts) >= 8:
             sales_order = normalize_param(parts[7])
+        if len(parts) >= 9:
+            delivery_note = normalize_param(parts[8])
         qty = max(round2(parts[qty_index]), 0.0)
         rate = max(round2(parts[rate_index]), 0.0)
         amount = round2(qty * rate)
@@ -898,6 +907,7 @@ def parse_rows(raw_value):
                 "process_type": process_type,
                 "process_size": process_size,
                 "sales_order": sales_order,
+                "delivery_note": delivery_note,
                 "qty": qty,
                 "rate": rate,
                 "amount": amount,
@@ -911,11 +921,20 @@ to_date = normalize_date(args.get("to_date"))
 po_number = normalize_param(args.get("po_number"))
 item_group = normalize_param(args.get("item_group"))
 item = normalize_param(args.get("item"))
+delivery_note = normalize_param(args.get("delivery_note"))
 selected_items = normalize_param(args.get("selected_items"))
 load_by_item = normalize_param(args.get("load_by_item")) or "1"
 employee = normalize_param(args.get("employee"))
 entry_name = normalize_param(args.get("entry_name"))
 rows = parse_rows(args.get("rows"))
+
+# Fallback: if parent Delivery Note was not posted explicitly, infer it from row payload.
+if not delivery_note:
+    for row in rows:
+        row_delivery_note = normalize_param(row.get("delivery_note"))
+        if row_delivery_note:
+            delivery_note = row_delivery_note
+            break
 
 if not from_date or not to_date:
     frappe.throw("From Date and To Date are required.")
@@ -953,6 +972,8 @@ doc.from_date = from_date
 doc.to_date = to_date
 doc.po_number = po_number
 doc.item_group = item_group
+if frappe.get_meta("Per Piece Salary").has_field("delivery_note"):
+    doc.delivery_note = delivery_note
 if frappe.get_meta("Per Piece Salary").has_field("item"):
     doc.item = item
 if frappe.get_meta("Per Piece Salary").has_field("selected_items"):
@@ -962,26 +983,31 @@ if frappe.get_meta("Per Piece Salary").has_field("load_by_item"):
 if frappe.get_meta("Per Piece Salary").has_field("employee"):
     doc.employee = employee
 doc.set("perpiece", [])
+child_meta = frappe.get_meta("Per Piece")
 
 total_qty = 0.0
 total_amount = 0.0
 for row in rows:
     total_qty = total_qty + row.get("qty", 0)
     total_amount = total_amount + row.get("amount", 0)
-    doc.append(
-        "perpiece",
-        {
-            "employee": row.get("employee"),
-            "name1": row.get("name1"),
-            "product": row.get("product"),
-            "process_type": row.get("process_type"),
-            "process_size": row.get("process_size") or "No Size",
-            "sales_order": row.get("sales_order"),
-            "qty": row.get("qty"),
-            "rate": row.get("rate"),
-            "amount": row.get("amount"),
-        },
-    )
+    child_row = {
+        "employee": row.get("employee"),
+        "name1": row.get("name1"),
+        "product": row.get("product"),
+        "process_type": row.get("process_type"),
+        "process_size": row.get("process_size") or "No Size",
+        "sales_order": row.get("sales_order"),
+        "qty": row.get("qty"),
+        "rate": row.get("rate"),
+        "amount": row.get("amount"),
+    }
+    if child_meta.has_field("po_number"):
+        child_row["po_number"] = po_number
+    if child_meta.has_field("item_group"):
+        child_row["item_group"] = item_group
+    if child_meta.has_field("delivery_note"):
+        child_row["delivery_note"] = row.get("delivery_note") or delivery_note
+    doc.append("perpiece", child_row)
 
 try:
     doc.total_qty = round2(total_qty)
@@ -2170,6 +2196,7 @@ columns = [
     {"fieldname": "to_date", "label": "To Date", "fieldtype": "Date", "width": 95},
     {"fieldname": "po_number", "label": "PO Number", "fieldtype": "Data", "width": 110},
     {"fieldname": "item_group", "label": "Item Group", "fieldtype": "Link", "options": "Item Group", "width": 120},
+    {"fieldname": "delivery_note", "label": "Delivery Note", "fieldtype": "Link", "options": "Delivery Note", "width": 150},
     {"fieldname": "employee", "label": "Employee", "fieldtype": "Link", "options": "Employee", "width": 120},
     {"fieldname": "name1", "label": "Employee First Name", "fieldtype": "Data", "width": 140},
     {"fieldname": "product", "label": "Product", "fieldtype": "Link", "options": "Item", "width": 140},
@@ -2196,11 +2223,13 @@ if filters.get("from_date"):
     parent_filters["to_date"] = [">=", filters.get("from_date")]
 if filters.get("to_date"):
     parent_filters["from_date"] = ["<=", filters.get("to_date")]
+if filters.get("delivery_note"):
+    parent_filters["delivery_note"] = filters.get("delivery_note")
 
 parents = frappe.get_all(
     "Per Piece Salary",
     filters=parent_filters,
-    fields=["name", "from_date", "to_date", "po_number", "item_group"],
+    fields=["name", "from_date", "to_date", "po_number", "item_group", "delivery_note"],
     order_by="from_date desc, creation desc",
 )
 
@@ -2218,7 +2247,7 @@ if parents:
     children = frappe.get_all(
         "Per Piece",
         filters=child_filters,
-        fields=["parent", "idx", "employee", "name1", "product", "process_type", "process_size", "qty", "rate", "amount", "jv_status", "jv_entry_no", "jv_line_remark", "booked_amount", "paid_amount", "unpaid_amount", "payment_status", "payment_jv_no", "payment_line_remark"],
+        fields=["parent", "idx", "employee", "name1", "product", "process_type", "process_size", "delivery_note", "qty", "rate", "amount", "jv_status", "jv_entry_no", "jv_line_remark", "booked_amount", "paid_amount", "unpaid_amount", "payment_status", "payment_jv_no", "payment_line_remark"],
         order_by="parent asc, idx asc",
     )
 
@@ -2260,6 +2289,7 @@ if parents:
                 "to_date": parent.get("to_date"),
                 "po_number": parent.get("po_number"),
                 "item_group": parent.get("item_group"),
+                "delivery_note": child.get("delivery_note") or parent.get("delivery_note") or "",
                 "employee": child.get("employee"),
                 "name1": child.get("name1"),
                 "product": child.get("product"),
@@ -2292,6 +2322,7 @@ SCRIPT_REPORT_JS = """frappe.query_reports["Per Piece Salary Report"] = {
         { fieldname: "from_date", label: __("From Date"), fieldtype: "Date" },
         { fieldname: "to_date", label: __("To Date"), fieldtype: "Date" },
         { fieldname: "item_group", label: __("Item Group"), fieldtype: "Link", options: "Item Group" },
+        { fieldname: "delivery_note", label: __("Delivery Note"), fieldtype: "Link", options: "Delivery Note" },
         { fieldname: "employee", label: __("Employee"), fieldtype: "Link", options: "Employee" },
         { fieldname: "product", label: __("Product"), fieldtype: "Link", options: "Item" },
         { fieldname: "process_type", label: __("Process Type"), fieldtype: "Data" },
@@ -2308,6 +2339,7 @@ QUERY_REPORT_QUERY = """SELECT
     pps.to_date,
     pps.po_number,
     pps.item_group,
+    COALESCE(pp.delivery_note, pps.delivery_note) AS delivery_note,
     pp.employee,
     pp.name1,
     pp.product,
@@ -2382,7 +2414,9 @@ LEFT JOIN `tabPer Piece` pp
     AND pp.parentfield = 'perpiece'
 WHERE pps.docstatus < 2
     AND (%(from_date)s IS NULL OR %(from_date)s = '' OR pps.to_date >= %(from_date)s)
+    AND (%(to_date)s IS NULL OR %(to_date)s = '' OR pps.from_date <= %(to_date)s)
     AND (%(item_group)s IS NULL OR %(item_group)s = '' OR pps.item_group = %(item_group)s)
+    AND (%(delivery_note)s IS NULL OR %(delivery_note)s = '' OR COALESCE(pp.delivery_note, pps.delivery_note) = %(delivery_note)s)
     AND (%(employee)s IS NULL OR %(employee)s = '' OR pp.employee = %(employee)s)
     AND (%(product)s IS NULL OR %(product)s = '' OR pp.product = %(product)s)
     AND (%(process_type)s IS NULL OR %(process_type)s = '' OR pp.process_type = %(process_type)s)
@@ -2397,6 +2431,7 @@ QUERY_REPORT_JS = """frappe.query_reports["Per Piece Query Report Simple"] = {
         { fieldname: "from_date", label: __("From Date"), fieldtype: "Date" },
         { fieldname: "to_date", label: __("To Date"), fieldtype: "Date" },
         { fieldname: "item_group", label: __("Item Group"), fieldtype: "Link", options: "Item Group" },
+        { fieldname: "delivery_note", label: __("Delivery Note"), fieldtype: "Link", options: "Delivery Note" },
         { fieldname: "employee", label: __("Employee"), fieldtype: "Link", options: "Employee" },
         { fieldname: "product", label: __("Product"), fieldtype: "Link", options: "Item" },
         { fieldname: "process_type", label: __("Process Type"), fieldtype: "Data" },
@@ -2653,6 +2688,8 @@ function populateRowsFromGroup(frm, forceReload = false) {
         row.from_date = frm.doc.from_date || null;
         row.to_date = frm.doc.to_date || null;
         row.po_number = frm.doc.po_number || null;
+        row.item_group = frm.doc.item_group || null;
+        row.delivery_note = frm.doc.delivery_note || null;
     });
 
     frm.refresh_field(CHILD_TABLE_FIELD);
@@ -2831,6 +2868,11 @@ frappe.ui.form.on("Per Piece Salary", {
         frm.trigger("sync_parent_to_child");
     },
 
+    delivery_note(frm) {
+      if (isSubmittedDoc(frm)) return;
+        frm.trigger("sync_parent_to_child");
+    },
+
     employee(frm) {
       if (isSubmittedDoc(frm)) return;
         loadParentEmployeeName(frm).then(() => {
@@ -2882,12 +2924,16 @@ frappe.ui.form.on("Per Piece Salary", {
         const fromDate = frm.doc.from_date || null;
         const toDate = frm.doc.to_date || null;
         const poNumber = frm.doc.po_number || null;
+        const itemGroup = frm.doc.item_group || null;
+        const deliveryNote = frm.doc.delivery_note || null;
 
         applyParentEmployeeToRows(frm);
         rows.forEach((row) => {
             row.from_date = fromDate;
             row.to_date = toDate;
             row.po_number = poNumber;
+            row.item_group = itemGroup;
+            row.delivery_note = deliveryNote;
             if (!row.process_size) {
                 row.process_size = PROCESS_SIZE_DEFAULT;
             }
@@ -2937,6 +2983,8 @@ frappe.ui.form.on("Per Piece", {
         row.from_date = frm.doc.from_date || null;
         row.to_date = frm.doc.to_date || null;
         row.po_number = frm.doc.po_number || null;
+        row.item_group = frm.doc.item_group || null;
+        row.delivery_note = frm.doc.delivery_note || null;
         if (!row.process_size) {
             frappe.model.set_value(cdt, cdn, "process_size", PROCESS_SIZE_DEFAULT);
         }
@@ -3676,6 +3724,19 @@ def apply() -> list[str]:
 		allow_fieldtype_override=1,
 	)
 	_ensure_custom_field(
+		"delivery_note",
+		"Delivery Note",
+		"Link",
+		"Delivery Note",
+		"sales_order",
+		results,
+		doctype="Per Piece",
+		read_only=1,
+		in_list_view=1,
+		no_copy=0,
+		allow_fieldtype_override=1,
+	)
+	_ensure_custom_field(
 		"pp_filters_section_break",
 		"",
 		"Section Break",
@@ -3724,11 +3785,23 @@ def apply() -> list[str]:
 		no_copy=0,
 	)
 	_ensure_custom_field(
+		"delivery_note",
+		"Delivery Note",
+		"Link",
+		"Delivery Note",
+		"item",
+		results,
+		doctype="Per Piece Salary",
+		read_only=0,
+		in_list_view=0,
+		no_copy=0,
+	)
+	_ensure_custom_field(
 		"pp_filters_col_break_2",
 		"",
 		"Column Break",
 		None,
-		"item",
+		"delivery_note",
 		results,
 		doctype="Per Piece Salary",
 		read_only=0,

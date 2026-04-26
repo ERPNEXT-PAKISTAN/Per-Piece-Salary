@@ -60,6 +60,9 @@
 				"<span class='pp-summary-chip'>PO: " +
 				esc(first.po_number || "-") +
 				"</span>" +
+				"<span class='pp-summary-chip'>Delivery Note: " +
+				esc(first.delivery_note || "-") +
+				"</span>" +
 				"<span class='pp-summary-chip'>Item Group: " +
 				esc(first.item_group || "-") +
 				"</span>" +
@@ -85,7 +88,7 @@
 
 			html +=
 				"<table class='pp-table'><thead><tr>" +
-				"<th>Employee</th><th>PO Number</th><th>Product</th><th>Sales Order</th><th>Process</th><th>Process Size</th><th>Qty</th><th>Rate</th><th>Amount</th><th>Booking</th><th>Payment</th>" +
+				"<th>Employee</th><th>PO Number</th><th>Delivery Note</th><th>Product</th><th>Sales Order</th><th>Process</th><th>Process Size</th><th>Qty</th><th>Rate</th><th>Amount</th><th>Booking</th><th>Payment</th>" +
 				"</tr></thead><tbody>";
 			rows.forEach(function (r) {
 				html +=
@@ -95,6 +98,9 @@
 					"</td>" +
 					"<td>" +
 					esc(r.po_number || first.po_number || "") +
+					"</td>" +
+					"<td>" +
+					esc(r.delivery_note || first.delivery_note || "") +
 					"</td>" +
 					"<td>" +
 					esc(r.product || "") +
@@ -181,6 +187,8 @@
 				processMap[processKey].product_map[productKey].rows.push({
 					per_piece_salary: r.per_piece_salary || "",
 					employee: employeeLabel(r) || "",
+					po_number: r.po_number || "",
+					delivery_note: r.delivery_note || "",
 					process_type: r.process_type || "",
 					sales_order: r.sales_order || "",
 					process_size: r.process_size || "No Size",
@@ -211,6 +219,9 @@
 				productMap[productKey].process_map[processKey].qty += num(r.qty);
 				productMap[productKey].process_map[processKey].amount += num(r.amount);
 				productMap[productKey].process_map[processKey].rows.push({
+					per_piece_salary: r.per_piece_salary || "",
+					po_number: r.po_number || "",
+					delivery_note: r.delivery_note || "",
 					sales_order: r.sales_order || "",
 					process_size: r.process_size || "No Size",
 					qty: num(r.qty),
@@ -506,7 +517,7 @@
 
 			html +=
 				"<table class='pp-table'><thead><tr>" +
-				"<th>Per Piece Salary</th><th>PO Number</th><th>Sales Order</th><th>Qty</th><th>Amount</th><th>View</th>" +
+				"<th>Per Piece Salary</th><th>PO Number</th><th>Delivery Note</th><th>Sales Order</th><th>Qty</th><th>Amount</th><th>View</th>" +
 				"</tr></thead><tbody>";
 			(row.source_entries || []).forEach(function (src) {
 				html +=
@@ -516,6 +527,9 @@
 					"</td>" +
 					"<td>" +
 					esc(src.po_number || "") +
+					"</td>" +
+					"<td>" +
+					esc(src.delivery_note || "") +
 					"</td>" +
 					"<td>" +
 					esc(src.sales_order || "") +

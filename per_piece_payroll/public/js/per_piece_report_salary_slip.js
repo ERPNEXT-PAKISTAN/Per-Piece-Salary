@@ -388,7 +388,7 @@
 							});
 						html += "<h4 style='margin:10px 0 6px 0;'>Product wise Detail Report</h4>";
 						html +=
-							"<table class='pp-table'><thead><tr><th>PO Number</th><th>Product</th><th>Process</th><th>Size</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>";
+							"<table class='pp-table'><thead><tr><th>PO Number</th><th>Delivery Note</th><th>Product</th><th>Process</th><th>Size</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>";
 						var byPoProduct = {};
 						productDetailRows.forEach(function (r) {
 							var po = String(r.po_number || "").trim() || "(Blank)";
@@ -403,7 +403,7 @@
 								var poQty = 0;
 								var poAmount = 0;
 								html +=
-									"<tr class='pp-group-head'><td colspan='7'>PO Number: " +
+									"<tr class='pp-group-head'><td colspan='8'>PO Number: " +
 									esc(po) +
 									"</td></tr>";
 								Object.keys(byPoProduct[po] || {})
@@ -422,6 +422,8 @@
 											html +=
 												"<tr><td>" +
 												esc(po) +
+												"</td><td>" +
+												esc(r.delivery_note || "") +
 												"</td><td>" +
 												esc(product) +
 												"</td><td>" +
@@ -517,7 +519,7 @@
 						html +=
 							"<h4 style='margin:10px 0 6px 0;'>Item Wise Summary (with Process)</h4>";
 						html +=
-							"<table class='pp-table'><thead><tr><th>PO Number</th><th>Item</th><th>Process</th><th>Size</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>";
+							"<table class='pp-table'><thead><tr><th>PO Number</th><th>Delivery Note</th><th>Item</th><th>Process</th><th>Size</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>";
 						Object.keys(byItem)
 							.sort()
 							.forEach(function (itemKey) {
@@ -532,6 +534,8 @@
 									html +=
 										"<tr><td>" +
 										esc(itemPo) +
+										"</td><td>" +
+										esc(r.delivery_note || "") +
 										"</td><td>" +
 										esc(item) +
 										"</td><td>" +

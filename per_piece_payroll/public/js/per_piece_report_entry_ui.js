@@ -513,6 +513,7 @@
 									""
 							).trim(),
 							sales_order: salesOrder,
+							delivery_note: deliveryNote,
 							product: itemCode,
 							process_type: String((pr && pr.process_type) || "").trim(),
 							process_size:
@@ -588,6 +589,7 @@
 									employee: String(row.employee || "").trim(),
 									name1: String(row.name1 || "").trim(),
 									sales_order: String(row.sales_order || "").trim(),
+									delivery_note: typedDn,
 									product: String(row.product || "").trim(),
 									process_type: String(row.process_type || "").trim(),
 									process_size:
@@ -652,6 +654,7 @@
 										employee: String(row.employee || "").trim(),
 										name1: String(row.name1 || "").trim(),
 										sales_order: String(row.sales_order || "").trim(),
+										delivery_note: deliveryNote,
 										product: String(row.product || "").trim(),
 										process_type: String(row.process_type || "").trim(),
 										process_size:
@@ -742,7 +745,7 @@
 				"</div>" +
 				"<div class='pp-entry-section pp-entry-section-lines'>" +
 				"<div class='pp-entry-section-head'>Section 2: Item Lines</div>" +
-				"<table class='pp-table' style='margin-top:8px;'><thead><tr><th>Employee</th><th>Employee First Name</th><th>Sales Order</th><th>Product</th><th>Process Type</th><th>Process Size</th><th>Qty</th><th>Rate</th><th>Amount</th><th>Action</th></tr></thead><tbody>";
+				"<table class='pp-table' style='margin-top:8px;'><thead><tr><th>Employee</th><th>Employee First Name</th><th>Sales Order</th><th>Delivery Note</th><th>Product</th><th>Process Type</th><th>Process Size</th><th>Qty</th><th>Rate</th><th>Amount</th><th>Action</th></tr></thead><tbody>";
 			state.entryRows.forEach(function (r, idx) {
 				var name1 = r.name1 || employeeNameMap[r.employee || ""] || "";
 				html +=
@@ -764,6 +767,11 @@
 						"pp-entry-sales-order-list"
 					) +
 					"</td>" +
+					"<td><input class='pp-pay-input pp-entry-in' data-idx='" +
+					idx +
+					"' data-field='delivery_note' value='" +
+					esc(r.delivery_note || state.entryMeta.delivery_note || "") +
+					"' placeholder='Delivery Note'></td>" +
 					"<td>" +
 					selectHtml(productOptions, r.product || "", idx, "product") +
 					"</td>" +
@@ -806,7 +814,7 @@
 			});
 			html +=
 				"<tr class='pp-year-total'>" +
-				"<td>Total</td><td></td><td></td><td></td><td></td><td></td>" +
+				"<td>Total</td><td></td><td></td><td></td><td></td><td></td><td></td>" +
 				"<td class='num'>" +
 				esc(fmt(eQty)) +
 				"</td>" +
@@ -873,7 +881,7 @@
 				"</div>";
 			if (docs.length) {
 				html +=
-					"<table class='pp-table' style='margin-top:6px;'><thead><tr><th>Select</th><th>Entry No</th><th>From Date</th><th>To Date</th><th>PO Number</th><th>JV Status</th><th>Pay Status</th><th>Total Amount</th><th>Book</th><th>Pay</th><th>View Detail</th><th>View Entered</th><th>Edit</th><th>Open</th></tr></thead><tbody>";
+					"<table class='pp-table' style='margin-top:6px;'><thead><tr><th>Select</th><th>Entry No</th><th>From Date</th><th>To Date</th><th>PO Number</th><th>Delivery Note</th><th>JV Status</th><th>Pay Status</th><th>Total Amount</th><th>Book</th><th>Pay</th><th>View Detail</th><th>View Entered</th><th>Edit</th><th>Open</th></tr></thead><tbody>";
 				var docsTotalAmount = 0;
 				(docsPage.rows || []).forEach(function (d) {
 					docsTotalAmount += num(d.total_amount);
@@ -906,6 +914,8 @@
 						"</td><td>" +
 						esc(d.po_number) +
 						"</td><td>" +
+						esc(d.delivery_note || "") +
+						"</td><td>" +
 						statusBadgeHtml(d.booking_status || "UnBooked") +
 						"</td><td>" +
 						statusBadgeHtml(d.payment_status || "Unpaid") +
@@ -926,9 +936,9 @@
 						"'>Open</a></td></tr>";
 				});
 				html +=
-					"<tr class='pp-year-total'><td></td><td>Total</td><td></td><td></td><td></td><td></td><td></td><td class='num pp-amt-col'>" +
+					"<tr class='pp-year-total'><td></td><td>Total</td><td></td><td></td><td></td><td></td><td></td><td></td><td class='num pp-amt-col'>" +
 					esc(fmt(docsTotalAmount)) +
-					"</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>";
+					"</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>";
 				html += "</tbody></table>";
 				html += historyPagerHtml(docsPage);
 			} else {
@@ -1110,6 +1120,7 @@
 					state.entryMeta.employee = "";
 					state.entryMeta.item_group = "";
 					state.entryMeta.item = "";
+					state.entryMeta.delivery_note = "";
 					state.entryMeta.load_by_item = true;
 					state.entryMeta.po_number = "";
 					rebuildEntryMetaLookups();
@@ -1467,6 +1478,7 @@
 					state.entryMeta.employee = doc.employee || "";
 					state.entryMeta.item_group = doc.item_group || "";
 					state.entryMeta.item = doc.item || "";
+					state.entryMeta.delivery_note = doc.delivery_note || "";
 					state.entryMeta.load_by_item =
 						doc.load_by_item === undefined ? true : !!Number(doc.load_by_item);
 					state.entryMeta.po_number = doc.po_number || "";
@@ -1476,6 +1488,7 @@
 							employee: r.employee || "",
 							name1: r.name1 || "",
 							sales_order: r.sales_order || "",
+							delivery_note: r.delivery_note || doc.delivery_note || "",
 							product: r.product || "",
 							process_type: r.process_type || "",
 							process_size: r.process_size || "No Size",
@@ -1573,6 +1586,7 @@
 						qty,
 						whole(r.rate),
 						String(r.sales_order || "").trim(),
+						String(r.delivery_note || state.entryMeta.delivery_note || "").trim(),
 					].join("::")
 				);
 			});
@@ -1582,6 +1596,12 @@
 			}
 			result.style.color = "#334155";
 			result.textContent = editName ? "Updating data entry..." : "Saving data entry...";
+			var deliveryNote = String(state.entryMeta.delivery_note || "").trim();
+			if (!deliveryNote) {
+				deliveryNote = String(
+					(el("pp-delivery-note") && el("pp-delivery-note").value) || ""
+				).trim();
+			}
 			callApi("per_piece_payroll.api.create_per_piece_salary_entry", {
 				entry_name: editName,
 				from_date: fromDate,
@@ -1589,6 +1609,7 @@
 				employee: employee,
 				item_group: itemGroup,
 				item: selectedItemSingle,
+				delivery_note: deliveryNote,
 				selected_items: selectedItemSingle ? String(selectedItemSingle) : "",
 				load_by_item: loadByItem ? 1 : 0,
 				po_number: po,
@@ -1617,6 +1638,7 @@
 					state.entryMeta.employee = "";
 					state.entryMeta.item_group = "";
 					state.entryMeta.item = "";
+					state.entryMeta.delivery_note = "";
 					state.entryMeta.po_number = "";
 					state.entryMeta.load_by_item = true;
 					state.entryMeta.skip_auto_populate_once = true;

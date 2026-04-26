@@ -351,6 +351,9 @@
 			to_date: toVal,
 			employee: el("pp-employee").value || "",
 			item_group: el("pp-item-group") ? el("pp-item-group").value || "" : "",
+			delivery_note: el("pp-delivery-note")
+				? String(el("pp-delivery-note").value || "").trim()
+				: "",
 			product: el("pp-product").value || "",
 			process_type: el("pp-process-type").value || "",
 			sales_order: el("pp-sales-order") ? el("pp-sales-order").value || "" : "",
@@ -398,6 +401,9 @@
 	function getRowsByHeaderFilters(rows, options) {
 		var opts = options || {};
 		var po = el("pp-po-number") ? String(el("pp-po-number").value || "").trim() : "";
+		var deliveryNote = el("pp-delivery-note")
+			? String(el("pp-delivery-note").value || "").trim()
+			: "";
 		var salesOrder = el("pp-sales-order")
 			? String(el("pp-sales-order").value || "").trim()
 			: "";
@@ -413,6 +419,7 @@
 		if (!entry && el("pp-entry-no")) entry = String(el("pp-entry-no").value || "").trim();
 		if (opts.ignore_entry_filter) entry = "";
 		if (opts.ignore_po_filter) po = "";
+		if (opts.ignore_delivery_note_filter) deliveryNote = "";
 		if (opts.ignore_sales_order_filter) salesOrder = "";
 		if (opts.ignore_date_filter) {
 			from = "";
@@ -428,6 +435,8 @@
 			if (from && rowFrom && rowFrom < from) return false;
 			if (to && rowTo && rowTo > to) return false;
 			if (po && String(r.po_number || "") !== po) return false;
+			if (deliveryNote && String(r.delivery_note || "").trim() !== deliveryNote)
+				return false;
 			if (salesOrder && String(r.sales_order || "") !== salesOrder) return false;
 			if (entry && String(r.per_piece_salary || "") !== entry) return false;
 			if (booking && String(r.booking_status || "").trim() !== booking) return false;
@@ -1341,6 +1350,7 @@
 					from_date: r.from_date || "",
 					to_date: r.to_date || "",
 					po_number: r.po_number || "",
+					delivery_note: r.delivery_note || "",
 					item_group: r.item_group || "",
 					total_amount: 0,
 					unbooked_amount: 0,
@@ -1354,6 +1364,12 @@
 					booking_status: "UnBooked",
 					payment_status: "Unpaid",
 				};
+			}
+			if (
+				!String(map[key].delivery_note || "").trim() &&
+				String(r.delivery_note || "").trim()
+			) {
+				map[key].delivery_note = r.delivery_note;
 			}
 			map[key].total_amount += num(r.amount);
 			var amount = num(r.amount);
@@ -1404,6 +1420,7 @@
 				employee: r.name1 || r.employee || "",
 				employee_id: r.employee || "",
 				po_number: r.po_number || "",
+				delivery_note: r.delivery_note || "",
 				sales_order: r.sales_order || "",
 				product: r.product || "",
 				process_type: r.process_type || "",
@@ -1492,7 +1509,7 @@
 		var qty = 0;
 		var amount = 0;
 		var html =
-			"<table class='pp-table'><thead><tr><th>Employee</th><th>PO Number</th><th>Sales Order</th><th>Product</th><th>Process Type</th><th>Process Size</th><th>Qty</th><th>Rate</th><th>Amount</th><th>JV Status</th><th>Pay Status</th></tr></thead><tbody>";
+			"<table class='pp-table'><thead><tr><th>Employee</th><th>PO Number</th><th>Delivery Note</th><th>Sales Order</th><th>Product</th><th>Process Type</th><th>Process Size</th><th>Qty</th><th>Rate</th><th>Amount</th><th>JV Status</th><th>Pay Status</th></tr></thead><tbody>";
 		rows.forEach(function (r) {
 			qty += num(r.qty);
 			amount += num(r.amount);
@@ -1503,6 +1520,9 @@
 				"</td>" +
 				"<td>" +
 				esc(r.po_number || "") +
+				"</td>" +
+				"<td>" +
+				esc(r.delivery_note || "") +
 				"</td>" +
 				"<td>" +
 				esc(r.sales_order || "") +
@@ -1534,7 +1554,7 @@
 				"</tr>";
 		});
 		html +=
-			"<tr class='pp-year-total'><td>Total</td><td></td><td></td><td></td><td></td><td></td><td class='num'>" +
+			"<tr class='pp-year-total'><td>Total</td><td></td><td></td><td></td><td></td><td></td><td></td><td class='num'>" +
 			esc(fmt(qty)) +
 			"</td><td class='num'>" +
 			esc(fmt(avgRate(qty, amount))) +
@@ -1558,7 +1578,7 @@
 		var qty = 0;
 		var amount = 0;
 		var html =
-			"<table class='pp-table'><thead><tr><th>Employee</th><th>PO Number</th><th>Sales Order</th><th>Product</th><th>Process Type</th><th>Process Size</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>";
+			"<table class='pp-table'><thead><tr><th>Employee</th><th>PO Number</th><th>Delivery Note</th><th>Sales Order</th><th>Product</th><th>Process Type</th><th>Process Size</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>";
 		rows.forEach(function (r) {
 			qty += num(r.qty);
 			amount += num(r.amount);
@@ -1569,6 +1589,9 @@
 				"</td>" +
 				"<td>" +
 				esc(r.po_number || "") +
+				"</td>" +
+				"<td>" +
+				esc(r.delivery_note || "") +
 				"</td>" +
 				"<td>" +
 				esc(r.sales_order || "") +
@@ -1594,7 +1617,7 @@
 				"</tr>";
 		});
 		html +=
-			"<tr class='pp-year-total'><td>Total</td><td></td><td></td><td></td><td></td><td></td><td class='num'>" +
+			"<tr class='pp-year-total'><td>Total</td><td></td><td></td><td></td><td></td><td></td><td></td><td class='num'>" +
 			esc(fmt(qty)) +
 			"</td><td class='num'>" +
 			esc(fmt(avgRate(qty, amount))) +
@@ -2549,6 +2572,9 @@
 					"<span class='pp-summary-chip'>PO Number: " +
 					esc(first.po_number || "-") +
 					"</span>" +
+					"<span class='pp-summary-chip'>Delivery Note: " +
+					esc(first.delivery_note || "-") +
+					"</span>" +
 					"<span class='pp-summary-chip'>From: " +
 					esc(first.from_date || "-") +
 					"</span>" +
@@ -3031,7 +3057,7 @@
 					"</strong></span>" +
 					"</div>";
 				html +=
-					"<table class='pp-table' style='margin-top:6px;'><thead><tr><th>Select</th><th>Salary Entry</th><th>PO Number</th><th>JV Entry</th><th>Total Salary</th><th>Allowance</th><th>Adv Deduction</th><th>Oth Deduction</th><th>Net Salary</th><th>Book</th><th>Pay</th><th>Salary View</th><th>JV View</th></tr></thead><tbody>";
+					"<table class='pp-table' style='margin-top:6px;'><thead><tr><th>Select</th><th>Salary Entry</th><th>PO Number</th><th>Delivery Note</th><th>JV Entry</th><th>Total Salary</th><th>Allowance</th><th>Adv Deduction</th><th>Oth Deduction</th><th>Net Salary</th><th>Book</th><th>Pay</th><th>Salary View</th><th>JV View</th></tr></thead><tbody>";
 				(salaryPage.rows || []).forEach(function (r) {
 					tSalary += num(r.amount);
 					tAllow += num(r.allowance_amount);
@@ -3065,6 +3091,9 @@
 						"</a></td>" +
 						"<td>" +
 						esc(r.po_number || "") +
+						"</td>" +
+						"<td>" +
+						esc(r.delivery_note || "") +
 						"</td>" +
 						"<td>" +
 						(r.jv_entry_no
@@ -3119,7 +3148,7 @@
 						"</tr>";
 				});
 				html +=
-					"<tr class='pp-year-total'><td></td><td>Total</td><td></td><td></td><td id='pp-salary-history-total-salary' class='num pp-amt-col'>" +
+					"<tr class='pp-year-total'><td></td><td>Total</td><td></td><td></td><td></td><td id='pp-salary-history-total-salary' class='num pp-amt-col'>" +
 					esc(fmt(tSalary)) +
 					"</td><td id='pp-salary-history-total-allowance' class='num pp-amt-col'>" +
 					esc(fmt(tAllow)) +
@@ -3129,7 +3158,7 @@
 					esc(fmt(tOther)) +
 					"</td><td id='pp-salary-history-total-net' class='num pp-amt-col'>" +
 					esc(fmt(tNet)) +
-					"</td><td></td><td></td><td></td><td></td></tr>";
+					"</td><td></td><td></td><td></td><td></td><td></td></tr>";
 				html += "</tbody></table>";
 				html += historyPagerHtml(salaryPage);
 			}
@@ -3434,6 +3463,7 @@
 				{ fieldname: "from_date", label: "From Date" },
 				{ fieldname: "to_date", label: "To Date" },
 				{ fieldname: "po_number", label: "PO Number" },
+				{ fieldname: "delivery_note", label: "Delivery Note" },
 				{ fieldname: "name1", label: "Employee" },
 				{ fieldname: "product", label: "Product" },
 				{ fieldname: "process_type", label: "Process Type" },
@@ -3750,6 +3780,7 @@
 			cols = [
 				{ fieldname: "per_piece_salary", label: "Entry No" },
 				{ fieldname: "po_number", label: "PO Number" },
+				{ fieldname: "delivery_note", label: "Delivery Note" },
 				{ fieldname: "product", label: "Item" },
 				{ fieldname: "process_type", label: "Process" },
 				{ fieldname: "process_size", label: "Size" },

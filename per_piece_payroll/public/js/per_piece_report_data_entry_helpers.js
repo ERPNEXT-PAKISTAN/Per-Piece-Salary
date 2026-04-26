@@ -190,6 +190,7 @@
 							""
 					).trim(),
 					sales_order: "",
+					delivery_note: String(state.entryMeta.delivery_note || "").trim(),
 					product: String((item && item.item) || "").trim(),
 					process_type: String((item && item.process_type) || "").trim(),
 					process_size: String((item && item.process_size) || "").trim() || "No Size",
@@ -239,6 +240,7 @@
 										""
 								).trim(),
 								sales_order: "",
+								delivery_note: String(state.entryMeta.delivery_note || "").trim(),
 								product: String((item && item.item) || "").trim(),
 								process_type: String((item && item.process_type) || "").trim(),
 								process_size:
@@ -278,6 +280,7 @@
 				employee: employee,
 				name1: String((state.entryMeta.employeeNameMap || {})[employee] || "").trim(),
 				sales_order: "",
+				delivery_note: String(state.entryMeta.delivery_note || "").trim(),
 				product: "",
 				process_type: "",
 				process_size: "No Size",

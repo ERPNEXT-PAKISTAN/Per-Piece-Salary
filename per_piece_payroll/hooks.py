@@ -197,6 +197,8 @@ fixtures = [
 					"payment_refs",
 					"payment_line_remark",
 					"process_size",
+					"sales_order",
+					"delivery_note",
 					"item_group",
 					"employee",
 				],
