@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
 
 import frappe
@@ -266,9 +268,6 @@ def get_per_piece_report_page_payload() -> dict:
 
 @frappe.whitelist()
 def search_delivery_notes(txt: str | None = None, limit: int | str | None = None) -> list[dict]:
-	if not frappe.has_permission("Delivery Note", ptype="read"):
-		frappe.throw("Insufficient Permission for Delivery Note", frappe.PermissionError)
-
 	search_txt = (txt or "").strip()
 	try:
 		limit_n = int(limit or 20)
@@ -286,6 +285,7 @@ def search_delivery_notes(txt: str | None = None, limit: int | str | None = None
 		fields=["name", "posting_date", "customer"],
 		order_by="posting_date desc, name desc",
 		limit_page_length=limit_n,
+		ignore_permissions=True,
 	)
 	out: list[dict] = []
 	for row in rows:
@@ -316,14 +316,14 @@ def get_delivery_note_items(delivery_note: str) -> list[dict]:
 	if not dn_name:
 		return []
 
-	if not frappe.has_permission("Delivery Note", ptype="read"):
-		frappe.throw("Insufficient Permission for Delivery Note", frappe.PermissionError)
-
-	if not frappe.db.exists("Delivery Note", dn_name):
-		return []
-
-	docstatus = int(frappe.db.get_value("Delivery Note", dn_name, "docstatus") or 0)
-	if docstatus != 1:
+	dn_rows = frappe.get_all(
+		"Delivery Note",
+		filters={"name": dn_name, "docstatus": 1},
+		fields=["name"],
+		limit_page_length=1,
+		ignore_permissions=True,
+	)
+	if not dn_rows:
 		return []
 
 	rows = frappe.get_all(
@@ -345,6 +345,7 @@ def get_delivery_note_items(delivery_note: str) -> list[dict]:
 			filters={"name": ["in", item_codes]},
 			fields=["name", "item_group"],
 			limit_page_length=5000,
+			ignore_permissions=True,
 		):
 			item_group_map[str(item_row.get("name") or "").strip()] = str(
 				item_row.get("item_group") or ""
@@ -366,6 +367,245 @@ def get_delivery_note_items(delivery_note: str) -> list[dict]:
 			}
 		)
 	return out
+
+
+@frappe.whitelist()
+def get_delivery_note_process_rows(delivery_note: str) -> list[dict]:
+	dn_name = (delivery_note or "").strip()
+	if not dn_name:
+		return []
+
+	dn_items = get_delivery_note_items(dn_name)
+	if not dn_items:
+		return []
+
+	# Expand each DN item to one row per process configured on Item.
+	entry_rows: list[dict] = []
+	for dn_item in dn_items:
+		item_code = str(dn_item.get("item_code") or "").strip()
+		if not item_code:
+			continue
+		item_qty = flt(dn_item.get("qty"))
+		sales_order = str(dn_item.get("against_sales_order") or "").strip()
+		process_rows = get_item_process_rows(item=item_code) or []
+		if not process_rows:
+			process_rows = [
+				{
+					"item": item_code,
+					"employee": "",
+					"employee_name": "",
+					"process_type": "",
+					"process_size": "No Size",
+					"rate": 0,
+				}
+			]
+
+		for process_row in process_rows:
+			entry_rows.append(
+				{
+					"employee": str(process_row.get("employee") or "").strip(),
+					"name1": str(process_row.get("employee_name") or "").strip(),
+					"sales_order": sales_order,
+					"product": item_code,
+					"process_type": str(process_row.get("process_type") or "").strip(),
+					"process_size": str(process_row.get("process_size") or "").strip() or "No Size",
+					"qty": item_qty,
+					"rate": flt(process_row.get("rate")),
+				}
+			)
+
+	return entry_rows
+
+
+@frappe.whitelist()
+def get_salary_entry_financials(entry_names: str | list[str] | None = None) -> dict:
+	def _to_names(raw) -> list[str]:
+		if raw is None:
+			return []
+		if isinstance(raw, list):
+			items = raw
+		elif isinstance(raw, str):
+			txt = raw.strip()
+			if not txt:
+				return []
+			if txt.startswith("["):
+				try:
+					items = json.loads(txt)
+				except Exception:
+					items = txt.split(",")
+			else:
+				items = txt.split(",")
+		else:
+			items = [raw]
+		out: list[str] = []
+		seen: set[str] = set()
+		for it in items:
+			name = str(it or "").strip()
+			if not name or name in seen:
+				continue
+			out.append(name)
+			seen.add(name)
+		return out[:500]
+
+	def _credit_amount(row: dict) -> float:
+		return flt(row.get("credit_in_account_currency") or row.get("credit"))
+
+	def _employee_from_remark(remark: str, pattern: str) -> str:
+		m = re.match(pattern, remark or "")
+		if not m:
+			return ""
+		return str(m.group(1) or "").strip()
+
+	entries = _to_names(entry_names)
+	if not entries:
+		return {"data": {}}
+
+	per_piece_rows = frappe.get_all(
+		"Per Piece",
+		filters={"parent": ["in", entries], "parenttype": "Per Piece Salary"},
+		fields=["parent", "employee", "amount", "jv_entry_no"],
+		limit_page_length=200000,
+		ignore_permissions=True,
+	)
+
+	by_entry: dict[str, dict] = {}
+	jv_to_entry: dict[str, set[str]] = {}
+	for row in per_piece_rows:
+		entry = str(row.get("parent") or "").strip()
+		if not entry:
+			continue
+		emp = str(row.get("employee") or "").strip()
+		amount = flt(row.get("amount"))
+		if entry not in by_entry:
+			by_entry[entry] = {
+				"salary_amount": 0.0,
+				"allowance_amount": 0.0,
+				"advance_deduction_amount": 0.0,
+				"other_deduction_amount": 0.0,
+				"net_salary": 0.0,
+				"by_employee": {},
+				"jv_names": set(),
+			}
+		target = by_entry[entry]
+		target["salary_amount"] += amount
+		if emp:
+			emp_row = target["by_employee"].setdefault(
+				emp,
+				{
+					"salary_amount": 0.0,
+					"allowance_amount": 0.0,
+					"advance_deduction_amount": 0.0,
+					"other_deduction_amount": 0.0,
+					"net_amount": 0.0,
+				},
+			)
+			emp_row["salary_amount"] += amount
+		jv = str(row.get("jv_entry_no") or "").strip()
+		if jv:
+			target["jv_names"].add(jv)
+			jv_to_entry.setdefault(jv, set()).add(entry)
+
+	jv_names = sorted(jv_to_entry.keys())
+	accounts = []
+	if jv_names:
+		accounts = frappe.get_all(
+			"Journal Entry Account",
+			filters={"parent": ["in", jv_names], "parenttype": "Journal Entry", "docstatus": 1},
+			fields=["parent", "party", "user_remark", "credit_in_account_currency", "credit"],
+			limit_page_length=200000,
+			ignore_permissions=True,
+		)
+
+	for acc in accounts:
+		jv = str(acc.get("parent") or "").strip()
+		entries_for_jv = jv_to_entry.get(jv) or set()
+		if not entries_for_jv:
+			continue
+		credit = _credit_amount(acc)
+		if credit <= 0:
+			continue
+		remark = str(acc.get("user_remark") or "").strip()
+		party = str(acc.get("party") or "").strip()
+		advance_emp = _employee_from_remark(remark, r"^Advance Recovery - (.+)$")
+		other_emp = _employee_from_remark(remark, r"^Salary Deduction - (.+)$")
+		net_emp = _employee_from_remark(remark, r"^Net Salary - (.+?)(\s*\||$)")
+		for entry in entries_for_jv:
+			fin = by_entry.get(entry)
+			if not fin:
+				continue
+			if advance_emp or (party and remark.startswith("Advance Recovery - ")):
+				emp = advance_emp or party
+				emp_row = fin["by_employee"].setdefault(
+					emp,
+					{
+						"salary_amount": 0.0,
+						"allowance_amount": 0.0,
+						"advance_deduction_amount": 0.0,
+						"other_deduction_amount": 0.0,
+						"net_amount": 0.0,
+					},
+				)
+				emp_row["advance_deduction_amount"] += credit
+			elif other_emp or (party and remark.startswith("Salary Deduction - ")):
+				emp = other_emp or party
+				emp_row = fin["by_employee"].setdefault(
+					emp,
+					{
+						"salary_amount": 0.0,
+						"allowance_amount": 0.0,
+						"advance_deduction_amount": 0.0,
+						"other_deduction_amount": 0.0,
+						"net_amount": 0.0,
+					},
+				)
+				emp_row["other_deduction_amount"] += credit
+			elif net_emp or (party and remark.startswith("Net Salary - ")):
+				emp = net_emp or party
+				emp_row = fin["by_employee"].setdefault(
+					emp,
+					{
+						"salary_amount": 0.0,
+						"allowance_amount": 0.0,
+						"advance_deduction_amount": 0.0,
+						"other_deduction_amount": 0.0,
+						"net_amount": 0.0,
+					},
+				)
+				emp_row["net_amount"] += credit
+
+	for _entry, fin in by_entry.items():
+		total_salary = 0.0
+		total_allow = 0.0
+		total_adv = 0.0
+		total_other = 0.0
+		total_net = 0.0
+		for _emp, emp_row in (fin.get("by_employee") or {}).items():
+			salary_amount = flt(emp_row.get("salary_amount"))
+			adv = flt(emp_row.get("advance_deduction_amount"))
+			other = flt(emp_row.get("other_deduction_amount"))
+			net = flt(emp_row.get("net_amount"))
+			if net <= 0:
+				net = max(salary_amount - adv - other, 0)
+			allow = max(net - salary_amount + adv + other, 0)
+			emp_row["salary_amount"] = salary_amount
+			emp_row["advance_deduction_amount"] = adv
+			emp_row["other_deduction_amount"] = other
+			emp_row["allowance_amount"] = allow
+			emp_row["net_amount"] = net
+			total_salary += salary_amount
+			total_allow += allow
+			total_adv += adv
+			total_other += other
+			total_net += net
+
+		fin["salary_amount"] = total_salary
+		fin["allowance_amount"] = total_allow
+		fin["advance_deduction_amount"] = total_adv
+		fin["other_deduction_amount"] = total_other
+		fin["net_salary"] = total_net
+		fin.pop("jv_names", None)
+
+	return {"data": by_entry}
 
 
 def _run_legacy_api_script(script_text: str, kwargs: dict | None = None):

@@ -1125,6 +1125,17 @@
 			return [];
 		};
 
+	function getNetBookedAmountForRow(r) {
+		var entry = String((r && r.per_piece_salary) || "").trim();
+		var emp = String((r && r.employee) || "").trim();
+		var cache = (state.entryMeta && state.entryMeta.salaryFinancialByEntry) || {};
+		if (entry && emp && cache[entry] && cache[entry].by_employee) {
+			var byEmp = cache[entry].by_employee[emp];
+			if (byEmp && byEmp.net_amount != null) return Math.max(num(byEmp.net_amount), 0);
+		}
+		return Math.max(num((r && r.booked_amount) || (r && r.amount)), 0);
+	}
+
 	var stateCalc =
 		(window.PerPieceState &&
 			window.PerPieceState.create({
@@ -1142,6 +1153,7 @@
 				getWorkflowHistoryRange: getWorkflowHistoryRange,
 				setOptions: setOptions,
 				buildEmployeeSummaryRows: buildEmployeeSummaryRows,
+				getBookedAmountForPaymentRow: getNetBookedAmountForRow,
 			})) ||
 		{};
 
@@ -2069,8 +2081,128 @@
 			});
 	}
 
+	function getSalaryFinancialCache() {
+		if (!state.entryMeta) state.entryMeta = {};
+		if (!state.entryMeta.salaryFinancialByEntry) state.entryMeta.salaryFinancialByEntry = {};
+		if (!state.entryMeta.salaryFinancialPending) state.entryMeta.salaryFinancialPending = {};
+		return state.entryMeta.salaryFinancialByEntry;
+	}
+
+	function computeSalaryEntryFinancial(entryName) {
+		var entry = String(entryName || "").trim();
+		if (!entry) return Promise.resolve(null);
+		var rows = getSalaryCreationEntryRows(
+			entry,
+			state.entryMeta.recentRows || state.rows || []
+		);
+		if (!rows.length) return Promise.resolve(null);
+		return getSalaryEntryAdjustmentMap(rows).then(function (adjustmentMap) {
+			var fin = {
+				entry: entry,
+				salary_amount: 0,
+				allowance_amount: 0,
+				advance_deduction_amount: 0,
+				other_deduction_amount: 0,
+				net_salary: 0,
+				by_employee: {},
+			};
+			rows.forEach(function (r) {
+				var emp = String(r.employee || "").trim();
+				var adj = adjustmentMap[emp] || {};
+				var salaryAmount = num(r.amount);
+				var advanceDeduction = num(adj.advance_deduction);
+				var otherDeduction = num(adj.other_deduction);
+				var netAmount = num(adj.net_amount);
+				if (netAmount <= 0)
+					netAmount = Math.max(salaryAmount - advanceDeduction - otherDeduction, 0);
+				var allowance = Math.max(
+					netAmount - salaryAmount + advanceDeduction + otherDeduction,
+					0
+				);
+				fin.salary_amount += salaryAmount;
+				fin.allowance_amount += allowance;
+				fin.advance_deduction_amount += advanceDeduction;
+				fin.other_deduction_amount += otherDeduction;
+				fin.net_salary += netAmount;
+				fin.by_employee[emp] = {
+					salary_amount: salaryAmount,
+					allowance_amount: allowance,
+					advance_deduction_amount: advanceDeduction,
+					other_deduction_amount: otherDeduction,
+					net_amount: netAmount,
+				};
+			});
+			return fin;
+		});
+	}
+
+	function ensureSalaryFinancials(entryNames) {
+		var names = (entryNames || [])
+			.map(function (n) {
+				return String(n || "").trim();
+			})
+			.filter(function (n) {
+				return !!n;
+			});
+		if (!names.length) return Promise.resolve(false);
+		var cache = getSalaryFinancialCache();
+		var missing = names.filter(function (entry) {
+			return !cache[entry];
+		});
+		if (!missing.length) return Promise.resolve(false);
+		return callApi("per_piece_payroll.api.get_salary_entry_financials", {
+			entry_names: missing,
+		})
+			.then(function (resp) {
+				var data = (resp && resp.data) || {};
+				Object.keys(data || {}).forEach(function (entry) {
+					cache[entry] = data[entry];
+				});
+				return true;
+			})
+			.catch(function (_e) {
+				return Promise.all(
+					missing.map(function (entry) {
+						return computeSalaryEntryFinancial(entry)
+							.then(function (fin) {
+								if (fin) cache[entry] = fin;
+							})
+							.catch(function (_e2) {});
+					})
+				).then(function () {
+					return true;
+				});
+			});
+	}
+
+	function primeSalaryFinancialsForTab(tab) {
+		var current = String(tab || "");
+		var entryMap = {};
+		if (current === "salary_creation") {
+			uniqueCreatedSalaryDocs().forEach(function (d) {
+				var name = String((d && d.name) || "").trim();
+				if (name) entryMap[name] = 1;
+			});
+		} else if (current === "payment_manage") {
+			(getBookedRows() || []).forEach(function (r) {
+				var entry = String((r && r.per_piece_salary) || "").trim();
+				var jv = String((r && r.jv_entry_no) || "").trim();
+				if (entry && jv) entryMap[entry] = 1;
+			});
+		}
+		var names = Object.keys(entryMap);
+		if (!names.length) return;
+		ensureSalaryFinancials(names).then(function (updated) {
+			if (!updated) return;
+			if (state.currentTab !== current) return;
+			normalizePaymentAdjustments();
+			renderCurrentTab();
+		});
+	}
+
 	function uniqueCreatedSalaryDocs() {
 		var map = {};
+		var salaryFinancial = getSalaryFinancialCache();
 		(state.rows || []).forEach(function (r) {
 			var docName = String((r && r.per_piece_salary) || "").trim();
 			if (!docName || !String((r && r.jv_entry_no) || "").trim()) return;
@@ -2100,7 +2232,7 @@
 			if (rt && (!map[docName].to_date || rt > map[docName].to_date))
 				map[docName].to_date = rt;
 			map[docName].amount += num(r.amount);
-			map[docName].booked_amount += num(r.booked_amount);
+			map[docName].booked_amount += getNetBookedAmountForRow(r);
 			map[docName].rows += 1;
 			if (String(r.booking_status || "") === "Booked") map[docName]._booked_count += 1;
 			var payStatus = String(r.payment_status || "");
@@ -2109,12 +2241,21 @@
 		});
 		Object.keys(map).forEach(function (k) {
 			var it = map[k];
-			var salaryAmount = num(it.amount);
-			var netAmount = num(it.booked_amount) > 0 ? num(it.booked_amount) : salaryAmount;
-			it.allowance_amount = Math.max(netAmount - salaryAmount, 0);
-			it.advance_deduction_amount = Math.max(salaryAmount - netAmount, 0);
-			it.other_deduction_amount = 0;
-			it.net_salary = netAmount;
+			var fin = salaryFinancial[k] || null;
+			if (fin) {
+				it.allowance_amount = num(fin.allowance_amount);
+				it.advance_deduction_amount = num(fin.advance_deduction_amount);
+				it.other_deduction_amount = num(fin.other_deduction_amount);
+				it.net_salary = num(fin.net_salary);
+				it.booked_amount = num(fin.net_salary);
+			} else {
+				var salaryAmount = num(it.amount);
+				var netAmount = num(it.booked_amount) > 0 ? num(it.booked_amount) : salaryAmount;
+				it.allowance_amount = Math.max(netAmount - salaryAmount, 0);
+				it.advance_deduction_amount = Math.max(salaryAmount - netAmount, 0);
+				it.other_deduction_amount = 0;
+				it.net_salary = netAmount;
+			}
 			it.booking_status =
 				it._booked_count >= it.rows
 					? "Booked"
@@ -2132,6 +2273,84 @@
 			.map(function (k) {
 				return map[k];
 			});
+	}
+
+	function setSalaryHistoryCell(entryName, col, value) {
+		document
+			.querySelectorAll(
+				".pp-salary-history-cell[data-entry='" +
+					String(entryName || "").replace(/'/g, "\\'") +
+					"'][data-col='" +
+					String(col || "").replace(/'/g, "\\'") +
+					"']"
+			)
+			.forEach(function (cell) {
+				cell.textContent = fmt(value);
+			});
+	}
+
+	function setSalaryHistoryTotalsRow(values) {
+		var mapping = {
+			salary: "pp-salary-history-total-salary",
+			allowance: "pp-salary-history-total-allowance",
+			advance: "pp-salary-history-total-advance",
+			other: "pp-salary-history-total-other",
+			net: "pp-salary-history-total-net",
+		};
+		Object.keys(mapping).forEach(function (k) {
+			var node = el(mapping[k]);
+			if (node) node.textContent = fmt(num(values && values[k]));
+		});
+	}
+
+	function hydrateSalaryHistoryFinancials(rows) {
+		var list = rows || [];
+		if (!list.length) return;
+		if (String(state.currentTab || "") !== "salary_creation") return;
+		var cache = getSalaryFinancialCache();
+		var totals = { salary: 0, allowance: 0, advance: 0, other: 0, net: 0 };
+		var names = list
+			.map(function (r) {
+				return String((r && r.name) || "").trim();
+			})
+			.filter(function (n) {
+				return !!n;
+			});
+		ensureSalaryFinancials(names).then(function () {
+			list.forEach(function (r) {
+				var entry = String((r && r.name) || "").trim();
+				if (!entry) return;
+				var fin = cache[entry] || null;
+				var vals = fin
+					? {
+							salary: num(fin.salary_amount),
+							allowance: num(fin.allowance_amount),
+							advance: num(fin.advance_deduction_amount),
+							other: num(fin.other_deduction_amount),
+							net: num(fin.net_salary),
+					  }
+					: {
+							salary: num(r.amount),
+							allowance: num(r.allowance_amount),
+							advance: num(r.advance_deduction_amount),
+							other: num(r.other_deduction_amount),
+							net: num(r.net_salary),
+					  };
+				setSalaryHistoryCell(entry, "salary", vals.salary);
+				setSalaryHistoryCell(entry, "allowance", vals.allowance);
+				setSalaryHistoryCell(entry, "advance", vals.advance);
+				setSalaryHistoryCell(entry, "other", vals.other);
+				setSalaryHistoryCell(entry, "net", vals.net);
+				totals.salary += vals.salary;
+				totals.allowance += vals.allowance;
+				totals.advance += vals.advance;
+				totals.other += vals.other;
+				totals.net += vals.net;
+			});
+			if (String(state.currentTab || "") !== "salary_creation") return;
+			setSalaryHistoryTotalsRow(totals);
+			normalizePaymentAdjustments();
+		});
 	}
 
 	function parsePaymentRefsJs(text) {
@@ -2310,8 +2529,11 @@
 			entryName || "",
 			"<div style='color:#334155;'>Loading salary creation detail...</div>"
 		);
-		getSalaryEntryAdjustmentMap(rows)
-			.then(function (adjustmentMap) {
+		ensureSalaryFinancials([entryName])
+			.then(function () {
+				var finCache = getSalaryFinancialCache();
+				var fin = finCache[String(entryName || "").trim()] || null;
+				var byEmpFin = (fin && fin.by_employee) || {};
 				var totalQty = 0;
 				var totalRate = 0;
 				var totalAmount = 0;
@@ -2340,16 +2562,31 @@
 				html +=
 					"<table class='pp-table'><thead><tr><th>Employee</th><th>Qty</th><th>Rate</th><th>Salary Amount</th><th>Advance Balance</th><th>Advance Deduction</th><th>Allowance</th><th>Other Deduction</th><th>Net Amount</th></tr></thead><tbody>";
 				rows.forEach(function (r) {
-					var adj = adjustmentMap[String(r.employee || "").trim()] || {};
-					var advanceDeduction = num(adj.advance_deduction);
-					var otherDeduction = num(adj.other_deduction);
-					var netAmount = num(adj.net_amount);
-					if (netAmount <= 0)
-						netAmount = Math.max(num(r.amount) - advanceDeduction - otherDeduction, 0);
-					var allowance = Math.max(
-						netAmount - num(r.amount) + advanceDeduction + otherDeduction,
-						0
+					var empKey = String(r.employee || "").trim();
+					var empFin = byEmpFin[empKey] || {};
+					var advanceDeduction = num(
+						empFin.advance_deduction_amount != null
+							? empFin.advance_deduction_amount
+							: empFin.advance_deduction
 					);
+					var otherDeduction = num(
+						empFin.other_deduction_amount != null
+							? empFin.other_deduction_amount
+							: empFin.other_deduction
+					);
+					var netAmount = num(
+						empFin.net_amount != null ? empFin.net_amount : empFin.net_salary
+					);
+					if (netAmount <= 0) {
+						netAmount = Math.max(num(r.amount) - advanceDeduction - otherDeduction, 0);
+					}
+					var allowance = num(empFin.allowance_amount);
+					if (allowance <= 0) {
+						allowance = Math.max(
+							netAmount - num(r.amount) + advanceDeduction + otherDeduction,
+							0
+						);
+					}
 					var advanceBalance = Math.max(
 						num((state.advanceBalances || {})[r.employee]) + advanceDeduction,
 						0
@@ -2482,9 +2719,12 @@
 					salary_map: {},
 				};
 			}
-			map[emp].booked_amount += num(r.booked_amount);
-			map[emp].paid_amount += num(r.paid_amount);
-			map[emp].unpaid_amount += num(r.unpaid_amount);
+			var bookedAmount = getNetBookedAmountForRow(r);
+			var paidAmount = Math.max(num(r.paid_amount), 0);
+			if (paidAmount > bookedAmount) paidAmount = bookedAmount;
+			map[emp].booked_amount += bookedAmount;
+			map[emp].paid_amount += paidAmount;
+			map[emp].unpaid_amount += Math.max(bookedAmount - paidAmount, 0);
 			map[emp].payment_amount += matchedAmount;
 			if (r.per_piece_salary)
 				map[emp].salary_map[String(r.per_piece_salary || "").trim()] = 1;
@@ -2835,19 +3075,29 @@
 							  "</a>"
 							: "") +
 						"</td>" +
-						"<td class='num pp-amt-col'>" +
+						"<td class='num pp-amt-col pp-salary-history-cell' data-entry='" +
+						esc(r.name) +
+						"' data-col='salary'>" +
 						esc(fmt(r.amount)) +
 						"</td>" +
-						"<td class='num pp-amt-col'>" +
+						"<td class='num pp-amt-col pp-salary-history-cell' data-entry='" +
+						esc(r.name) +
+						"' data-col='allowance'>" +
 						esc(fmt(r.allowance_amount)) +
 						"</td>" +
-						"<td class='num pp-amt-col'>" +
+						"<td class='num pp-amt-col pp-salary-history-cell' data-entry='" +
+						esc(r.name) +
+						"' data-col='advance'>" +
 						esc(fmt(r.advance_deduction_amount)) +
 						"</td>" +
-						"<td class='num pp-amt-col'>" +
+						"<td class='num pp-amt-col pp-salary-history-cell' data-entry='" +
+						esc(r.name) +
+						"' data-col='other'>" +
 						esc(fmt(r.other_deduction_amount)) +
 						"</td>" +
-						"<td class='num pp-amt-col'>" +
+						"<td class='num pp-amt-col pp-salary-history-cell' data-entry='" +
+						esc(r.name) +
+						"' data-col='net'>" +
 						esc(fmt(r.net_salary)) +
 						"</td>" +
 						"<td>" +
@@ -2869,21 +3119,24 @@
 						"</tr>";
 				});
 				html +=
-					"<tr class='pp-year-total'><td></td><td>Total</td><td></td><td></td><td class='num pp-amt-col'>" +
+					"<tr class='pp-year-total'><td></td><td>Total</td><td></td><td></td><td id='pp-salary-history-total-salary' class='num pp-amt-col'>" +
 					esc(fmt(tSalary)) +
-					"</td><td class='num pp-amt-col'>" +
+					"</td><td id='pp-salary-history-total-allowance' class='num pp-amt-col'>" +
 					esc(fmt(tAllow)) +
-					"</td><td class='num pp-amt-col'>" +
+					"</td><td id='pp-salary-history-total-advance' class='num pp-amt-col'>" +
 					esc(fmt(tAdv)) +
-					"</td><td class='num pp-amt-col'>" +
+					"</td><td id='pp-salary-history-total-other' class='num pp-amt-col'>" +
 					esc(fmt(tOther)) +
-					"</td><td class='num pp-amt-col'>" +
+					"</td><td id='pp-salary-history-total-net' class='num pp-amt-col'>" +
 					esc(fmt(tNet)) +
 					"</td><td></td><td></td><td></td><td></td></tr>";
 				html += "</tbody></table>";
 				html += historyPagerHtml(salaryPage);
 			}
 			setCreatedListHtml(html);
+			if (salaryPage && salaryPage.rows && salaryPage.rows.length) {
+				hydrateSalaryHistoryFinancials(salaryPage.rows);
+			}
 			return;
 		}
 		if (tab === "payment_manage") {
@@ -3116,8 +3369,8 @@
 		var salaryCard = el("pp-salary-jv-card");
 		var paymentCard = el("pp-payment-jv-card");
 		if (!salaryCard || !paymentCard) return;
-		salaryCard.style.display = state.currentTab === "salary_creation" ? "" : "none";
-		paymentCard.style.display = state.currentTab === "payment_manage" ? "" : "none";
+		salaryCard.style.display = state.currentTab === "salary_creation" ? "block" : "none";
+		paymentCard.style.display = state.currentTab === "payment_manage" ? "block" : "none";
 	}
 
 	function toggleEntryScreenMode() {
@@ -3138,8 +3391,22 @@
 		input.checked = !!state.employeeSummaryDetail;
 	}
 
+	function ensureWorkflowCardsPosition() {
+		var tableWrap = el("pp-table-wrap");
+		var salaryCard = el("pp-salary-jv-card");
+		var paymentCard = el("pp-payment-jv-card");
+		if (!tableWrap || !salaryCard || !paymentCard) return;
+		var parent = tableWrap.parentNode;
+		if (!parent) return;
+		parent.insertBefore(salaryCard, tableWrap);
+		parent.insertBefore(paymentCard, tableWrap);
+	}
+
 	function renderCurrentTab() {
 		var currentTabName = String(state.currentTab || "");
+		if (currentTabName === "salary_creation" || currentTabName === "payment_manage") {
+			primeSalaryFinancialsForTab(currentTabName);
+		}
 		var headerFilterOpts = {};
 		if (
 			currentTabName === "data_entry" ||
@@ -3155,6 +3422,7 @@
 		var outRows = [];
 		var paged = null;
 		var skipColumnSearch = false;
+		ensureWorkflowCardsPosition();
 		toggleWorkflowCards();
 		toggleEmployeeSummaryDetailControl();
 		toggleEntryScreenMode();
@@ -3695,6 +3963,10 @@
 	function loadReport() {
 		setPageForCurrentTab(1);
 		el("pp-msg").textContent = "Loading...";
+		// Keep workspace cards in sync immediately, even before API completes.
+		ensureWorkflowCardsPosition();
+		toggleWorkflowCards();
+		toggleEntryScreenMode();
 		var args = getReportArgs();
 		if (
 			state.currentTab === "data_entry" ||
@@ -3719,10 +3991,26 @@
 		callApi("per_piece_payroll.api.get_per_piece_salary_report", args)
 			.then(function (msg) {
 				state.rows = (msg && msg.data) || [];
+				if (state.entryMeta) {
+					state.entryMeta.salaryFinancialByEntry = {};
+					state.entryMeta.salaryFinancialPending = {};
+				}
 				applyReportRateProcessFix(state.rows);
 				normalizeReportStatusValues(state.rows);
 				state.columns = (msg && msg.columns) || [];
 				refreshHeaderFilterOptions();
+				// Fast first paint: render current tab immediately with current dataset.
+				rebuildEntryMetaLookups();
+				refreshTopProductOptions();
+				normalizeExcludedEmployees();
+				normalizeAdjustmentsForEmployees();
+				normalizePaymentExcludedEmployees();
+				normalizePaymentAdjustments();
+				renderCurrentTab();
+				loadJVEntryOptions();
+				loadPaymentJVEntryOptions();
+
+				// Background hydrate for heavy datasets (recent docs + advances), then refresh.
 				return loadAllRowsForRecentDocs()
 					.then(function () {
 						return loadAdvancesFromGL();
@@ -3751,6 +4039,12 @@
 				if (result) {
 					result.style.color = "#b91c1c";
 					result.textContent = errText(e);
+				}
+				// Still render selected tab/cards with last-known data so UI controls remain visible.
+				try {
+					renderCurrentTab();
+				} catch (renderErr) {
+					console.error(renderErr);
 				}
 				console.error(e);
 			});

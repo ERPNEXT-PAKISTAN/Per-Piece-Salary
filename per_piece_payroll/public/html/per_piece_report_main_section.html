@@ -19,28 +19,29 @@
     <button id="pp-print-tab-btn" class="btn btn-default" type="button">Print Tab</button>
   </div>
 
-  <div class="pp-workspace-switch">
-    <button type="button" class="btn btn-default pp-workspace-btn active" id="pp-workspace-entry">Entry Workspace</button>
-    <button type="button" class="btn btn-default pp-workspace-btn" id="pp-workspace-reporting">Reporting Workspace</button>
-  </div>
-
-  <div class="pp-tabs">
-    <button type="button" class="pp-tab active" data-workspace="entry" data-tab="data_entry">Data Enter</button>
-    <button type="button" class="pp-tab" data-workspace="entry" data-tab="salary_creation">Salary Creation</button>
-    <button type="button" class="pp-tab" data-workspace="entry" data-tab="payment_manage">Payment Entry</button>
-    <button type="button" class="pp-tab" data-workspace="reporting" data-tab="all">History</button>
-    <button type="button" class="pp-tab" data-workspace="reporting" data-tab="jv_created">Salary Status</button>
-    <button type="button" class="pp-tab" data-workspace="reporting" data-tab="month_paid_unpaid">Month Paid/Unpaid</button>
-    <button type="button" class="pp-tab" data-workspace="reporting" data-tab="advances">Advances</button>
-    <button type="button" class="pp-tab" data-workspace="reporting" data-tab="employee_summary">Employee Summary</button>
-    <button type="button" class="pp-tab" data-workspace="reporting" data-tab="per_piece_salary">Employee item-wise</button>
-    <button type="button" class="pp-tab" data-workspace="reporting" data-tab="salary_slip">Salary Slip</button>
-    <button type="button" class="pp-tab" data-workspace="reporting" data-tab="po_number">PO Summary</button>
-    <button type="button" class="pp-tab" data-workspace="reporting" data-tab="po_detail_all">PO Detail Print</button>
-    <button type="button" class="pp-tab" data-workspace="reporting" data-tab="month_year_salary">Month/Year Salary</button>
-    <button type="button" class="pp-tab" data-workspace="reporting" data-tab="simple_month_amount">Month-wise</button>
-    <button type="button" class="pp-tab" data-workspace="reporting" data-tab="product">Product Summary</button>
-    <button type="button" class="pp-tab" data-workspace="reporting" data-tab="process_product">Process Summary</button>
+  <div class="pp-nav-row">
+    <div class="pp-workspace-switch">
+      <button type="button" class="btn btn-default pp-workspace-btn active" id="pp-workspace-entry">Entry Workspace</button>
+      <button type="button" class="btn btn-default pp-workspace-btn" id="pp-workspace-reporting">Reporting Workspace</button>
+    </div>
+    <div class="pp-tabs">
+      <button type="button" class="pp-tab active" data-workspace="entry" data-tab="data_entry">Data Enter</button>
+      <button type="button" class="pp-tab" data-workspace="entry" data-tab="salary_creation">Salary Creation</button>
+      <button type="button" class="pp-tab" data-workspace="entry" data-tab="payment_manage">Payment Entry</button>
+      <button type="button" class="pp-tab" data-workspace="reporting" data-tab="all">History</button>
+      <button type="button" class="pp-tab" data-workspace="reporting" data-tab="jv_created">Salary Status</button>
+      <button type="button" class="pp-tab" data-workspace="reporting" data-tab="month_paid_unpaid">Month Paid/Unpaid</button>
+      <button type="button" class="pp-tab" data-workspace="reporting" data-tab="advances">Advances</button>
+      <button type="button" class="pp-tab" data-workspace="reporting" data-tab="employee_summary">Employee Summary</button>
+      <button type="button" class="pp-tab" data-workspace="reporting" data-tab="per_piece_salary">Employee item-wise</button>
+      <button type="button" class="pp-tab" data-workspace="reporting" data-tab="salary_slip">Salary Slip</button>
+      <button type="button" class="pp-tab" data-workspace="reporting" data-tab="po_number">PO Summary</button>
+      <button type="button" class="pp-tab" data-workspace="reporting" data-tab="po_detail_all">PO Detail Print</button>
+      <button type="button" class="pp-tab" data-workspace="reporting" data-tab="month_year_salary">Month/Year Salary</button>
+      <button type="button" class="pp-tab" data-workspace="reporting" data-tab="simple_month_amount">Month-wise</button>
+      <button type="button" class="pp-tab" data-workspace="reporting" data-tab="product">Product Summary</button>
+      <button type="button" class="pp-tab" data-workspace="reporting" data-tab="process_product">Process Summary</button>
+    </div>
   </div>
 
   <div id="pp-msg" class="pp-msg"></div>
@@ -148,15 +149,15 @@
   </div>
 </div>
 
-<link rel="stylesheet" href="/assets/per_piece_payroll/css/per_piece_report.css?v=20260425_07">
-<script src="/assets/per_piece_payroll/js/per_piece_report_core.js?v=20260425_07"></script>
-<script src="/assets/per_piece_payroll/js/per_piece_report_utils.js?v=20260425_07"></script>
-<script src="/assets/per_piece_payroll/js/per_piece_report_data_entry_helpers.js?v=20260425_07"></script>
-<script src="/assets/per_piece_payroll/js/per_piece_report_workflow.js?v=20260425_07"></script>
-<script src="/assets/per_piece_payroll/js/per_piece_report_reporting.js?v=20260425_07"></script>
-<script src="/assets/per_piece_payroll/js/per_piece_report_builders.js?v=20260425_07"></script>
-<script src="/assets/per_piece_payroll/js/per_piece_report_state.js?v=20260425_07"></script>
-<script src="/assets/per_piece_payroll/js/per_piece_report_views.js?v=20260425_07"></script>
-<script src="/assets/per_piece_payroll/js/per_piece_report_salary_slip.js?v=20260425_07"></script>
-<script src="/assets/per_piece_payroll/js/per_piece_report_entry_ui.js?v=20260425_07"></script>
-<script src="/assets/per_piece_payroll/js/per_piece_report_app.js?v=20260425_07"></script>
+<link rel="stylesheet" href="/assets/per_piece_payroll/css/per_piece_report.css?v=20260426_10">
+<script src="/assets/per_piece_payroll/js/per_piece_report_core.js?v=20260426_10"></script>
+<script src="/assets/per_piece_payroll/js/per_piece_report_utils.js?v=20260426_10"></script>
+<script src="/assets/per_piece_payroll/js/per_piece_report_data_entry_helpers.js?v=20260426_10"></script>
+<script src="/assets/per_piece_payroll/js/per_piece_report_workflow.js?v=20260426_10"></script>
+<script src="/assets/per_piece_payroll/js/per_piece_report_reporting.js?v=20260426_10"></script>
+<script src="/assets/per_piece_payroll/js/per_piece_report_builders.js?v=20260426_10"></script>
+<script src="/assets/per_piece_payroll/js/per_piece_report_state.js?v=20260426_10"></script>
+<script src="/assets/per_piece_payroll/js/per_piece_report_views.js?v=20260426_10"></script>
+<script src="/assets/per_piece_payroll/js/per_piece_report_salary_slip.js?v=20260426_10"></script>
+<script src="/assets/per_piece_payroll/js/per_piece_report_entry_ui.js?v=20260426_10"></script>
+<script src="/assets/per_piece_payroll/js/per_piece_report_app.js?v=20260426_10"></script>

@@ -7,7 +7,7 @@ frappe.pages["per-piece-entry"].on_page_load = function (wrapper) {
 		single_column: true,
 	});
 
-	wrapper.per_piece_native_page = new window.per_piece_payroll.PerPieceNativePage(wrapper, {
+	wrapper.per_piece_native_page = new window.per_piece_payroll.PerPieceEntryNativePage(wrapper, {
 		workspace: "entry",
 		tab: "data_entry",
 		title: __("Per Piece Entry"),
@@ -16,7 +16,7 @@ frappe.pages["per-piece-entry"].on_page_load = function (wrapper) {
 	frappe.breadcrumbs.add("Per Piece Payroll");
 };
 
-window.per_piece_payroll.PerPieceNativePage = class PerPieceNativePage {
+window.per_piece_payroll.PerPieceEntryNativePage = class PerPieceEntryNativePage {
 	constructor(wrapper, options) {
 		this.wrapper = wrapper;
 		this.page = wrapper.page;

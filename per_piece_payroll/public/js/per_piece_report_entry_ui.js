@@ -73,6 +73,8 @@
 			if (state.entryMeta.load_by_item === undefined) state.entryMeta.load_by_item = true;
 			if (state.entryMeta.skip_auto_populate_once === undefined)
 				state.entryMeta.skip_auto_populate_once = false;
+			if (state.entryMeta.skip_sync_to_item_group_once === undefined)
+				state.entryMeta.skip_sync_to_item_group_once = false;
 			if (state.entryMeta.edit_name === undefined) state.entryMeta.edit_name = "";
 			ensureEntryRows();
 			rebuildEntryMetaLookups();
@@ -96,11 +98,19 @@
 					loadSelectedItemProcessRows(selectedItemAuto, true);
 				}
 			}
-			var docs = filterDataEntryDocsByDate(
-				uniqueSalaryDocs(
-					(state.entryMeta && state.entryMeta.recentRows) || state.rows || []
-				)
-			);
+			var HISTORY_SOURCE_LIMIT = 2000;
+			var HISTORY_DOC_LIMIT = 120;
+			var historySource = (
+				(state.entryMeta && state.entryMeta.recentRows) ||
+				state.rows ||
+				[]
+			).slice(0, HISTORY_SOURCE_LIMIT);
+			var docs = filterDataEntryDocsByDate(uniqueSalaryDocs(historySource))
+				.slice()
+				.sort(function (a, b) {
+					return compareEntryNoDesc(String(a && a.name), String(b && b.name));
+				})
+				.slice(0, HISTORY_DOC_LIMIT);
 			var employeeOptions = state.entryMeta.employeeOptions || [];
 			var itemGroupOptions = state.entryMeta.itemGroupOptions || [];
 			var productOptions = state.entryMeta.productOptions || [];
@@ -125,7 +135,11 @@
 			});
 			var editing = !!(state.entryMeta.edit_name || "");
 			syncEntryEmployeeToRows();
-			syncEntryRowsToItemGroup();
+			if (state.entryMeta.skip_sync_to_item_group_once) {
+				state.entryMeta.skip_sync_to_item_group_once = false;
+			} else {
+				syncEntryRowsToItemGroup();
+			}
 
 			function selectHtml(options, value, idx, field) {
 				var htmlParts = [];
@@ -380,10 +394,19 @@
 					var dn = String((opt && opt.name) || "").trim();
 					if (!dn) return;
 					var label = String((opt && opt.label) || dn);
-					parts.push("<option value='" + esc(dn) + "'>" + esc(label) + "</option>");
+					parts.push("<option value='" + esc(label) + "'>" + esc(label) + "</option>");
 				});
 				parts.push("</datalist>");
 				return parts.join("");
+			}
+
+			function normalizeDeliveryNoteValue(raw) {
+				var text = String(raw || "").trim();
+				if (!text) return "";
+				// Accept either exact DN or label-like text: "DN-NAME | date | customer"
+				return String(text.split("|")[0] || "")
+					.trim()
+					.replace(/\s+/g, " ");
 			}
 
 			function renderDeliveryNoteOptions(rows) {
@@ -395,10 +418,21 @@
 					var dn = String((opt && opt.name) || "").trim();
 					if (!dn) return;
 					var node = document.createElement("option");
-					node.value = dn;
-					node.textContent = String((opt && opt.label) || dn);
+					var label = String((opt && opt.label) || dn);
+					node.value = label;
+					node.textContent = label;
 					listEl.appendChild(node);
 				});
+			}
+
+			function scheduleDeliveryNoteSearch(query) {
+				var q = String(query || "").trim();
+				if (state.entryMeta.delivery_note_search_timer) {
+					clearTimeout(state.entryMeta.delivery_note_search_timer);
+				}
+				state.entryMeta.delivery_note_search_timer = setTimeout(function () {
+					searchDeliveryNotes(q);
+				}, 220);
 			}
 
 			function searchDeliveryNotes(query) {
@@ -412,9 +446,38 @@
 					.catch(function () {});
 			}
 
+			function resolveDeliveryNoteName(inputValue) {
+				var typed = normalizeDeliveryNoteValue(inputValue);
+				if (!typed) return Promise.resolve("");
+				return callApi("per_piece_payroll.api.search_delivery_notes", {
+					txt: typed,
+					limit: 15,
+				})
+					.then(function (rows) {
+						var list = rows || [];
+						if (!list.length) return "";
+						var typedLc = typed.toLowerCase();
+						var exact = list.find(function (row) {
+							return String((row && row.name) || "").toLowerCase() === typedLc;
+						});
+						if (exact) return String(exact.name || "").trim();
+						var startsWith = list.find(function (row) {
+							return (
+								String((row && row.name) || "")
+									.toLowerCase()
+									.indexOf(typedLc) === 0
+							);
+						});
+						if (startsWith) return String(startsWith.name || "").trim();
+						return String((list[0] && list[0].name) || "").trim();
+					})
+					.catch(function () {
+						return "";
+					});
+			}
+
 			function buildRowsFromDeliveryItems(deliveryNote, items) {
 				var builtRows = [];
-				var selectedGroup = String(state.entryMeta.item_group || "").trim();
 				(items || []).forEach(function (it) {
 					var itemCode = String((it && it.item_code) || "").trim();
 					if (!itemCode) return;
@@ -425,12 +488,6 @@
 					) {
 						return String((r && r.item) || "").trim() === itemCode;
 					});
-					if (selectedGroup) {
-						processRows = processRows.filter(function (r) {
-							var rowGroup = String((r && r.item_group) || "").trim();
-							return !rowGroup || rowGroup === selectedGroup;
-						});
-					}
 					if (!processRows.length) {
 						processRows = [
 							{
@@ -470,6 +527,9 @@
 				state.entryMeta.delivery_note = deliveryNote;
 				state.entryMeta.load_by_item = false;
 				state.entryMeta.item = "";
+				state.entryMeta.item_group = "";
+				state.entryMeta.skip_auto_populate_once = true;
+				state.entryMeta.skip_sync_to_item_group_once = true;
 				state.entryRows = builtRows;
 				if (!String(state.entryMeta.po_number || "").trim())
 					state.entryMeta.po_number = deliveryNote;
@@ -484,8 +544,13 @@
 			}
 
 			function loadFromDeliveryNote() {
-				var deliveryNote = String(state.entryMeta.delivery_note || "").trim();
-				if (!deliveryNote) {
+				if (state.entryMeta.delivery_note_loading) return;
+				var typedDn = normalizeDeliveryNoteValue(
+					(el("pp-entry-delivery-note") && el("pp-entry-delivery-note").value) ||
+						state.entryMeta.delivery_note ||
+						""
+				);
+				if (!typedDn) {
 					showResult(
 						el("pp-entry-result"),
 						"error",
@@ -494,19 +559,123 @@
 					);
 					return;
 				}
-				callApi("per_piece_payroll.api.get_delivery_note_items", {
-					delivery_note: deliveryNote,
+				state.entryMeta.delivery_note_loading = true;
+				var loadBtn = el("pp-entry-load-dn");
+				if (loadBtn) loadBtn.disabled = true;
+				showResult(
+					el("pp-entry-result"),
+					"success",
+					"Loading Delivery Note",
+					"Loading items from " + typedDn + "..."
+				);
+				state.entryMeta.delivery_note = typedDn;
+				var inputEl = el("pp-entry-delivery-note");
+				if (inputEl) inputEl.value = typedDn;
+				callApi("per_piece_payroll.api.get_delivery_note_process_rows", {
+					delivery_note: typedDn,
 				})
-					.then(function (items) {
-						var ok = buildRowsFromDeliveryItems(deliveryNote, items || []);
-						if (!ok) {
+					.then(function (rows) {
+						var rawRows = rows || [];
+						if (rawRows.length) {
+							state.entryMeta.delivery_note = typedDn;
+							state.entryMeta.load_by_item = false;
+							state.entryMeta.item = "";
+							state.entryMeta.item_group = "";
+							state.entryMeta.skip_auto_populate_once = true;
+							state.entryMeta.skip_sync_to_item_group_once = true;
+							state.entryRows = rawRows.map(function (row) {
+								return {
+									employee: String(row.employee || "").trim(),
+									name1: String(row.name1 || "").trim(),
+									sales_order: String(row.sales_order || "").trim(),
+									product: String(row.product || "").trim(),
+									process_type: String(row.process_type || "").trim(),
+									process_size:
+										String(row.process_size || "").trim() || "No Size",
+									qty: whole(row.qty),
+									rate: whole(row.rate),
+									rate_manual: false,
+								};
+							});
+							if (!String(state.entryMeta.po_number || "").trim())
+								state.entryMeta.po_number = typedDn;
+							renderDataEntryTab();
 							showResult(
 								el("pp-entry-result"),
-								"error",
-								"No Item Found",
-								"No items found in Delivery Note " + deliveryNote + "."
+								"success",
+								"Delivery Note Loaded",
+								typedDn +
+									": " +
+									String(rawRows.length || 0) +
+									" process rows loaded."
 							);
+							return;
 						}
+						return resolveDeliveryNoteName(typedDn).then(function (resolvedDn) {
+							var deliveryNote = String(resolvedDn || "").trim();
+							if (!deliveryNote || deliveryNote === typedDn) {
+								showResult(
+									el("pp-entry-result"),
+									"error",
+									"No Item Found",
+									"No items found in Delivery Note " + typedDn + "."
+								);
+								return;
+							}
+							state.entryMeta.delivery_note = deliveryNote;
+							var input = el("pp-entry-delivery-note");
+							if (input) input.value = deliveryNote;
+							return callApi(
+								"per_piece_payroll.api.get_delivery_note_process_rows",
+								{
+									delivery_note: deliveryNote,
+								}
+							).then(function (rows) {
+								var rawRows = rows || [];
+								if (!rawRows.length) {
+									showResult(
+										el("pp-entry-result"),
+										"error",
+										"No Item Found",
+										"No items found in Delivery Note " + deliveryNote + "."
+									);
+									return;
+								}
+								state.entryMeta.delivery_note = deliveryNote;
+								state.entryMeta.load_by_item = false;
+								state.entryMeta.item = "";
+								state.entryMeta.item_group = "";
+								state.entryMeta.skip_auto_populate_once = true;
+								state.entryMeta.skip_sync_to_item_group_once = true;
+								state.entryRows = rawRows.map(function (row) {
+									return {
+										employee: String(row.employee || "").trim(),
+										name1: String(row.name1 || "").trim(),
+										sales_order: String(row.sales_order || "").trim(),
+										product: String(row.product || "").trim(),
+										process_type: String(row.process_type || "").trim(),
+										process_size:
+											String(row.process_size || "").trim() || "No Size",
+										qty: whole(row.qty),
+										rate: whole(row.rate),
+										rate_manual: false,
+									};
+								});
+								if (!String(state.entryMeta.po_number || "").trim()) {
+									state.entryMeta.po_number = deliveryNote;
+								}
+								renderDataEntryTab();
+								showResult(
+									el("pp-entry-result"),
+									"success",
+									"Delivery Note Loaded",
+									deliveryNote +
+										": " +
+										String(rawRows.length || 0) +
+										" process rows loaded."
+								);
+							});
+						});
 					})
 					.catch(function (e) {
 						showResult(
@@ -515,15 +684,21 @@
 							"Load Failed",
 							prettyError(errText(e))
 						);
+					})
+					.finally(function () {
+						state.entryMeta.delivery_note_loading = false;
+						if (loadBtn) loadBtn.disabled = false;
 					});
 			}
 
 			var html =
 				"<div class='pp-entry-card'>" +
-				"<strong>Data Enter (" +
+				"<div class='pp-entry-title'><strong>Data Enter (" +
 				(editing ? "Edit Existing Per Piece Salary" : "Create Per Piece Salary") +
-				")</strong>" +
-				"<div style='margin-top:6px;color:#475569;font-size:12px;'>PO Number is mandatory. Use Edit controls to fix draft entry mistakes.</div>" +
+				")</strong></div>" +
+				"<div class='pp-entry-subtitle'>PO Number is mandatory. Use Edit controls to fix draft entry mistakes.</div>" +
+				"<div class='pp-entry-section pp-entry-section-filters'>" +
+				"<div class='pp-entry-section-head'>Section 1: Filters And Controls</div>" +
 				"<div class='pp-jv-grid' style='margin-top:10px;'>" +
 				"<label>Edit Entry " +
 				docsSelectHtml(state.entryMeta.edit_name || "") +
@@ -564,6 +739,9 @@
 				"</button>" +
 				"</div>" +
 				"<div id='pp-entry-result' class='pp-jv-result'></div>" +
+				"</div>" +
+				"<div class='pp-entry-section pp-entry-section-lines'>" +
+				"<div class='pp-entry-section-head'>Section 2: Item Lines</div>" +
 				"<table class='pp-table' style='margin-top:8px;'><thead><tr><th>Employee</th><th>Employee First Name</th><th>Sales Order</th><th>Product</th><th>Process Type</th><th>Process Size</th><th>Qty</th><th>Rate</th><th>Amount</th><th>Action</th></tr></thead><tbody>";
 			state.entryRows.forEach(function (r, idx) {
 				var name1 = r.name1 || employeeNameMap[r.employee || ""] || "";
@@ -641,61 +819,59 @@
 				"<td></td>" +
 				"</tr>";
 			html += "</tbody></table>";
+			html += "</div>";
+			html +=
+				"<div class='pp-entry-section pp-entry-section-history'>" +
+				"<div class='pp-entry-section-head'>Section 3: Recent Docs</div>" +
+				"<div class='pp-entry-list'><strong>Recent Docs:</strong></div>";
+			state.entryMeta.selected_docs = state.entryMeta.selected_docs || {};
+			var selectedDocs = state.entryMeta.selected_docs;
+			var docsPage = paginateHistoryRows("data_entry_docs", docs, 10);
+			var selectedCount = Object.keys(selectedDocs).filter(function (k) {
+				return !!selectedDocs[k];
+			}).length;
+			html +=
+				"<div class='pp-jv-grid' style='margin-top:6px;margin-bottom:6px;'>" +
+				"<label>History From <input type='date' id='pp-entry-history-from' value='" +
+				esc((state.workflowHistoryDate.data_entry || {}).from || "") +
+				"'></label>" +
+				"<label>History To <input type='date' id='pp-entry-history-to' value='" +
+				esc((state.workflowHistoryDate.data_entry || {}).to || "") +
+				"'></label>" +
+				"<label>Booking Status <select id='pp-entry-history-booking-status'>" +
+				"<option value=''>All</option><option value='Booked'" +
+				(getWorkflowStatusFilter("data_entry").booking === "Booked" ? " selected" : "") +
+				">Booked</option><option value='UnBooked'" +
+				(getWorkflowStatusFilter("data_entry").booking === "UnBooked" ? " selected" : "") +
+				">UnBooked</option><option value='Partly Booked'" +
+				(getWorkflowStatusFilter("data_entry").booking === "Partly Booked"
+					? " selected"
+					: "") +
+				">Partly Booked</option>" +
+				"</select></label>" +
+				"<label>Payment Status <select id='pp-entry-history-payment-status'>" +
+				"<option value=''>All</option><option value='Paid'" +
+				(getWorkflowStatusFilter("data_entry").payment === "Paid" ? " selected" : "") +
+				">Paid</option><option value='Unpaid'" +
+				(getWorkflowStatusFilter("data_entry").payment === "Unpaid" ? " selected" : "") +
+				">Unpaid</option><option value='Partly Paid'" +
+				(getWorkflowStatusFilter("data_entry").payment === "Partly Paid"
+					? " selected"
+					: "") +
+				">Partly Paid</option>" +
+				"</select></label>" +
+				"</div>";
+			html +=
+				"<div class='pp-entry-actions' style='margin-top:4px;'>" +
+				"<button type='button' class='btn btn-default btn-xs' id='pp-entry-doc-select-page'>Select Page</button>" +
+				"<button type='button' class='btn btn-default btn-xs' id='pp-entry-doc-clear-select'>Clear Selected</button>" +
+				"<button type='button' class='btn btn-primary btn-xs' id='pp-entry-doc-book-selected'>Book Selected</button>" +
+				"<button type='button' class='btn btn-success btn-xs' id='pp-entry-doc-pay-selected'>Pay Selected</button>" +
+				"<span style='color:#334155;font-size:12px;'>Selected Entries: <strong id='pp-entry-doc-selected-count'>" +
+				esc(selectedCount) +
+				"</strong></span>" +
+				"</div>";
 			if (docs.length) {
-				state.entryMeta.selected_docs = state.entryMeta.selected_docs || {};
-				var selectedDocs = state.entryMeta.selected_docs;
-				var docsPage = paginateHistoryRows("data_entry_docs", docs, 10);
-				var selectedCount = Object.keys(selectedDocs).filter(function (k) {
-					return !!selectedDocs[k];
-				}).length;
-				html += "<div class='pp-entry-list'><strong>Recent Docs:</strong></div>";
-				html +=
-					"<div class='pp-jv-grid' style='margin-top:6px;margin-bottom:6px;'>" +
-					"<label>History From <input type='date' id='pp-entry-history-from' value='" +
-					esc((state.workflowHistoryDate.data_entry || {}).from || "") +
-					"'></label>" +
-					"<label>History To <input type='date' id='pp-entry-history-to' value='" +
-					esc((state.workflowHistoryDate.data_entry || {}).to || "") +
-					"'></label>" +
-					"<label>Booking Status <select id='pp-entry-history-booking-status'>" +
-					"<option value=''>All</option><option value='Booked'" +
-					(getWorkflowStatusFilter("data_entry").booking === "Booked"
-						? " selected"
-						: "") +
-					">Booked</option><option value='UnBooked'" +
-					(getWorkflowStatusFilter("data_entry").booking === "UnBooked"
-						? " selected"
-						: "") +
-					">UnBooked</option><option value='Partly Booked'" +
-					(getWorkflowStatusFilter("data_entry").booking === "Partly Booked"
-						? " selected"
-						: "") +
-					">Partly Booked</option>" +
-					"</select></label>" +
-					"<label>Payment Status <select id='pp-entry-history-payment-status'>" +
-					"<option value=''>All</option><option value='Paid'" +
-					(getWorkflowStatusFilter("data_entry").payment === "Paid" ? " selected" : "") +
-					">Paid</option><option value='Unpaid'" +
-					(getWorkflowStatusFilter("data_entry").payment === "Unpaid"
-						? " selected"
-						: "") +
-					">Unpaid</option><option value='Partly Paid'" +
-					(getWorkflowStatusFilter("data_entry").payment === "Partly Paid"
-						? " selected"
-						: "") +
-					">Partly Paid</option>" +
-					"</select></label>" +
-					"</div>";
-				html +=
-					"<div class='pp-entry-actions' style='margin-top:4px;'>" +
-					"<button type='button' class='btn btn-default btn-xs' id='pp-entry-doc-select-page'>Select Page</button>" +
-					"<button type='button' class='btn btn-default btn-xs' id='pp-entry-doc-clear-select'>Clear Selected</button>" +
-					"<button type='button' class='btn btn-primary btn-xs' id='pp-entry-doc-book-selected'>Book Selected</button>" +
-					"<button type='button' class='btn btn-success btn-xs' id='pp-entry-doc-pay-selected'>Pay Selected</button>" +
-					"<span style='color:#334155;font-size:12px;'>Selected Entries: <strong id='pp-entry-doc-selected-count'>" +
-					esc(selectedCount) +
-					"</strong></span>" +
-					"</div>";
 				html +=
 					"<table class='pp-table' style='margin-top:6px;'><thead><tr><th>Select</th><th>Entry No</th><th>From Date</th><th>To Date</th><th>PO Number</th><th>JV Status</th><th>Pay Status</th><th>Total Amount</th><th>Book</th><th>Pay</th><th>View Detail</th><th>View Entered</th><th>Edit</th><th>Open</th></tr></thead><tbody>";
 				var docsTotalAmount = 0;
@@ -755,7 +931,10 @@
 					"</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>";
 				html += "</tbody></table>";
 				html += historyPagerHtml(docsPage);
+			} else {
+				html += "<div class='pp-entry-list'>No matching recent docs.</div>";
 			}
+			html += "</div>";
 			html += "</div>";
 			wrap.innerHTML = html;
 
@@ -832,6 +1011,23 @@
 					renderDataEntryTab();
 				});
 			}
+
+			function runEntryFilterRebuild() {
+				rebuildEntryMetaLookups();
+				populateEntryRowsFromItemGroup(true);
+				syncEntryRowsToItemGroup();
+				renderDataEntryTab();
+			}
+
+			function scheduleEntryFilterRebuild(delayMs) {
+				if (state.entryMeta.filter_change_timer) {
+					clearTimeout(state.entryMeta.filter_change_timer);
+				}
+				state.entryMeta.filter_change_timer = setTimeout(function () {
+					runEntryFilterRebuild();
+				}, delayMs || 120);
+			}
+
 			var itemGroupInput = el("pp-entry-item-group");
 			if (itemGroupInput) {
 				itemGroupInput.addEventListener("change", function () {
@@ -844,20 +1040,14 @@
 							itemOk = true;
 					});
 					if (!itemOk) state.entryMeta.item = "";
-					rebuildEntryMetaLookups();
-					populateEntryRowsFromItemGroup(true);
-					syncEntryRowsToItemGroup();
-					renderDataEntryTab();
+					scheduleEntryFilterRebuild(130);
 				});
 			}
 			var loadByItemInput = el("pp-entry-load-by-item");
 			if (loadByItemInput) {
 				loadByItemInput.addEventListener("change", function () {
 					state.entryMeta.load_by_item = !!loadByItemInput.checked;
-					rebuildEntryMetaLookups();
-					populateEntryRowsFromItemGroup(true);
-					syncEntryRowsToItemGroup();
-					renderDataEntryTab();
+					scheduleEntryFilterRebuild(120);
 				});
 			}
 			var itemInput = el("pp-entry-item");
@@ -866,13 +1056,15 @@
 					state.entryMeta.item = itemInput.value || "";
 					var selectedItem = String(state.entryMeta.item || "").trim();
 					if (selectedItem && state.entryMeta.load_by_item !== false) {
-						loadSelectedItemProcessRows(selectedItem, true);
+						if (state.entryMeta.item_change_timer) {
+							clearTimeout(state.entryMeta.item_change_timer);
+						}
+						state.entryMeta.item_change_timer = setTimeout(function () {
+							loadSelectedItemProcessRows(selectedItem, true);
+						}, 160);
 						return;
 					}
-					rebuildEntryMetaLookups();
-					populateEntryRowsFromItemGroup(true);
-					syncEntryRowsToItemGroup();
-					renderDataEntryTab();
+					scheduleEntryFilterRebuild(100);
 				});
 			}
 			var loadDocBtn = el("pp-entry-load-doc");
@@ -885,11 +1077,20 @@
 			var deliveryNoteInput = el("pp-entry-delivery-note");
 			if (deliveryNoteInput) {
 				deliveryNoteInput.addEventListener("input", function () {
-					state.entryMeta.delivery_note = deliveryNoteInput.value || "";
-					searchDeliveryNotes(deliveryNoteInput.value || "");
+					state.entryMeta.delivery_note = normalizeDeliveryNoteValue(
+						deliveryNoteInput.value || ""
+					);
+					scheduleDeliveryNoteSearch(deliveryNoteInput.value || "");
 				});
 				deliveryNoteInput.addEventListener("change", function () {
-					state.entryMeta.delivery_note = deliveryNoteInput.value || "";
+					var normalized = normalizeDeliveryNoteValue(deliveryNoteInput.value || "");
+					state.entryMeta.delivery_note = normalized;
+					deliveryNoteInput.value = normalized;
+				});
+				deliveryNoteInput.addEventListener("blur", function () {
+					var normalized = normalizeDeliveryNoteValue(deliveryNoteInput.value || "");
+					state.entryMeta.delivery_note = normalized;
+					deliveryNoteInput.value = normalized;
 				});
 				if (!(state.entryMeta.deliveryNoteOptions || []).length) searchDeliveryNotes("");
 			}

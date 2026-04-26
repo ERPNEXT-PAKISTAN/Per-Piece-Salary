@@ -204,8 +204,12 @@
 		function loadSelectedItemProcessRows(selectedItem, forceRender) {
 			var itemName = String(selectedItem || "").trim();
 			if (!itemName || state.entryMeta.load_by_item === false) return;
-			if (state.entryMeta.item_fetch_inflight) return;
+			if (state.entryMeta.item_fetch_inflight) {
+				state.entryMeta.item_fetch_pending = itemName;
+				return;
+			}
 			state.entryMeta.item_fetch_inflight = 1;
+			state.entryMeta.item_fetch_pending = "";
 			callApi("per_piece_payroll.api.get_item_process_rows", {
 				item: itemName,
 			})
@@ -213,7 +217,7 @@
 					var list = (rows || []).filter(function (r) {
 						return String((r && r.item) || "").trim() === itemName;
 					});
-					if (list.length) {
+					if (list.length && String(state.entryMeta.item || "").trim() === itemName) {
 						var keep = (state.entryMeta.masterProcessRows || []).filter(function (r) {
 							return String((r && r.item) || "").trim() !== itemName;
 						});
@@ -245,13 +249,25 @@
 							};
 						});
 					}
+					var pendingItem = String(state.entryMeta.item_fetch_pending || "").trim();
 					state.entryMeta.item_fetch_inflight = 0;
+					state.entryMeta.item_fetch_pending = "";
+					if (pendingItem && pendingItem !== itemName) {
+						loadSelectedItemProcessRows(pendingItem, forceRender);
+						return;
+					}
 					rebuildEntryMetaLookups();
 					syncEntryRowsToItemGroup();
 					if (forceRender) renderDataEntryTab();
 				})
 				.catch(function () {
+					var pendingItem = String(state.entryMeta.item_fetch_pending || "").trim();
 					state.entryMeta.item_fetch_inflight = 0;
+					state.entryMeta.item_fetch_pending = "";
+					if (pendingItem && pendingItem !== itemName) {
+						loadSelectedItemProcessRows(pendingItem, forceRender);
+						return;
+					}
 					if (forceRender) renderDataEntryTab();
 				});
 		}

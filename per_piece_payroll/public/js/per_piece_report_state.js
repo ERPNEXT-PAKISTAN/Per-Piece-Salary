@@ -14,6 +14,11 @@
 		var getWorkflowHistoryRange = deps.getWorkflowHistoryRange;
 		var setOptions = deps.setOptions;
 		var buildEmployeeSummaryRows = deps.buildEmployeeSummaryRows;
+		var getBookedAmountForPaymentRow =
+			deps.getBookedAmountForPaymentRow ||
+			function (r) {
+				return num((r && r.booked_amount) || (r && r.amount));
+			};
 
 		function getUnpostedRows() {
 			var range = getWorkflowHistoryRange("salary_creation");
@@ -49,9 +54,11 @@
 
 		function buildPaymentEmployeeRows(rows) {
 			var map = {};
+			var entryEmployeeBooked = {};
 			(rows || []).forEach(function (r) {
 				var emp = String(r.employee || "");
 				if (!emp) return;
+				var entry = String(r.per_piece_salary || "").trim();
 				if (!map[emp]) {
 					map[emp] = {
 						employee: emp,
@@ -62,18 +69,22 @@
 						payment_status: "Unpaid",
 					};
 				}
-				var booked = num(r.booked_amount || r.amount);
-				var paid = num(r.paid_amount);
-				var unpaid = num(r.unpaid_amount);
-				if (!unpaid && booked >= paid) unpaid = booked - paid;
-				map[emp].booked_amount += booked;
+				var entryEmpKey = (entry || String(r.row_id || r.name || "")) + "::" + emp;
+				var booked = 0;
+				if (!entryEmployeeBooked[entryEmpKey]) {
+					booked = Math.max(num(getBookedAmountForPaymentRow(r)), 0);
+					entryEmployeeBooked[entryEmpKey] = 1;
+					map[emp].booked_amount += booked;
+				}
+				var paid = Math.max(num(r.paid_amount), 0);
 				map[emp].paid_amount += paid;
-				map[emp].unpaid_amount += Math.max(unpaid, 0);
 			});
 			return Object.keys(map)
 				.sort()
 				.map(function (k) {
 					var row = map[k];
+					if (row.paid_amount > row.booked_amount) row.paid_amount = row.booked_amount;
+					row.unpaid_amount = Math.max(row.booked_amount - row.paid_amount, 0);
 					if (row.unpaid_amount <= 0 && row.booked_amount > 0)
 						row.payment_status = "Paid";
 					else if (row.paid_amount > 0 && row.unpaid_amount > 0)
@@ -84,14 +95,10 @@
 		}
 
 		function normalizePaymentAdjustments() {
-			var previous = state.paymentAdjustments || {};
 			var next = {};
 			buildPaymentEmployeeRows(getBookedRows()).forEach(function (r) {
 				var key = r.employee || "";
-				var old = previous[key] || {};
-				var hasOld = Object.prototype.hasOwnProperty.call(old, "payment_amount");
-				var amount = hasOld ? whole(old.payment_amount) : whole(r.unpaid_amount);
-				if (amount > num(r.unpaid_amount)) amount = whole(r.unpaid_amount);
+				var amount = whole(r.unpaid_amount);
 				next[key] = { payment_amount: amount, unpaid_amount: num(r.unpaid_amount) };
 			});
 			state.paymentAdjustments = next;

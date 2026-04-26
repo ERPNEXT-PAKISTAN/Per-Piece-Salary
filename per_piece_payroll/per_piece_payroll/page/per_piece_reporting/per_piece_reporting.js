@@ -7,16 +7,19 @@ frappe.pages["per-piece-reporting"].on_page_load = function (wrapper) {
 		single_column: true,
 	});
 
-	wrapper.per_piece_native_page = new window.per_piece_payroll.PerPieceNativePage(wrapper, {
-		workspace: "reporting",
-		tab: "all",
-		title: __("Per Piece Reporting"),
-	});
+	wrapper.per_piece_native_page = new window.per_piece_payroll.PerPieceReportingNativePage(
+		wrapper,
+		{
+			workspace: "reporting",
+			tab: "all",
+			title: __("Per Piece Reporting"),
+		}
+	);
 
 	frappe.breadcrumbs.add("Per Piece Payroll");
 };
 
-window.per_piece_payroll.PerPieceNativePage = class PerPieceNativePage {
+window.per_piece_payroll.PerPieceReportingNativePage = class PerPieceReportingNativePage {
 	constructor(wrapper, options) {
 		this.wrapper = wrapper;
 		this.page = wrapper.page;
