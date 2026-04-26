@@ -66,6 +66,9 @@
 					: "";
 			if (state.entryMeta.item === undefined) state.entryMeta.item = "";
 			if (state.entryMeta.delivery_note === undefined) state.entryMeta.delivery_note = "";
+			if (state.entryMeta.company === undefined) state.entryMeta.company = "";
+			if (!String(state.entryMeta.company || "").trim())
+				state.entryMeta.company = el("pp-company") ? el("pp-company").value || "" : "";
 			if (state.entryMeta.deliveryNoteOptions === undefined)
 				state.entryMeta.deliveryNoteOptions = [];
 			if (state.entryMeta.employee === undefined)
@@ -114,6 +117,13 @@
 			var employeeOptions = state.entryMeta.employeeOptions || [];
 			var itemGroupOptions = state.entryMeta.itemGroupOptions || [];
 			var productOptions = state.entryMeta.productOptions || [];
+			var companyOptions = (state.filterOptions.companies || [])
+				.map(function (v) {
+					return { value: String(v || "").trim(), label: String(v || "").trim() };
+				})
+				.filter(function (r) {
+					return !!r.value;
+				});
 			var salesOrderOptions = (state.filterOptions.sales_orders || [])
 				.map(function (v) {
 					return { value: String(v || "").trim(), label: String(v || "").trim() };
@@ -322,6 +332,39 @@
 				parts.push("<select id='pp-entry-employee'>");
 				parts.push("<option value=''>All Employees</option>");
 				(employeeOptions || []).forEach(function (opt) {
+					var optValue = String((opt && opt.value) || "");
+					var selected = optValue === current ? " selected" : "";
+					if (selected) exists = true;
+					parts.push(
+						"<option value='" +
+							esc(optValue) +
+							"'" +
+							selected +
+							">" +
+							esc((opt && opt.label) || optValue) +
+							"</option>"
+					);
+				});
+				if (current && !exists) {
+					parts.push(
+						"<option value='" +
+							esc(current) +
+							"' selected>" +
+							esc(current) +
+							"</option>"
+					);
+				}
+				parts.push("</select>");
+				return parts.join("");
+			}
+
+			function companySelectHtml(selectedValue) {
+				var parts = [];
+				var current = String(selectedValue || "");
+				var exists = false;
+				parts.push("<select id='pp-entry-company'>");
+				parts.push("<option value=''>All Companies</option>");
+				(companyOptions || []).forEach(function (opt) {
 					var optValue = String((opt && opt.value) || "");
 					var selected = optValue === current ? " selected" : "";
 					if (selected) exists = true;
@@ -712,6 +755,9 @@
 				"<label>To Date <input type='date' id='pp-entry-to-date' value='" +
 				esc(state.entryMeta.to_date || "") +
 				"'></label>" +
+				"<label>Company " +
+				companySelectHtml(state.entryMeta.company || "") +
+				"</label>" +
 				"<label>Employee " +
 				employeeSelectHtml(state.entryMeta.employee || "") +
 				"</label>" +
@@ -1013,6 +1059,13 @@
 				poInput.addEventListener("change", function () {
 					state.entryMeta.po_number = poInput.value || "";
 				});
+			var companyInput = el("pp-entry-company");
+			if (companyInput) {
+				companyInput.addEventListener("change", function () {
+					state.entryMeta.company = companyInput.value || "";
+					if (el("pp-company")) el("pp-company").value = state.entryMeta.company;
+				});
+			}
 			var employeeInput = el("pp-entry-employee");
 			if (employeeInput) {
 				employeeInput.addEventListener("change", function () {
@@ -1117,6 +1170,7 @@
 					state.entryMeta.edit_name = "";
 					state.entryMeta.from_date = win.from;
 					state.entryMeta.to_date = win.to;
+					state.entryMeta.company = el("pp-company") ? el("pp-company").value || "" : "";
 					state.entryMeta.employee = "";
 					state.entryMeta.item_group = "";
 					state.entryMeta.item = "";
@@ -1475,6 +1529,7 @@
 					state.entryMeta.edit_name = doc.name || "";
 					state.entryMeta.from_date = doc.from_date || "";
 					state.entryMeta.to_date = doc.to_date || "";
+					state.entryMeta.company = doc.company || "";
 					state.entryMeta.employee = doc.employee || "";
 					state.entryMeta.item_group = doc.item_group || "";
 					state.entryMeta.item = doc.item || "";
@@ -1498,6 +1553,7 @@
 						};
 					});
 					ensureEntryRows();
+					if (el("pp-company")) el("pp-company").value = state.entryMeta.company || "";
 					renderDataEntryTab();
 					showResult(
 						el("pp-entry-result"),
@@ -1528,6 +1584,11 @@
 			var selectedItemSingle =
 				(el("pp-entry-item") && el("pp-entry-item").value) || state.entryMeta.item || "";
 			var po = el("pp-entry-po-number").value || state.entryMeta.po_number || "";
+			var company =
+				(el("pp-entry-company") && el("pp-entry-company").value) ||
+				(el("pp-company") && el("pp-company").value) ||
+				state.entryMeta.company ||
+				"";
 			var editName = state.entryMeta.edit_name || "";
 
 			// Always capture the latest typed row values from DOM before save.
@@ -1606,6 +1667,7 @@
 				entry_name: editName,
 				from_date: fromDate,
 				to_date: toDate,
+				company: company,
 				employee: employee,
 				item_group: itemGroup,
 				item: selectedItemSingle,

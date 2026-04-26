@@ -34,6 +34,7 @@
 		var showDataEntryEmployeeDetails = deps.showDataEntryEmployeeDetails;
 		var showSalaryEmployeeDetail = deps.showSalaryEmployeeDetail;
 		var showSalarySlipPrint = deps.showSalarySlipPrint;
+		var showSalarySlipByEntry = deps.showSalarySlipByEntry;
 		var showSalaryEntryWisePrints = deps.showSalaryEntryWisePrints;
 		var parseDecimalInput = deps.parseDecimalInput;
 		var buildSalarySlipGroups = deps.buildSalarySlipGroups;
@@ -811,6 +812,9 @@
 					"<button type='button' class='btn btn-primary btn-xs pp-salary-slip-print' data-mode='product' data-employee='" +
 					encodeURIComponent(String(g.employee || "")) +
 					"'>Print Product Slip</button> " +
+					"<button type='button' class='btn btn-primary btn-xs pp-salary-slip-print' data-mode='order' data-employee='" +
+					encodeURIComponent(String(g.employee || "")) +
+					"'>Salary Slip by Order</button> " +
 					"<button type='button' class='btn btn-primary btn-xs pp-salary-slip-entry-prints' data-employee='" +
 					encodeURIComponent(String(g.employee || "")) +
 					"'>Entry Wise Print</button>";
@@ -982,6 +986,108 @@
 			});
 		}
 
+		function renderSalarySlipByDCTable(rows) {
+			var wrap = el("pp-table-wrap");
+			if (!wrap) return;
+			var map = {};
+			(rows || []).forEach(function (r) {
+				var entryNo = String(r.per_piece_salary || "").trim();
+				if (!entryNo) return;
+				var dcNo = String(r.delivery_note || "").trim();
+				var empId = String(r.employee || "").trim();
+				var empName = String(r.name1 || "").trim() || empId;
+				var key = entryNo + "||" + dcNo + "||" + empId;
+				if (!map[key]) {
+					map[key] = {
+						entry_no: entryNo,
+						delivery_note: dcNo,
+						employee: empId,
+						employee_name: empName,
+						from_date: r.from_date || "",
+						to_date: r.to_date || "",
+						net_salary: 0,
+						row_count: 0,
+					};
+				}
+				var rowFrom = String(r.from_date || "").trim();
+				var rowTo = String(r.to_date || "").trim();
+				if (rowFrom && (!map[key].from_date || rowFrom < map[key].from_date))
+					map[key].from_date = rowFrom;
+				if (rowTo && (!map[key].to_date || rowTo > map[key].to_date))
+					map[key].to_date = rowTo;
+				var amount = num(r.amount);
+				var adv = num(r.advance_deduction);
+				var allow = num(r.allowance);
+				var other = num(r.other_deduction);
+				var net = num(r.net_amount);
+				if (!net) net = Math.max(amount - adv + allow - other, 0);
+				map[key].net_salary += net;
+				map[key].row_count += 1;
+			});
+			var entries = Object.keys(map)
+				.map(function (k) {
+					return map[k];
+				})
+				.sort(function (a, b) {
+					var ea = String(a.entry_no || "");
+					var eb = String(b.entry_no || "");
+					if (ea !== eb) return eb.localeCompare(ea);
+					var da = String(a.delivery_note || "");
+					var db = String(b.delivery_note || "");
+					if (da !== db) return db.localeCompare(da);
+					return String(a.employee_name || "").localeCompare(
+						String(b.employee_name || "")
+					);
+				});
+			if (!entries.length) {
+				wrap.innerHTML =
+					"<div style='padding:10px;color:#475569;'>No Salary Slip by DC rows found for current filters.</div>";
+				return;
+			}
+			var html =
+				"<table class='pp-table'><thead><tr>" +
+				"<th>From Date</th><th>To Date</th><th>DC No.</th><th>Entry No</th><th>Employee</th><th>Net Salary</th><th>Print</th>" +
+				"</tr></thead><tbody>";
+			var totalNet = 0;
+			entries.forEach(function (r) {
+				totalNet += num(r.net_salary);
+				html +=
+					"<tr><td>" +
+					esc(r.from_date || "") +
+					"</td><td>" +
+					esc(r.to_date || "") +
+					"</td><td>" +
+					esc(r.delivery_note || "") +
+					"</td><td>" +
+					esc(r.entry_no || "") +
+					"</td><td>" +
+					esc(r.employee_name || r.employee || "") +
+					"</td><td class='num pp-amt-col'>" +
+					esc(fmt(r.net_salary)) +
+					"</td><td><button type='button' class='btn btn-primary btn-xs pp-salary-slip-dc-print' data-entry='" +
+					encodeURIComponent(String(r.entry_no || "")) +
+					"' data-dc='" +
+					encodeURIComponent(String(r.delivery_note || "")) +
+					"' data-employee='" +
+					encodeURIComponent(String(r.employee || "")) +
+					"'>Print</button></td></tr>";
+			});
+			html +=
+				"<tr class='pp-year-total'><td colspan='5'>Total</td><td class='num pp-amt-col'>" +
+				esc(fmt(totalNet)) +
+				"</td><td></td></tr>";
+			html += "</tbody></table>";
+			wrap.innerHTML = html;
+			wrap.querySelectorAll(".pp-salary-slip-dc-print").forEach(function (btn) {
+				btn.addEventListener("click", function () {
+					var entryNo = decodeURIComponent(btn.getAttribute("data-entry") || "");
+					var dcNo = decodeURIComponent(btn.getAttribute("data-dc") || "");
+					var employee = decodeURIComponent(btn.getAttribute("data-employee") || "");
+					showSalarySlipByEntry(entryNo, dcNo, employee);
+				});
+			});
+		}
+
 		function renderPaymentTable(rows) {
 			var wrap = el("pp-table-wrap");
 			if (!wrap) return;
@@ -1117,6 +1223,7 @@
 			renderSalaryTable: renderSalaryTable,
 			renderEmployeeSummaryTable: renderEmployeeSummaryTable,
 			renderSalarySlipTable: renderSalarySlipTable,
+			renderSalarySlipByDCTable: renderSalarySlipByDCTable,
 			renderPaymentTable: renderPaymentTable,
 			setJVAmounts: setJVAmounts,
 			refreshJVAmountsFromAdjustments: refreshJVAmountsFromAdjustments,

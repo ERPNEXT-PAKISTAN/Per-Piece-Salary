@@ -237,6 +237,7 @@
 			return [];
 		};
 	var showSalarySlipPrint = salarySlip.showSalarySlipPrint || function () {};
+	var showSalarySlipByEntry = salarySlip.showSalarySlipByEntry || function () {};
 	var showSalaryEntryWisePrints = salarySlip.showSalaryEntryWisePrints || function () {};
 
 	function refreshTopProductOptions() {
@@ -349,6 +350,7 @@
 		return {
 			from_date: fromVal,
 			to_date: toVal,
+			company: el("pp-company") ? el("pp-company").value || "" : "",
 			employee: el("pp-employee").value || "",
 			item_group: el("pp-item-group") ? el("pp-item-group").value || "" : "",
 			delivery_note: el("pp-delivery-note")
@@ -414,6 +416,7 @@
 		var payment = el("pp-payment-status")
 			? String(el("pp-payment-status").value || "").trim()
 			: "";
+		var company = el("pp-company") ? String(el("pp-company").value || "").trim() : "";
 		var from = String((el("pp-from-date") && el("pp-from-date").value) || "").trim();
 		var to = String((el("pp-to-date") && el("pp-to-date").value) || "").trim();
 		if (!entry && el("pp-entry-no")) entry = String(el("pp-entry-no").value || "").trim();
@@ -429,6 +432,9 @@
 			booking = "";
 			payment = "";
 		}
+		if (opts.ignore_company_filter) {
+			company = "";
+		}
 		return (rows || []).filter(function (r) {
 			var rowFrom = String((r && r.from_date) || "").trim();
 			var rowTo = String((r && r.to_date) || "").trim();
@@ -439,6 +445,7 @@
 				return false;
 			if (salesOrder && String(r.sales_order || "") !== salesOrder) return false;
 			if (entry && String(r.per_piece_salary || "") !== entry) return false;
+			if (company && String(r.company || "").trim() !== company) return false;
 			if (booking && String(r.booking_status || "").trim() !== booking) return false;
 			if (payment && String(r.payment_status || "").trim() !== payment) return false;
 			return true;
@@ -742,6 +749,7 @@
 			get_options: 1,
 		}).then(function (m) {
 			var currentEmployee = el("pp-employee") ? el("pp-employee").value || "" : "";
+			var currentCompany = el("pp-company") ? el("pp-company").value || "" : "";
 			var currentItemGroup = el("pp-item-group") ? el("pp-item-group").value || "" : "";
 			var currentProcessType = el("pp-process-type")
 				? el("pp-process-type").value || ""
@@ -753,7 +761,11 @@
 				products: (m && m.products) || [],
 				process_types: (m && m.process_types) || [],
 				sales_orders: (m && m.sales_orders) || [],
+				companies: (m && m.companies) || [],
 			};
+			var companies = (state.filterOptions.companies || []).map(function (v) {
+				return { value: v, label: v };
+			});
 			var emps = (state.filterOptions.employees || []).map(function (v) {
 				return { value: v, label: v };
 			});
@@ -772,10 +784,12 @@
 			state.advanceBalances = (m && m.advance_balances) || {};
 			state.advanceRows = (m && m.advance_rows) || [];
 			state.advanceMonths = (m && m.advance_months) || [];
+			setOptions(el("pp-company"), companies, "value", "label", "All");
 			setOptions(el("pp-employee"), emps, "value", "label", "All");
 			setOptions(el("pp-item-group"), itemGroups, "value", "label", "All");
 			setOptions(el("pp-process-type"), ptypes, "value", "label", "All");
 			setOptions(el("pp-sales-order"), salesOrders, "value", "label", "All");
+			if (el("pp-company")) el("pp-company").value = currentCompany;
 			if (el("pp-employee")) el("pp-employee").value = currentEmployee;
 			if (el("pp-item-group")) el("pp-item-group").value = currentItemGroup;
 			if (el("pp-process-type")) el("pp-process-type").value = currentProcessType;
@@ -1321,6 +1335,7 @@
 					return showSalaryEmployeeDetail.apply(null, arguments);
 				},
 				showSalarySlipPrint: showSalarySlipPrint,
+				showSalarySlipByEntry: showSalarySlipByEntry,
 				showSalaryEntryWisePrints: showSalaryEntryWisePrints,
 				parseDecimalInput: parseDecimalInput,
 				buildSalarySlipGroups: buildSalarySlipGroups,
@@ -1332,6 +1347,7 @@
 	var renderSalaryTable = views.renderSalaryTable || function () {};
 	var renderEmployeeSummaryTable = views.renderEmployeeSummaryTable || function () {};
 	var renderSalarySlipTable = views.renderSalarySlipTable || function () {};
+	var renderSalarySlipByDCTable = views.renderSalarySlipByDCTable || function () {};
 	var renderPaymentTable = views.renderPaymentTable || function () {};
 	var setJVAmounts = views.setJVAmounts || function () {};
 	var refreshJVAmountsFromAdjustments = views.refreshJVAmountsFromAdjustments || function () {};
@@ -2055,15 +2071,17 @@
 		wrap.querySelectorAll(".pp-view-payment-create").forEach(function (btn) {
 			btn.addEventListener("click", function () {
 				var jvName = btn.getAttribute("data-jv") || "";
+				var entryScope = btn.getAttribute("data-entry-scope") || "";
 				if (!jvName) return;
-				showPaymentEntrySummary(jvName, false);
+				showPaymentEntrySummary(jvName, false, entryScope);
 			});
 		});
 		wrap.querySelectorAll(".pp-print-payment-create").forEach(function (btn) {
 			btn.addEventListener("click", function () {
 				var jvName = btn.getAttribute("data-jv") || "";
+				var entryScope = btn.getAttribute("data-entry-scope") || "";
 				if (!jvName) return;
-				showPaymentEntrySummary(jvName, true);
+				showPaymentEntrySummary(jvName, true, entryScope);
 			});
 		});
 		wrap.querySelectorAll(".pp-history-prev").forEach(function (btn) {
@@ -2390,6 +2408,166 @@
 		return refs;
 	}
 
+	function getDoctypeTotalsForEntry(entryName) {
+		var target = String(entryName || "").trim();
+		var totals = {
+			amount: 0,
+			booked_amount: 0,
+			paid_amount: 0,
+			unpaid_amount: 0,
+			rows: 0,
+		};
+		if (!target) return totals;
+		var seen = {};
+		(state.rows || []).forEach(function (r) {
+			if (String(r.per_piece_salary || "").trim() !== target) return;
+			var rowKey =
+				String(r.row_id || "").trim() ||
+				[
+					String(r.per_piece_salary || "").trim(),
+					String(r.employee || "").trim(),
+					String(r.product || "").trim(),
+					String(r.process_type || "").trim(),
+					String(r.process_size || "").trim(),
+					String(r.sales_order || "").trim(),
+					String(r.delivery_note || "").trim(),
+					String(r.qty || "").trim(),
+					String(r.rate || "").trim(),
+				].join("::");
+			if (seen[rowKey]) return;
+			seen[rowKey] = 1;
+			totals.amount += num(r.amount);
+			totals.booked_amount += num(r.booked_amount);
+			totals.paid_amount += num(r.paid_amount);
+			totals.unpaid_amount += num(r.unpaid_amount);
+			totals.rows += 1;
+		});
+		return totals;
+	}
+
+	function getDoctypeTotalsForEntries(entryNames) {
+		var totals = {
+			amount: 0,
+			booked_amount: 0,
+			paid_amount: 0,
+			unpaid_amount: 0,
+			rows: 0,
+		};
+		(entryNames || []).forEach(function (name) {
+			var t = getDoctypeTotalsForEntry(name);
+			totals.amount += num(t.amount);
+			totals.booked_amount += num(t.booked_amount);
+			totals.paid_amount += num(t.paid_amount);
+			totals.unpaid_amount += num(t.unpaid_amount);
+			totals.rows += num(t.rows);
+		});
+		return totals;
+	}
+
+	function getDoctypeEmployeeTotalsForEntry(entryName) {
+		var target = String(entryName || "").trim();
+		var out = {};
+		if (!target) return out;
+		var seen = {};
+		(state.rows || []).forEach(function (r) {
+			if (String(r.per_piece_salary || "").trim() !== target) return;
+			var rowId = String(r.row_id || "").trim();
+			var key =
+				rowId ||
+				[
+					target,
+					String(r.employee || ""),
+					String(r.idx || ""),
+					String(r.qty || ""),
+					String(r.rate || ""),
+					String(r.amount || ""),
+				].join("::");
+			if (seen[key]) return;
+			seen[key] = 1;
+			var emp = String(r.employee || "").trim();
+			if (!emp) return;
+			if (!out[emp]) {
+				out[emp] = {
+					name1: r.name1 || emp,
+					amount: 0,
+					booked_amount: 0,
+					paid_amount: 0,
+					unpaid_amount: 0,
+				};
+			}
+			out[emp].amount += num(r.amount);
+			out[emp].booked_amount += num(r.booked_amount);
+			out[emp].paid_amount += num(r.paid_amount);
+			out[emp].unpaid_amount += num(r.unpaid_amount);
+		});
+		return out;
+	}
+
+	function getPaymentJVEmployeeAmounts(jvName) {
+		var target = String(jvName || "").trim();
+		if (!target) return Promise.resolve({ by_employee: {}, by_employee_detail: {}, total: 0 });
+		if (!state.entryMeta) state.entryMeta = {};
+		if (!state.entryMeta.paymentJVEmployeeAmounts)
+			state.entryMeta.paymentJVEmployeeAmounts = {};
+		if (state.entryMeta.paymentJVEmployeeAmounts[target]) {
+			return Promise.resolve(state.entryMeta.paymentJVEmployeeAmounts[target]);
+		}
+		return getJournalEntryDoc(target)
+			.then(function (doc) {
+				var byEmployee = {};
+				var byEmployeeDetail = {};
+				var total = 0;
+				((doc && doc.accounts) || []).forEach(function (acc) {
+					var debit = num(acc.debit_in_account_currency || acc.debit || 0);
+					if (debit <= 0) return;
+					total += debit;
+					var emp = String(acc.party || "").trim();
+					if (!emp) {
+						var remarkText = String(acc.user_remark || "").trim();
+						var m = remarkText.match(/\(([^)]+)\)\s*$/);
+						if (m && m[1]) emp = String(m[1] || "").trim();
+					}
+					if (!emp) return;
+					byEmployee[emp] = num(byEmployee[emp]) + debit;
+					var remark = String(acc.user_remark || "").trim();
+					var b = null,
+						pd = null,
+						u = null,
+						pay = null;
+					var mb = remark.match(/\|\s*B:([-0-9.]+)/i);
+					var mpd = remark.match(/\|\s*PD:([-0-9.]+)/i);
+					var mu = remark.match(/\|\s*U:([-0-9.]+)/i);
+					var mpay = remark.match(/\|\s*PAY:([-0-9.]+)/i);
+					if (mb) b = num(mb[1]);
+					if (mpd) pd = num(mpd[1]);
+					if (mu) u = num(mu[1]);
+					if (mpay) pay = num(mpay[1]);
+					if (!byEmployeeDetail[emp]) {
+						byEmployeeDetail[emp] = {
+							booked_amount: 0,
+							paid_amount: 0,
+							unpaid_amount: 0,
+							payment_amount: 0,
+						};
+					}
+					if (b != null) byEmployeeDetail[emp].booked_amount += b;
+					if (pd != null) byEmployeeDetail[emp].paid_amount += pd;
+					if (u != null) byEmployeeDetail[emp].unpaid_amount += u;
+					byEmployeeDetail[emp].payment_amount += pay != null ? pay : debit;
+				});
+				var out = {
+					by_employee: byEmployee,
+					by_employee_detail: byEmployeeDetail,
+					total: total,
+				};
+				state.entryMeta.paymentJVEmployeeAmounts[target] = out;
+				return out;
+			})
+			.catch(function () {
+				return { by_employee: {}, by_employee_detail: {}, total: 0 };
+			});
+	}
+
 	function uniqueCreatedPaymentDocs() {
 		var map = {};
 		(state.rows || []).forEach(function (r) {
@@ -2436,6 +2614,11 @@
 				item.salary_entries = Object.keys(item.salary_map || {})
 					.sort()
 					.reverse();
+				var docTotals = getDoctypeTotalsForEntries(item.salary_entries || []);
+				item.doctype_amount = num(docTotals.amount);
+				item.doctype_booked_amount = num(docTotals.booked_amount);
+				item.doctype_paid_amount = num(docTotals.paid_amount);
+				item.doctype_unpaid_amount = num(docTotals.unpaid_amount);
 				item.booking_status =
 					item._booked_count >= item.rows
 						? "Booked"
@@ -2448,6 +2631,36 @@
 				else item.payment_status = "Unpaid";
 				return item;
 			});
+	}
+
+	function hydratePaymentHistoryAmounts(rows) {
+		var docs = rows || [];
+		if (!docs.length) return;
+		Promise.all(
+			docs.map(function (row) {
+				var jvName = String((row && row.name) || "").trim();
+				if (!jvName) return Promise.resolve({ name: "", amount: 0 });
+				return getPaymentJVEmployeeAmounts(jvName).then(function (info) {
+					var amount = num((info && info.total) || 0);
+					return { name: jvName, amount: amount };
+				});
+			})
+		).then(function (items) {
+			var byName = {};
+			var total = 0;
+			items.forEach(function (it) {
+				if (!it || !it.name) return;
+				byName[it.name] = num(it.amount);
+				total += num(it.amount);
+			});
+			Object.keys(byName).forEach(function (name) {
+				var key = encodeURIComponent(String(name || ""));
+				var cell = document.querySelector(".pp-pay-history-amount[data-jv='" + key + "']");
+				if (cell) cell.textContent = fmt(byName[name]);
+			});
+			var totalCell = el("pp-pay-history-total-amount");
+			if (totalCell) totalCell.textContent = fmt(total);
+		});
 	}
 
 	function getSalaryCreationEntryRows(entryName, sourceRows) {
@@ -2719,128 +2932,240 @@
 			});
 	}
 
-	function showPaymentEntrySummary(jvName, printNow) {
+	function showPaymentEntrySummary(jvName, printNow, entryScopeRaw) {
 		var target = String(jvName || "").trim();
 		if (!target) return;
-		var map = {};
-		(state.rows || []).forEach(function (r) {
-			var matchedAmount = 0;
-			parsePaymentRefsJs(r.payment_refs || "").forEach(function (ref) {
-				if (String(ref.jv || "").trim() === target) matchedAmount += num(ref.amount);
-			});
-			if (!matchedAmount && String(r.payment_jv_no || "").trim() === target) {
-				matchedAmount = num(r.paid_amount);
-			}
-			if (matchedAmount <= 0) return;
-			var emp = String(r.employee || "").trim();
-			if (!emp) return;
-			if (!map[emp]) {
-				map[emp] = {
-					employee: emp,
-					name1: r.name1 || emp,
-					booked_amount: 0,
-					paid_amount: 0,
-					unpaid_amount: 0,
-					payment_amount: 0,
-					salary_map: {},
-				};
-			}
-			var bookedAmount = getNetBookedAmountForRow(r);
-			var paidAmount = Math.max(num(r.paid_amount), 0);
-			if (paidAmount > bookedAmount) paidAmount = bookedAmount;
-			map[emp].booked_amount += bookedAmount;
-			map[emp].paid_amount += paidAmount;
-			map[emp].unpaid_amount += Math.max(bookedAmount - paidAmount, 0);
-			map[emp].payment_amount += matchedAmount;
-			if (r.per_piece_salary)
-				map[emp].salary_map[String(r.per_piece_salary || "").trim()] = 1;
+		var scopedEntries = [];
+		if (Array.isArray(entryScopeRaw)) scopedEntries = entryScopeRaw.slice();
+		else scopedEntries = parseEntryNoList(String(entryScopeRaw || "").replace(/;;/g, ","));
+		scopedEntries = scopedEntries
+			.map(function (x) {
+				return String(x || "").trim();
+			})
+			.filter(Boolean);
+		var scopedSet = {};
+		scopedEntries.forEach(function (name) {
+			scopedSet[name] = 1;
 		});
-		var rows = Object.keys(map)
-			.sort()
-			.map(function (emp) {
-				var item = map[emp];
-				item.status =
-					item.unpaid_amount <= 0
-						? "Paid"
-						: item.paid_amount > 0
-						? "Partly Paid"
-						: "Unpaid";
-				item.salary_entries = Object.keys(item.salary_map || {})
-					.sort()
-					.reverse();
-				return item;
+		var hasScope = !!scopedEntries.length;
+		setSummaryModal(
+			"Payment Entry Detail",
+			target,
+			"<div style='color:#334155;'>Loading payment detail...</div>"
+		);
+		getPaymentJVEmployeeAmounts(target).then(function (jvInfo) {
+			var paidByEmployee = (jvInfo && jvInfo.by_employee) || {};
+			var paymentDetailByEmployee = (jvInfo && jvInfo.by_employee_detail) || {};
+			var map = {};
+			(state.rows || []).forEach(function (r) {
+				var rowEntry = String(r.per_piece_salary || "").trim();
+				if (hasScope && !scopedSet[rowEntry]) return;
+				var emp = String(r.employee || "").trim();
+				if (!emp) return;
+				var matchedAmount = 0;
+				parsePaymentRefsJs(r.payment_refs || "").forEach(function (ref) {
+					if (String(ref.jv || "").trim() === target) matchedAmount += num(ref.amount);
+				});
+				if (!matchedAmount && String(r.payment_jv_no || "").trim() === target) {
+					matchedAmount = num(r.paid_amount);
+				}
+				var jvEmpAmount = num(paidByEmployee[emp] || 0);
+				if (matchedAmount <= 0 && jvEmpAmount <= 0) return;
+				if (!map[emp]) {
+					map[emp] = {
+						employee: emp,
+						name1: r.name1 || emp,
+						entry_numbers: {},
+						booked_amount: 0,
+						paid_amount: 0,
+						unpaid_amount: 0,
+						payment_amount: 0,
+						_matched_from_refs: 0,
+						salary_map: {},
+						_booked_keys: {},
+					};
+				}
+				var bookedKey =
+					String(r.per_piece_salary || "").trim() || String(r.row_id || "").trim();
+				if (!map[emp]._booked_keys[bookedKey]) {
+					map[emp]._booked_keys[bookedKey] = 1;
+					map[emp].booked_amount += getNetBookedAmountForRow(r);
+				}
+				map[emp]._matched_from_refs += Math.max(num(matchedAmount), 0);
+				if (r.per_piece_salary)
+					map[emp].salary_map[String(r.per_piece_salary || "").trim()] = 1;
+				if (rowEntry) map[emp].entry_numbers[rowEntry] = 1;
 			});
-		if (!rows.length) {
-			setSummaryModal(
-				"Payment Entry Detail",
-				target,
-				"<div style='color:#b91c1c;'>No payment rows available for this payment entry under selected filters.</div>"
-			);
-			return;
-		}
-		var totalBooked = 0;
-		var totalPaid = 0;
-		var totalUnpaid = 0;
-		var totalPayment = 0;
-		var html =
-			summaryHeaderHtml("Payment Entry Detail", target) +
-			"<div class='pp-summary-chips'>" +
-			"<span class='pp-summary-chip'>Payment Entry: " +
-			esc(target) +
-			"</span>" +
-			"<span class='pp-summary-chip'>Employees: " +
-			esc(rows.length) +
-			"</span>" +
-			"</div>";
-		html +=
-			"<table class='pp-table'><thead><tr><th>Employee</th><th>Salary Entries</th><th>Booked Amount</th><th>Paid Amount</th><th>Unpaid Amount</th><th>Payment Amount</th><th>Status</th></tr></thead><tbody>";
-		rows.forEach(function (r) {
-			totalBooked += num(r.booked_amount);
-			totalPaid += num(r.paid_amount);
-			totalUnpaid += num(r.unpaid_amount);
-			totalPayment += num(r.payment_amount);
+
+			Object.keys(paidByEmployee).forEach(function (emp) {
+				if (hasScope && !map[emp]) return;
+				if (!map[emp]) {
+					map[emp] = {
+						employee: emp,
+						name1: emp,
+						entry_numbers: {},
+						booked_amount: 0,
+						paid_amount: 0,
+						unpaid_amount: 0,
+						payment_amount: 0,
+						_matched_from_refs: 0,
+						salary_map: {},
+						_booked_keys: {},
+					};
+				}
+			});
+
+			var rows = Object.keys(map)
+				.sort()
+				.map(function (emp) {
+					var item = map[emp];
+					var jvEmpAmount = num(paidByEmployee[emp] || 0);
+					var snap = paymentDetailByEmployee[emp] || {};
+					var hasSnapBooked = Object.prototype.hasOwnProperty.call(
+						snap,
+						"booked_amount"
+					);
+					var hasSnapPaid = Object.prototype.hasOwnProperty.call(snap, "paid_amount");
+					var hasSnapUnpaid = Object.prototype.hasOwnProperty.call(
+						snap,
+						"unpaid_amount"
+					);
+					var hasSnapPayment = Object.prototype.hasOwnProperty.call(
+						snap,
+						"payment_amount"
+					);
+					var paid = jvEmpAmount > 0 ? jvEmpAmount : num(item._matched_from_refs);
+					item.payment_amount = hasSnapPayment ? num(snap.payment_amount) : paid;
+					item.paid_amount = hasSnapPaid ? num(snap.paid_amount) : item.payment_amount;
+					item.booked_amount = hasSnapBooked
+						? num(snap.booked_amount)
+						: num(item.booked_amount);
+					item.unpaid_amount = hasSnapUnpaid
+						? num(snap.unpaid_amount)
+						: Math.max(num(item.booked_amount) - item.payment_amount, 0);
+					item.status =
+						item.unpaid_amount <= 0
+							? "Paid"
+							: item.payment_amount > 0
+							? "Partly Paid"
+							: "Unpaid";
+					item.salary_entries = Object.keys(item.salary_map || {})
+						.sort()
+						.reverse();
+					item.entry_numbers = Object.keys(item.entry_numbers || {})
+						.sort()
+						.reverse();
+					var byEntryBooked = 0;
+					var byEntryPaid = 0;
+					var byEntryUnpaid = 0;
+					(item.salary_entries || []).forEach(function (entryName) {
+						var entryEmp = getDoctypeEmployeeTotalsForEntry(entryName);
+						var empTotals = entryEmp[emp];
+						if (!empTotals) return;
+						byEntryBooked += num(empTotals.booked_amount);
+						byEntryPaid += num(empTotals.paid_amount);
+						byEntryUnpaid += num(empTotals.unpaid_amount);
+						if (!item.name1 && empTotals.name1) item.name1 = empTotals.name1;
+					});
+					if (byEntryBooked > 0 || byEntryPaid > 0 || byEntryUnpaid > 0) {
+						item.booked_amount = byEntryBooked;
+						item.paid_amount = byEntryPaid;
+						item.unpaid_amount = byEntryUnpaid;
+					}
+					// Older rows may not have employee-wise booked/paid/unpaid snapshots.
+					// In that case, keep modal amounts usable from JV-linked payment amount.
+					if (
+						num(item.booked_amount) <= 0 &&
+						num(item.paid_amount) <= 0 &&
+						num(item.unpaid_amount) <= 0 &&
+						num(item.payment_amount) > 0
+					) {
+						item.booked_amount = num(item.payment_amount);
+						item.paid_amount = num(item.payment_amount);
+						item.unpaid_amount = 0;
+					}
+					return item;
+				});
+
+			if (!rows.length) {
+				setSummaryModal(
+					"Payment Entry Detail",
+					target,
+					"<div style='color:#b91c1c;'>No payment rows available for this payment entry under selected filters.</div>"
+				);
+				return;
+			}
+			var totalBooked = 0;
+			var totalPaid = 0;
+			var totalUnpaid = 0;
+			var totalPayment = 0;
+			var entryNamesMap = {};
+			rows.forEach(function (r) {
+				(r.salary_entries || []).forEach(function (entryName) {
+					var key = String(entryName || "").trim();
+					if (key) entryNamesMap[key] = 1;
+				});
+			});
+			var html =
+				summaryHeaderHtml("Payment Entry Detail", target) +
+				"<div class='pp-summary-chips'>" +
+				"<span class='pp-summary-chip'>Payment Entry: " +
+				esc(target) +
+				"</span>" +
+				"<span class='pp-summary-chip'>Employees: " +
+				esc(rows.length) +
+				"</span>" +
+				"</div>";
 			html +=
-				"<tr>" +
-				"<td>" +
-				esc(r.name1 || r.employee || "") +
-				"</td>" +
-				"<td>" +
-				esc((r.salary_entries || []).join(", ")) +
-				"</td>" +
-				"<td class='num pp-amt-col'>" +
-				esc(fmt(r.booked_amount)) +
-				"</td>" +
-				"<td class='num pp-amt-col'>" +
-				esc(fmt(r.paid_amount)) +
-				"</td>" +
-				"<td class='num pp-amt-col'>" +
-				esc(fmt(r.unpaid_amount)) +
-				"</td>" +
-				"<td class='num pp-amt-col'>" +
-				esc(fmt(r.payment_amount)) +
-				"</td>" +
-				"<td>" +
-				statusBadgeHtml(r.status || "") +
-				"</td>" +
-				"</tr>";
+				"<table class='pp-table'><thead><tr><th>Employee</th><th>Entry Number</th><th>Booked Amount</th><th>Paid Amount</th><th>Unpaid Amount</th><th>Payment Amount</th><th>Status</th></tr></thead><tbody>";
+			rows.forEach(function (r) {
+				totalBooked += num(r.booked_amount);
+				totalPaid += num(r.paid_amount);
+				totalUnpaid += num(r.unpaid_amount);
+				totalPayment += num(r.payment_amount);
+				html +=
+					"<tr>" +
+					"<td>" +
+					esc(r.name1 || r.employee || "") +
+					"</td>" +
+					"<td>" +
+					esc((r.entry_numbers || []).join(", ")) +
+					"</td>" +
+					"<td class='num pp-amt-col'>" +
+					esc(fmt(r.booked_amount)) +
+					"</td>" +
+					"<td class='num pp-amt-col'>" +
+					esc(fmt(r.paid_amount)) +
+					"</td>" +
+					"<td class='num pp-amt-col'>" +
+					esc(fmt(r.unpaid_amount)) +
+					"</td>" +
+					"<td class='num pp-amt-col'>" +
+					esc(fmt(r.payment_amount)) +
+					"</td>" +
+					"<td>" +
+					statusBadgeHtml(r.status || "") +
+					"</td>" +
+					"</tr>";
+			});
+			html +=
+				"<tr class='pp-year-total'><td>Total</td><td></td><td class='num pp-amt-col'>" +
+				esc(fmt(totalBooked)) +
+				"</td><td class='num pp-amt-col'>" +
+				esc(fmt(totalPaid)) +
+				"</td><td class='num pp-amt-col'>" +
+				esc(fmt(totalUnpaid)) +
+				"</td><td class='num pp-amt-col'>" +
+				esc(fmt(totalPayment)) +
+				"</td><td></td></tr>";
+			html += "</tbody></table>";
+			setSummaryModal("Payment Entry Detail", target, html);
+			if (printNow) {
+				setTimeout(function () {
+					printSummaryModal();
+				}, 60);
+			}
 		});
-		html +=
-			"<tr class='pp-year-total'><td>Total</td><td></td><td class='num pp-amt-col'>" +
-			esc(fmt(totalBooked)) +
-			"</td><td class='num pp-amt-col'>" +
-			esc(fmt(totalPaid)) +
-			"</td><td class='num pp-amt-col'>" +
-			esc(fmt(totalUnpaid)) +
-			"</td><td class='num pp-amt-col'>" +
-			esc(fmt(totalPayment)) +
-			"</td><td></td></tr>";
-		html += "</tbody></table>";
-		setSummaryModal("Payment Entry Detail", target, html);
-		if (printNow) {
-			setTimeout(function () {
-				printSummaryModal();
-			}, 60);
-		}
 	}
 
 	function showJournalEntrySummary(jvName) {
@@ -3211,6 +3536,10 @@
 			}
 			var payPage = paginateHistoryRows("payment_manage_history", payRows, 10);
 			var tPayAmt = 0,
+				tDocAmt = 0,
+				tDocBooked = 0,
+				tDocPaid = 0,
+				tDocUnpaid = 0,
 				tPayRows = 0;
 			var phtml =
 				"<div style='margin-top:10px;'><strong>Created Payment JV Entries</strong></div>" +
@@ -3240,9 +3569,13 @@
 				">Partly Paid</option>" +
 				"</select></label>" +
 				"</div>" +
-				"<table class='pp-table' style='margin-top:6px;'><thead><tr><th>Payment Entry</th><th>Salary Entries</th><th>Paid Amount</th><th>Rows</th><th>View</th><th>Print</th><th>Open</th></tr></thead><tbody>";
+				"<table class='pp-table' style='margin-top:6px;'><thead><tr><th>Payment Entry</th><th>Salary Entries</th><th>Amount</th><th>Booked Amount</th><th>Paid Amount</th><th>Unpaid Amount</th><th>Payment Amount</th><th>Rows</th><th>View</th><th>Print</th><th>Open</th></tr></thead><tbody>";
 			(payPage.rows || []).forEach(function (r) {
 				tPayAmt += num(r.amount);
+				tDocAmt += num(r.doctype_amount);
+				tDocBooked += num(r.doctype_booked_amount);
+				tDocPaid += num(r.doctype_paid_amount);
+				tDocUnpaid += num(r.doctype_unpaid_amount);
 				tPayRows += num(r.rows);
 				phtml +=
 					"<tr><td>" +
@@ -3250,25 +3583,50 @@
 					"</td><td>" +
 					esc((r.salary_entries || []).join(", ")) +
 					"</td><td class='num pp-amt-col'>" +
+					esc(fmt(r.doctype_amount)) +
+					"</td><td class='num pp-amt-col'>" +
+					esc(fmt(r.doctype_booked_amount)) +
+					"</td><td class='num pp-amt-col'>" +
+					esc(fmt(r.doctype_paid_amount)) +
+					"</td><td class='num pp-amt-col'>" +
+					esc(fmt(r.doctype_unpaid_amount)) +
+					"</td><td class='num pp-amt-col pp-pay-history-amount' data-jv='" +
+					esc(encodeURIComponent(r.name || "")) +
+					"'>" +
 					esc(fmt(r.amount)) +
 					"</td><td class='num'>" +
 					esc(r.rows) +
 					"</td><td><button type='button' class='btn btn-xs btn-info pp-view-payment-create' data-jv='" +
 					esc(r.name) +
+					"' data-entry-scope='" +
+					esc((r.salary_entries || []).join(";;")) +
 					"'>View</button></td><td><button type='button' class='btn btn-xs btn-primary pp-print-payment-create' data-jv='" +
 					esc(r.name) +
+					"' data-entry-scope='" +
+					esc((r.salary_entries || []).join(";;")) +
 					"'>Print</button></td><td><a target='_blank' href='/app/journal-entry/" +
 					encodeURIComponent(r.name) +
 					"'>Open</a></td></tr>";
 			});
 			phtml +=
 				"<tr class='pp-year-total'><td>Total</td><td></td><td class='num pp-amt-col'>" +
+				esc(fmt(tDocAmt)) +
+				"</td><td class='num pp-amt-col'>" +
+				esc(fmt(tDocBooked)) +
+				"</td><td class='num pp-amt-col'>" +
+				esc(fmt(tDocPaid)) +
+				"</td><td class='num pp-amt-col'>" +
+				esc(fmt(tDocUnpaid)) +
+				"</td><td class='num pp-amt-col'>" +
+				"<span id='pp-pay-history-total-amount'>" +
 				esc(fmt(tPayAmt)) +
+				"</span>" +
 				"</td><td class='num'>" +
 				esc(fmt(tPayRows)) +
 				"</td><td></td><td></td><td></td></tr>";
 			phtml += "</tbody></table>" + historyPagerHtml(payPage);
 			setCreatedListHtml(phtml);
+			hydratePaymentHistoryAmounts(payPage.rows || []);
 			return;
 		}
 		setCreatedListHtml("");
@@ -3696,6 +4054,31 @@
 			refreshJVAmountsFromAdjustments();
 			refreshPaymentAmounts();
 			return;
+		} else if (state.currentTab === "salary_slip_dc") {
+			outRows = rows;
+			paged = paginateRows(outRows);
+			renderSalarySlipByDCTable(paged.rows);
+			state.lastTabRender = { mode: "dom", columns: [], rows: [] };
+			filterRenderedTablesBySearch();
+			el("pp-msg").textContent =
+				"Delivery Note and Entry wise salary slip summary from current filters";
+			renderPagination(paged);
+			var dcTotals = { net_salary: 0 };
+			outRows.forEach(function (r) {
+				var amount = num(r.amount);
+				var adv = num(r.advance_deduction);
+				var allow = num(r.allowance);
+				var other = num(r.other_deduction);
+				var net = num(r.net_amount);
+				if (!net) net = Math.max(amount - adv + allow - other, 0);
+				dcTotals.net_salary += net;
+			});
+			el("pp-totals").innerHTML =
+				"<span>Total Net Salary: " + fmt(dcTotals.net_salary) + "</span>";
+			renderCreatedEntriesPanel("salary_slip_dc");
+			refreshJVAmountsFromAdjustments();
+			refreshPaymentAmounts();
+			return;
 		} else if (state.currentTab === "month_year_salary") {
 			cols = [
 				{ fieldname: "name1", label: "Employee" },
@@ -4007,6 +4390,7 @@
 			args.from_date = "2000-01-01";
 			args.to_date = "2099-12-31";
 			args.employee = "";
+			args.company = "";
 			args.item_group = "";
 			args.product = "";
 			args.process_type = "";
@@ -4336,6 +4720,12 @@
 	if (el("pp-item-group")) {
 		el("pp-item-group").addEventListener("change", function () {
 			refreshTopProductOptions();
+			renderCurrentTab();
+		});
+	}
+	if (el("pp-company")) {
+		el("pp-company").addEventListener("change", function () {
+			setPageForCurrentTab(1);
 			renderCurrentTab();
 		});
 	}

@@ -8,6 +8,7 @@ def protect_per_piece_salary_mutations(doc, method=None) -> None:
 	"""Prevent updates to booked/submitted Per Piece Salary entries."""
 	if getattr(doc, "doctype", None) != "Per Piece Salary":
 		return
+	_sync_parent_totals(doc)
 	if doc.is_new():
 		return
 
@@ -89,3 +90,29 @@ def _row_signature(doc) -> list[tuple]:
 
 def _as_str(value) -> str:
 	return str(value or "").strip()
+
+
+def _sync_parent_totals(doc) -> None:
+	rows = doc.get("perpiece") or []
+	total_qty = 0.0
+	total_amount = 0.0
+	total_booked = 0.0
+	total_paid = 0.0
+	total_unpaid = 0.0
+	for row in rows:
+		total_qty += flt(row.get("qty"))
+		total_amount += flt(row.get("amount"))
+		booked = flt(row.get("booked_amount"))
+		paid = flt(row.get("paid_amount"))
+		unpaid = flt(row.get("unpaid_amount"))
+		total_booked += booked
+		total_paid += paid
+		total_unpaid += unpaid
+	doc.total_qty = total_qty
+	doc.total_amount = total_amount
+	if hasattr(doc, "total_booked_amount"):
+		doc.total_booked_amount = total_booked
+	if hasattr(doc, "total_paid_amount"):
+		doc.total_paid_amount = total_paid
+	if hasattr(doc, "total_unpaid_amount"):
+		doc.total_unpaid_amount = total_unpaid

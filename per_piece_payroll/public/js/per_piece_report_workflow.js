@@ -274,12 +274,13 @@
 						"Select Deduction Account"
 					);
 					selectPreferred(el("pp-jv-deduction-account"), merged, [
+						"salary",
+						"wages",
+						"expense",
 						"deduction",
 						"eobi",
 						"payable",
 						"allowance",
-						"salary",
-						"expense",
 						"employee",
 					]);
 				})

@@ -2,6 +2,7 @@
   <div class="pp-filters">
     <label>From Date <input type="date" id="pp-from-date" /></label>
     <label>To Date <input type="date" id="pp-to-date" /></label>
+    <label>Company <select id="pp-company"><option value="">All</option></select></label>
     <label>Employee <select id="pp-employee"><option value="">All</option></select></label>
     <label>Booking Status <select id="pp-booking-status"><option value="">All</option><option value="Booked">Booked</option><option value="UnBooked">UnBooked</option><option value="Partly Booked">Partly Booked</option></select></label>
     <label>Payment Status <select id="pp-payment-status"><option value="">All</option><option value="Paid">Paid</option><option value="Unpaid">Unpaid</option><option value="Partly Paid">Partly Paid</option></select></label>
@@ -35,6 +36,7 @@
       <button type="button" class="pp-tab" data-workspace="reporting" data-tab="employee_summary">Employee Summary</button>
       <button type="button" class="pp-tab" data-workspace="reporting" data-tab="per_piece_salary">Employee item-wise</button>
       <button type="button" class="pp-tab" data-workspace="reporting" data-tab="salary_slip">Salary Slip</button>
+      <button type="button" class="pp-tab" data-workspace="reporting" data-tab="salary_slip_dc">Salary Slip by DC</button>
       <button type="button" class="pp-tab" data-workspace="reporting" data-tab="po_number">PO Summary</button>
       <button type="button" class="pp-tab" data-workspace="reporting" data-tab="po_detail_all">PO Detail Print</button>
       <button type="button" class="pp-tab" data-workspace="reporting" data-tab="month_year_salary">Month/Year Salary</button>
@@ -149,15 +151,15 @@
   </div>
 </div>
 
-<link rel="stylesheet" href="/assets/per_piece_payroll/css/per_piece_report.css?v=20260426_11">
-<script src="/assets/per_piece_payroll/js/per_piece_report_core.js?v=20260426_11"></script>
-<script src="/assets/per_piece_payroll/js/per_piece_report_utils.js?v=20260426_11"></script>
-<script src="/assets/per_piece_payroll/js/per_piece_report_data_entry_helpers.js?v=20260426_11"></script>
-<script src="/assets/per_piece_payroll/js/per_piece_report_workflow.js?v=20260426_11"></script>
-<script src="/assets/per_piece_payroll/js/per_piece_report_reporting.js?v=20260426_11"></script>
-<script src="/assets/per_piece_payroll/js/per_piece_report_builders.js?v=20260426_11"></script>
-<script src="/assets/per_piece_payroll/js/per_piece_report_state.js?v=20260426_11"></script>
-<script src="/assets/per_piece_payroll/js/per_piece_report_views.js?v=20260426_11"></script>
-<script src="/assets/per_piece_payroll/js/per_piece_report_salary_slip.js?v=20260426_11"></script>
-<script src="/assets/per_piece_payroll/js/per_piece_report_entry_ui.js?v=20260426_11"></script>
-<script src="/assets/per_piece_payroll/js/per_piece_report_app.js?v=20260426_11"></script>
+<link rel="stylesheet" href="/assets/per_piece_payroll/css/per_piece_report.css?v=20260426_12">
+<script src="/assets/per_piece_payroll/js/per_piece_report_core.js?v=20260426_12"></script>
+<script src="/assets/per_piece_payroll/js/per_piece_report_utils.js?v=20260426_12"></script>
+<script src="/assets/per_piece_payroll/js/per_piece_report_data_entry_helpers.js?v=20260426_12"></script>
+<script src="/assets/per_piece_payroll/js/per_piece_report_workflow.js?v=20260426_15"></script>
+<script src="/assets/per_piece_payroll/js/per_piece_report_reporting.js?v=20260427_01"></script>
+<script src="/assets/per_piece_payroll/js/per_piece_report_builders.js?v=20260426_12"></script>
+<script src="/assets/per_piece_payroll/js/per_piece_report_state.js?v=20260426_12"></script>
+<script src="/assets/per_piece_payroll/js/per_piece_report_views.js?v=20260427_04"></script>
+<script src="/assets/per_piece_payroll/js/per_piece_report_salary_slip.js?v=20260427_07"></script>
+<script src="/assets/per_piece_payroll/js/per_piece_report_entry_ui.js?v=20260426_15"></script>
+<script src="/assets/per_piece_payroll/js/per_piece_report_app.js?v=20260427_03"></script>

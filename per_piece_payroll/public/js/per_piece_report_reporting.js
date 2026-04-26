@@ -293,11 +293,26 @@
 				});
 
 			var subtitleText = "PO Number: " + poNumber;
+			var deliveryNoteMap = {};
+			(rows || []).forEach(function (r) {
+				var dn = String((r && r.delivery_note) || "").trim();
+				if (dn) deliveryNoteMap[dn] = 1;
+			});
+			var deliveryNotes = Object.keys(deliveryNoteMap).sort();
+			var deliveryNoteLabel = "-";
+			if (deliveryNotes.length === 1) deliveryNoteLabel = deliveryNotes[0];
+			else if (deliveryNotes.length > 1)
+				deliveryNoteLabel =
+					deliveryNotes.slice(0, 3).join(", ") +
+					(deliveryNotes.length > 3 ? " +" + (deliveryNotes.length - 3) : "");
 			var html =
 				summaryHeaderHtml("PO Summary Detail", subtitleText) +
 				"<div class='pp-summary-chips'>" +
 				"<span class='pp-summary-chip' style='font-weight:700;background:#dbeafe;border-color:#93c5fd;'>PO Number: " +
 				esc(poNumber) +
+				"</span>" +
+				"<span class='pp-summary-chip'>Delivery Note: " +
+				esc(deliveryNoteLabel) +
 				"</span>" +
 				"<span class='pp-summary-chip'>Entries: " +
 				esc(rows.length) +

@@ -90,6 +90,24 @@ def serialize_payment_refs(refs):
             parts.append(jv_no + "::" + str(round(amount, 2)))
     return ";;".join(parts)
 
+def compact_list_for_remark(values, limit=8):
+    unique = []
+    seen = {}
+    for value in values or []:
+        txt = str(value or "").strip()
+        if not txt:
+            continue
+        if seen.get(txt):
+            continue
+        seen[txt] = 1
+        unique.append(txt)
+    if not unique:
+        return "-"
+    if len(unique) <= limit:
+        return ", ".join(unique)
+    remaining = len(unique) - limit
+    return ", ".join(unique[:limit]) + " +" + str(remaining)
+
 def cleanup_canceled_payment_links():
     rows = frappe.get_all(
         "Per Piece",
@@ -429,6 +447,7 @@ if from_date and to_date and from_date > to_date:
     frappe.throw("From Date cannot be after To Date.")
 
 employee = normalize_param(args.get("employee"))
+company = normalize_param(args.get("company"))
 product = normalize_param(args.get("product"))
 process_type = normalize_param(args.get("process_type"))
 sales_order = normalize_param(args.get("sales_order"))
@@ -465,6 +484,14 @@ for adv in all_advance_rows:
 cleanup_canceled_jv_links()
 cleanup_canceled_payment_links()
 
+company_options = []
+if frappe.db.exists("DocType", "Company"):
+    for company_row in frappe.get_all("Company", fields=["name"], order_by="name asc", limit_page_length=5000):
+        company_name = str((company_row or {}).get("name") or "").strip()
+        if company_name:
+            company_options.append(company_name)
+company_options = sorted(set(company_options))
+
 parent_filters = {"docstatus": ["<", 2]}
 if from_date:
     parent_filters["to_date"] = [">=", from_date]
@@ -472,6 +499,8 @@ if to_date:
     parent_filters["from_date"] = ["<=", to_date]
 if po_number:
     parent_filters["po_number"] = po_number
+if company and frappe.get_meta("Per Piece Salary").has_field("company"):
+    parent_filters["company"] = company
 if delivery_note and frappe.get_meta("Per Piece Salary").has_field("delivery_note"):
     parent_filters["delivery_note"] = delivery_note
 if entry_no:
@@ -480,7 +509,7 @@ if entry_no:
 parents = frappe.get_all(
     "Per Piece Salary",
     filters=parent_filters,
-    fields=["name", "from_date", "to_date", "po_number", "item_group", "delivery_note", "total_qty", "total_amount"],
+    fields=["name", "from_date", "to_date", "po_number", "item_group", "delivery_note", "company", "total_qty", "total_amount"],
     order_by="from_date desc, creation desc",
     limit_page_length=(max_rows * 2 if max_rows > 0 else 200000),
 )
@@ -494,6 +523,7 @@ if not parents:
         "process_types": [],
         "sales_orders": [],
         "item_groups": [],
+        "companies": company_options,
         "advance_balances": all_advance_balances,
         "advance_rows": all_advance_rows,
         "advance_months": all_advance_months,
@@ -544,6 +574,15 @@ else:
             + [str(v or "").strip() for v in item_group_map.values() if v]
         )
     )
+    companies = sorted(
+        set(
+            [str((p or {}).get("company") or "").strip() for p in parents if (p or {}).get("company")]
+        )
+    )
+    for company_name in company_options:
+        if company_name:
+            companies.append(company_name)
+    companies = sorted(set(companies))
     advance_balances = all_advance_balances
 
     if get_options:
@@ -555,6 +594,7 @@ else:
             "process_types": process_types,
             "sales_orders": sales_orders,
             "item_groups": item_groups,
+            "companies": companies,
             "advance_balances": advance_balances,
             "advance_rows": all_advance_rows,
             "advance_months": all_advance_months,
@@ -643,6 +683,7 @@ else:
                     "from_date": parent.get("from_date"),
                     "to_date": parent.get("to_date"),
                     "po_number": parent.get("po_number"),
+                    "company": parent.get("company"),
                     "item_group": row_item_group,
                     "delivery_note": child.get("delivery_note") or parent.get("delivery_note") or "",
                     "total_qty": parent.get("total_qty"),
@@ -708,6 +749,7 @@ else:
             "process_types": process_types,
             "sales_orders": sales_orders,
             "item_groups": item_groups,
+            "companies": companies,
             "advance_balances": advance_balances,
             "advance_rows": all_advance_rows,
             "advance_months": all_advance_months,
@@ -922,6 +964,7 @@ po_number = normalize_param(args.get("po_number"))
 item_group = normalize_param(args.get("item_group"))
 item = normalize_param(args.get("item"))
 delivery_note = normalize_param(args.get("delivery_note"))
+company = normalize_param(args.get("company"))
 selected_items = normalize_param(args.get("selected_items"))
 load_by_item = normalize_param(args.get("load_by_item")) or "1"
 employee = normalize_param(args.get("employee"))
@@ -944,6 +987,12 @@ if not po_number:
     frappe.throw("PO Number is required.")
 if not rows:
     frappe.throw("Enter at least one row with Qty.")
+
+if not company:
+    company = (
+        normalize_param(frappe.defaults.get_user_default("Company"))
+        or normalize_param(frappe.db.get_single_value("Global Defaults", "default_company"))
+    )
 
 if entry_name:
     if not frappe.db.exists("Per Piece Salary", entry_name):
@@ -974,6 +1023,8 @@ doc.po_number = po_number
 doc.item_group = item_group
 if frappe.get_meta("Per Piece Salary").has_field("delivery_note"):
     doc.delivery_note = delivery_note
+if frappe.get_meta("Per Piece Salary").has_field("company"):
+    doc.company = company
 if frappe.get_meta("Per Piece Salary").has_field("item"):
     doc.item = item
 if frappe.get_meta("Per Piece Salary").has_field("selected_items"):
@@ -1175,6 +1226,24 @@ def build_line_remark(row):
     employee_name = row.get("name1") or row.get("employee") or "-"
     return "Emp " + str(employee_name) + ", Qty " + str(qty) + " x Rate " + str(rate) + ", PO " + str(po) + ", Process " + str(process_type)
 
+def compact_list_for_remark(values, limit=8):
+    unique = []
+    seen = {}
+    for value in values or []:
+        txt = str(value or "").strip()
+        if not txt:
+            continue
+        if seen.get(txt):
+            continue
+        seen[txt] = 1
+        unique.append(txt)
+    if not unique:
+        return "-"
+    if len(unique) <= limit:
+        return ", ".join(unique)
+    remaining = len(unique) - limit
+    return ", ".join(unique[:limit]) + " +" + str(remaining)
+
 args = dict(frappe.form_dict or {})
 
 from_date = normalize_date(args.get("from_date"))
@@ -1220,13 +1289,15 @@ rows = frappe.db.sql(
     \"\"\"
     SELECT
         pp.name AS child_name,
+        pps.name AS entry_no,
         pp.employee,
         pp.name1,
         pp.qty,
         pp.rate,
         pp.amount,
         pp.process_type,
-        pps.po_number
+        pps.po_number,
+        COALESCE(pp.delivery_note, pps.delivery_note, '') AS delivery_note
     FROM `tabPer Piece` pp
     INNER JOIN `tabPer Piece Salary` pps ON pps.name = pp.parent
     WHERE
@@ -1412,10 +1483,17 @@ else:
     je.voucher_type = "Journal Entry"
     je.company = company
     je.posting_date = posting_date
-    remarks = ["Per Piece Salary JV from " + str(from_date) + " to " + str(to_date)]
+    entry_numbers = compact_list_for_remark([row.get("entry_no") for row in rows])
+    po_numbers = compact_list_for_remark([row.get("po_number") for row in rows])
+    dc_numbers = compact_list_for_remark([row.get("delivery_note") for row in rows])
+    remarks = [
+        "PPE Per Piece Salary",
+        "DE: " + str(entry_numbers),
+        "PO No " + str(po_numbers),
+        "DC No " + str(dc_numbers),
+    ]
     if header_remark:
         remarks.append(header_remark)
-    remarks.append("Gross " + str(round(total_gross_amount, 2)) + ", Net " + str(round(total_net_payable, 2)))
     je.user_remark = " | ".join(remarks)
 
     if total_base_amount > 0:
@@ -1717,6 +1795,24 @@ def serialize_payment_refs(refs):
             parts.append(jv_no + "::" + str(amount))
     return ";;".join(parts)
 
+def compact_list_for_remark(values, limit=8):
+    unique = []
+    seen = {}
+    for value in values or []:
+        txt = str(value or "").strip()
+        if not txt:
+            continue
+        if seen.get(txt):
+            continue
+        seen[txt] = 1
+        unique.append(txt)
+    if not unique:
+        return "-"
+    if len(unique) <= limit:
+        return ", ".join(unique)
+    remaining = len(unique) - limit
+    return ", ".join(unique[:limit]) + " +" + str(remaining)
+
 def cleanup_canceled_payment_links():
     rows = frappe.get_all(
         "Per Piece",
@@ -1807,13 +1903,17 @@ rows = frappe.db.sql(
     \"\"\"
     SELECT
         pp.name AS child_name,
+        pps.name AS entry_no,
         pp.employee,
         pp.name1,
         pp.amount,
         pp.booked_amount,
         pp.paid_amount,
         pp.unpaid_amount,
-        pp.payment_refs
+        pp.payment_refs,
+        pp.jv_entry_no AS salary_jv_no,
+        pps.po_number,
+        COALESCE(pp.delivery_note, pps.delivery_note, '') AS delivery_note
     FROM `tabPer Piece` pp
     INNER JOIN `tabPer Piece Salary` pps ON pps.name = pp.parent
     WHERE
@@ -1934,10 +2034,23 @@ else:
     je.voucher_type = "Journal Entry"
     je.company = company
     je.posting_date = posting_date
-    head = "Per Piece Salary Payment JV from " + str(from_date) + " to " + str(to_date)
+    entry_numbers = compact_list_for_remark([row.get("entry_no") for row in rows])
+    salary_jv_numbers = compact_list_for_remark([row.get("salary_jv_no") for row in rows])
+    po_numbers = compact_list_for_remark([row.get("po_number") for row in rows])
+    dc_numbers = compact_list_for_remark([row.get("delivery_note") for row in rows])
+    head = (
+        "PPE Per Piece Salary"
+        + " | DE: "
+        + str(entry_numbers)
+        + " | JV No "
+        + str(salary_jv_numbers)
+        + " | PO No "
+        + str(po_numbers)
+        + " | DC No "
+        + str(dc_numbers)
+    )
     if header_remark:
         head = head + " | " + header_remark
-    head = head + " | Amount " + str(round2(total_to_pay))
     je.user_remark = head
 
     for item in preview:
@@ -1945,10 +2058,27 @@ else:
         if amount <= 0:
             continue
         employee_name = item.get("name1") or item.get("employee") or "-"
+        booked_snapshot = round2(item.get("booked_amount"))
+        paid_snapshot = round2(item.get("paid_amount"))
+        unpaid_snapshot = round2(item.get("unpaid_amount"))
         debit_row = {
             "account": payable_account,
             "debit_in_account_currency": amount,
-            "user_remark": "Salary Paid - " + str(employee_name) + " (" + str(item.get("employee")) + ")",
+            "user_remark": (
+                "Salary Paid - "
+                + str(employee_name)
+                + " ("
+                + str(item.get("employee"))
+                + ")"
+                + " | B:"
+                + str(booked_snapshot)
+                + " | PD:"
+                + str(paid_snapshot)
+                + " | U:"
+                + str(unpaid_snapshot)
+                + " | PAY:"
+                + str(round2(amount))
+            ),
         }
         if payable_account_type in ("Receivable", "Payable"):
             debit_row["party_type"] = "Employee"
@@ -2501,6 +2631,77 @@ function setProductQuery(frm) {
     }
 }
 
+function setDeliveryNoteQuery(frm) {
+    frm.set_query("delivery_note", () => {
+        return { filters: { docstatus: 1 } };
+    });
+}
+
+function loadRowsFromDeliveryNote(frm, forceReplace = false) {
+    const deliveryNote = (frm.doc.delivery_note || "").trim();
+    if (!deliveryNote) {
+        return Promise.resolve([]);
+    }
+
+    const rows = frm.doc[CHILD_TABLE_FIELD] || [];
+    const hasMeaningfulRows = rows.some((row) => !isBlankChildRow(row));
+    if (hasMeaningfulRows && !forceReplace) {
+        return Promise.resolve([]);
+    }
+
+    return Promise.resolve(
+        frappe.call({
+            method: "per_piece_payroll.api.get_delivery_note_process_rows",
+            args: { delivery_note: deliveryNote },
+        })
+    )
+        .then((response) => {
+            const dnRows = (response && response.message) || [];
+            if (!dnRows.length) {
+                frappe.show_alert({
+                    message: __("No items found in Delivery Note {0}", [deliveryNote]),
+                    indicator: "orange",
+                });
+                return [];
+            }
+
+            frm.clear_table(CHILD_TABLE_FIELD);
+            dnRows.forEach((src) => {
+                const row = frm.add_child(CHILD_TABLE_FIELD);
+                row.employee = src.employee || frm.doc.employee || "";
+                row.name1 = src.name1 || frm.__per_piece_parent_employee_name || "";
+                row.product = src.product || "";
+                row.process_type = src.process_type || "";
+                row.process_size = src.process_size || PROCESS_SIZE_DEFAULT;
+                row.sales_order = src.sales_order || "";
+                row.delivery_note = deliveryNote;
+                row.qty = flt(src.qty, DECIMALS);
+                row.rate = flt(src.rate, DECIMALS);
+                row.amount = flt(row.qty * row.rate, DECIMALS);
+                row.from_date = frm.doc.from_date || null;
+                row.to_date = frm.doc.to_date || null;
+                row.po_number = frm.doc.po_number || null;
+                row.item_group = frm.doc.item_group || null;
+            });
+
+            frm.refresh_field(CHILD_TABLE_FIELD);
+            frm.trigger("sync_parent_to_child");
+            frm.trigger("recalc_amount_and_total");
+            frappe.show_alert({
+                message: __("Loaded {0} row(s) from {1}", [dnRows.length, deliveryNote]),
+                indicator: "green",
+            });
+            return dnRows;
+        })
+        .catch(() => {
+            frappe.show_alert({
+                message: __("Failed to load Delivery Note {0}", [deliveryNote]),
+                indicator: "red",
+            });
+            return [];
+        });
+}
+
 function loadItemsForGroup(frm) {
     const byItem = isLoadByItem(frm);
     const selectedItem = (frm.doc.item || "").trim();
@@ -2821,15 +3022,20 @@ frappe.ui.form.on("Per Piece Salary", {
     onload(frm) {
     if (isSubmittedDoc(frm)) {
       setProductQuery(frm);
+      setDeliveryNoteQuery(frm);
       return;
     }
         if (frm.doc.load_by_item === undefined || frm.doc.load_by_item === null || frm.doc.load_by_item === "") {
             frm.set_value("load_by_item", 1);
         }
         setProductQuery(frm);
+        setDeliveryNoteQuery(frm);
         loadParentEmployeeName(frm).then(() => {
             return loadItemsForGroup(frm);
         }).then(() => {
+            if ((frm.doc.delivery_note || "").trim()) {
+                return loadRowsFromDeliveryNote(frm, false);
+            }
             populateRowsFromGroup(frm);
             frm.trigger("sync_parent_to_child");
             return syncRowsToItemGroup(frm);
@@ -2838,10 +3044,16 @@ frappe.ui.form.on("Per Piece Salary", {
 
     refresh(frm) {
         setProductQuery(frm);
+        setDeliveryNoteQuery(frm);
         const btn = frm.add_custom_button(__("Per Piece Salary Report"), () => {
             window.open(REPORT_ROUTE, "_blank");
         });
         btn.addClass("btn-primary");
+        if (!isSubmittedDoc(frm)) {
+            frm.add_custom_button(__("Load From Delivery Note"), () => {
+                loadRowsFromDeliveryNote(frm, true);
+            }, __("Actions"));
+        }
     },
 
     validate(frm) {
@@ -2871,6 +3083,9 @@ frappe.ui.form.on("Per Piece Salary", {
     delivery_note(frm) {
       if (isSubmittedDoc(frm)) return;
         frm.trigger("sync_parent_to_child");
+        if ((frm.doc.delivery_note || "").trim()) {
+            loadRowsFromDeliveryNote(frm, false);
+        }
     },
 
     employee(frm) {
@@ -2944,25 +3159,40 @@ frappe.ui.form.on("Per Piece Salary", {
         frm.trigger("recalc_amount_and_total");
     },
 
-    recalc_amount_and_total(frm) {
-      if (isSubmittedDoc(frm)) return;
-        const rows = frm.doc[CHILD_TABLE_FIELD] || [];
-        let totalAmount = 0;
-        let totalQty = 0;
+	    recalc_amount_and_total(frm) {
+	      if (isSubmittedDoc(frm)) return;
+	        const rows = frm.doc[CHILD_TABLE_FIELD] || [];
+	        let totalAmount = 0;
+	        let totalQty = 0;
+	        let totalBookedAmount = 0;
+	        let totalPaidAmount = 0;
+	        let totalUnpaidAmount = 0;
 
-        rows.forEach((row) => {
-            if (!row.process_size) {
-                row.process_size = PROCESS_SIZE_DEFAULT;
-            }
-            calculateRowAmount(row);
-            totalAmount += flt(row.amount, DECIMALS);
-            totalQty += flt(row.qty, DECIMALS);
-        });
+	        rows.forEach((row) => {
+	            if (!row.process_size) {
+	                row.process_size = PROCESS_SIZE_DEFAULT;
+	            }
+	            calculateRowAmount(row);
+	            totalAmount += flt(row.amount, DECIMALS);
+	            totalQty += flt(row.qty, DECIMALS);
+	            totalBookedAmount += flt(row.booked_amount, DECIMALS);
+	            totalPaidAmount += flt(row.paid_amount, DECIMALS);
+	            totalUnpaidAmount += flt(row.unpaid_amount, DECIMALS);
+	        });
 
-        frm.refresh_field(CHILD_TABLE_FIELD);
-        frm.set_value("total_amount", flt(totalAmount, DECIMALS));
-        frm.set_value("total_qty", flt(totalQty, DECIMALS));
-    },
+	        frm.refresh_field(CHILD_TABLE_FIELD);
+	        frm.set_value("total_amount", flt(totalAmount, DECIMALS));
+	        frm.set_value("total_qty", flt(totalQty, DECIMALS));
+	        if (frm.fields_dict.total_booked_amount) {
+	            frm.set_value("total_booked_amount", flt(totalBookedAmount, DECIMALS));
+	        }
+	        if (frm.fields_dict.total_paid_amount) {
+	            frm.set_value("total_paid_amount", flt(totalPaidAmount, DECIMALS));
+	        }
+	        if (frm.fields_dict.total_unpaid_amount) {
+	            frm.set_value("total_unpaid_amount", flt(totalUnpaidAmount, DECIMALS));
+	        }
+	    },
 
     perpiece_add(frm) {
       if (isSubmittedDoc(frm)) return;
@@ -3821,11 +4051,23 @@ def apply() -> list[str]:
 		no_copy=0,
 	)
 	_ensure_custom_field(
+		"company",
+		"Company",
+		"Link",
+		"Company",
+		"employee",
+		results,
+		doctype="Per Piece Salary",
+		read_only=0,
+		in_list_view=0,
+		no_copy=0,
+	)
+	_ensure_custom_field(
 		"pp_filters_col_break_3",
 		"",
 		"Column Break",
 		None,
-		"employee",
+		"company",
 		results,
 		doctype="Per Piece Salary",
 		read_only=0,
@@ -3844,6 +4086,42 @@ def apply() -> list[str]:
 		in_list_view=0,
 		no_copy=0,
 		default="1",
+	)
+	_ensure_custom_field(
+		"total_booked_amount",
+		"Total Booked Amount",
+		"Float",
+		None,
+		"total_amount",
+		results,
+		doctype="Per Piece Salary",
+		read_only=1,
+		in_list_view=0,
+		no_copy=1,
+	)
+	_ensure_custom_field(
+		"total_paid_amount",
+		"Total Paid Amount",
+		"Float",
+		None,
+		"total_booked_amount",
+		results,
+		doctype="Per Piece Salary",
+		read_only=1,
+		in_list_view=0,
+		no_copy=1,
+	)
+	_ensure_custom_field(
+		"total_unpaid_amount",
+		"Total Unpaid Amount",
+		"Float",
+		None,
+		"total_paid_amount",
+		results,
+		doctype="Per Piece Salary",
+		read_only=1,
+		in_list_view=0,
+		no_copy=1,
 	)
 	_delete_custom_field("Item", "custom_process_type", results)
 	_delete_custom_field("Item", "custom_process_size", results)
@@ -3864,6 +4142,18 @@ def apply() -> list[str]:
 	_migrate_jv_status(results)
 
 	_cleanup_legacy_ui_docs(results)
+	_upsert_doc(
+		"Client Script",
+		"Per Piece Salary Auto Load",
+		{
+			"dt": "Per Piece Salary",
+			"enabled": 1,
+			"view": "Form",
+			"module": "Per Piece Payroll",
+			"script": CLIENT_SCRIPT_SCRIPT,
+		},
+		results,
+	)
 	_upsert_doc(
 		"Report",
 		"Per Piece Salary Report",

@@ -626,6 +626,123 @@ def _run_legacy_api_script(script_text: str, kwargs: dict | None = None):
 			frappe.response["message"] = old_message
 
 
+def _parse_entry_names(value) -> list[str]:
+	seen: set[str] = set()
+	out: list[str] = []
+	if value is None:
+		return out
+	if isinstance(value, list | tuple | set):
+		parts = [str(v or "").strip() for v in value]
+	else:
+		text = str(value or "")
+		text = text.replace(";;", ",")
+		parts = [p.strip() for p in text.split(",")]
+	for part in parts:
+		if not part or part in seen:
+			continue
+		seen.add(part)
+		out.append(part)
+	return out
+
+
+def _get_entries_for_jv(journal_entry: str, payment: bool = False) -> list[str]:
+	jv = str(journal_entry or "").strip()
+	if not jv:
+		return []
+	filters = {
+		"parenttype": "Per Piece Salary",
+		"parentfield": "perpiece",
+	}
+	if payment:
+		matches = frappe.get_all(
+			"Per Piece",
+			filters={"payment_jv_no": jv, **filters},
+			pluck="parent",
+			limit_page_length=50000,
+		)
+		like_matches = frappe.get_all(
+			"Per Piece",
+			filters={"payment_refs": ["like", f"%{jv}%"], **filters},
+			pluck="parent",
+			limit_page_length=50000,
+		)
+		entries = list(matches or []) + list(like_matches or [])
+	else:
+		entries = frappe.get_all(
+			"Per Piece",
+			filters={"jv_entry_no": jv, **filters},
+			pluck="parent",
+			limit_page_length=50000,
+		)
+	seen: set[str] = set()
+	out: list[str] = []
+	for name in entries or []:
+		key = str(name or "").strip()
+		if not key or key in seen:
+			continue
+		seen.add(key)
+		out.append(key)
+	return out
+
+
+def recalculate_per_piece_salary_totals(entry_names: list[str] | tuple[str] | str | None) -> None:
+	names = _parse_entry_names(entry_names)
+	if not names:
+		return
+
+	meta = frappe.get_meta("Per Piece Salary")
+	has_total_booked = meta.has_field("total_booked_amount")
+	has_total_paid = meta.has_field("total_paid_amount")
+	has_total_unpaid = meta.has_field("total_unpaid_amount")
+
+	parent_map: dict[str, dict] = {
+		name: {
+			"total_qty": 0.0,
+			"total_amount": 0.0,
+			"total_booked_amount": 0.0,
+			"total_paid_amount": 0.0,
+			"total_unpaid_amount": 0.0,
+		}
+		for name in names
+	}
+
+	rows = frappe.get_all(
+		"Per Piece",
+		filters={
+			"parent": ["in", names],
+			"parenttype": "Per Piece Salary",
+			"parentfield": "perpiece",
+		},
+		fields=["parent", "qty", "amount", "booked_amount", "paid_amount", "unpaid_amount"],
+		limit_page_length=50000,
+	)
+	for row in rows or []:
+		parent = str((row or {}).get("parent") or "").strip()
+		if not parent or parent not in parent_map:
+			continue
+		parent_map[parent]["total_qty"] += flt((row or {}).get("qty"))
+		parent_map[parent]["total_amount"] += flt((row or {}).get("amount"))
+		parent_map[parent]["total_booked_amount"] += flt((row or {}).get("booked_amount"))
+		parent_map[parent]["total_paid_amount"] += flt((row or {}).get("paid_amount"))
+		parent_map[parent]["total_unpaid_amount"] += flt((row or {}).get("unpaid_amount"))
+
+	for name in names:
+		if not frappe.db.exists("Per Piece Salary", name):
+			continue
+		t = parent_map.get(name) or {}
+		update_data = {
+			"total_qty": flt(t.get("total_qty")),
+			"total_amount": flt(t.get("total_amount")),
+		}
+		if has_total_booked:
+			update_data["total_booked_amount"] = flt(t.get("total_booked_amount"))
+		if has_total_paid:
+			update_data["total_paid_amount"] = flt(t.get("total_paid_amount"))
+		if has_total_unpaid:
+			update_data["total_unpaid_amount"] = flt(t.get("total_unpaid_amount"))
+		frappe.db.set_value("Per Piece Salary", name, update_data, update_modified=False)
+
+
 @frappe.whitelist()
 def get_per_piece_salary_report(**kwargs):
 	return _run_legacy_api_script(GET_REPORT_SERVER_SCRIPT, kwargs)
@@ -633,24 +750,48 @@ def get_per_piece_salary_report(**kwargs):
 
 @frappe.whitelist()
 def create_per_piece_salary_entry(**kwargs):
-	return _run_legacy_api_script(CREATE_ENTRY_SERVER_SCRIPT, kwargs)
+	out = _run_legacy_api_script(CREATE_ENTRY_SERVER_SCRIPT, kwargs)
+	names: list[str] = []
+	if isinstance(out, dict):
+		names.extend(_parse_entry_names(out.get("name")))
+	names.extend(_parse_entry_names(kwargs.get("entry_name")))
+	recalculate_per_piece_salary_totals(names)
+	return out
 
 
 @frappe.whitelist()
 def create_per_piece_salary_jv(**kwargs):
-	return _run_legacy_api_script(CREATE_JV_SERVER_SCRIPT, kwargs)
+	out = _run_legacy_api_script(CREATE_JV_SERVER_SCRIPT, kwargs)
+	names: list[str] = []
+	names.extend(_parse_entry_names(kwargs.get("entry_nos")))
+	names.extend(_parse_entry_names(kwargs.get("entry_no")))
+	recalculate_per_piece_salary_totals(names)
+	return out
 
 
 @frappe.whitelist()
 def cancel_per_piece_salary_jv(**kwargs):
-	return _run_legacy_api_script(CANCEL_JV_SERVER_SCRIPT, kwargs)
+	jv = kwargs.get("journal_entry")
+	names = _get_entries_for_jv(jv, payment=False)
+	out = _run_legacy_api_script(CANCEL_JV_SERVER_SCRIPT, kwargs)
+	recalculate_per_piece_salary_totals(names)
+	return out
 
 
 @frappe.whitelist()
 def create_per_piece_salary_payment_jv(**kwargs):
-	return _run_legacy_api_script(CREATE_PAYMENT_JV_SERVER_SCRIPT, kwargs)
+	out = _run_legacy_api_script(CREATE_PAYMENT_JV_SERVER_SCRIPT, kwargs)
+	names: list[str] = []
+	names.extend(_parse_entry_names(kwargs.get("entry_nos")))
+	names.extend(_parse_entry_names(kwargs.get("entry_no")))
+	recalculate_per_piece_salary_totals(names)
+	return out
 
 
 @frappe.whitelist()
 def cancel_per_piece_salary_payment_jv(**kwargs):
-	return _run_legacy_api_script(CANCEL_PAYMENT_JV_SERVER_SCRIPT, kwargs)
+	jv = kwargs.get("journal_entry")
+	names = _get_entries_for_jv(jv, payment=True)
+	out = _run_legacy_api_script(CANCEL_PAYMENT_JV_SERVER_SCRIPT, kwargs)
+	recalculate_per_piece_salary_totals(names)
+	return out
