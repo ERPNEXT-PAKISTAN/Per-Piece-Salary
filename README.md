@@ -55,14 +55,10 @@ If app is already installed, do not run `bench get-app` again.
 Use this exact sequence (works for benches where remote is either `origin` or `upstream`):
 
 ```bash
-# set your values
-BENCH_PATH=/home/frappe/frappe-bench
-SITE=site1.local
-
-cd "$BENCH_PATH" || exit 1
+cd /home/frappe/frappe-bench || exit 1
 
 # 0) backup before update
-bench --site "$SITE" backup --with-files
+bench --site site1.local backup --with-files
 
 # 1) pull latest code
 git -C apps/per_piece_payroll remote -v
@@ -70,14 +66,14 @@ git -C apps/per_piece_payroll pull origin main || git -C apps/per_piece_payroll 
 git -C apps/per_piece_payroll log -1 --oneline
 
 # 2) apply schema + fixtures + app setup
-bench --site "$SITE" migrate
+bench --site site1.local migrate
 
 # 3) force app setup once (ensures legacy UI scripts/web page are cleaned if present)
-bench --site "$SITE" execute per_piece_payroll.per_piece_setup.apply
+bench --site site1.local execute per_piece_payroll.per_piece_setup.apply
 
 # 4) cache/build/restart
-bench --site "$SITE" clear-cache
-bench --site "$SITE" clear-website-cache
+bench --site site1.local clear-cache
+bench --site site1.local clear-website-cache
 bench build --app per_piece_payroll
 bench restart
 ```
@@ -116,7 +112,7 @@ rg --version
 Quick check after update:
 
 ```bash
-bench --site "$SITE" console
+bench --site site1.local console
 ```
 
 ```python
