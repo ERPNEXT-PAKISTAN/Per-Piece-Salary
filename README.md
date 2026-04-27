@@ -49,63 +49,90 @@ Optional safe re-apply:
 bench --site site1.local execute per_piece_payroll.api.apply_per_piece_payroll_setup
 ```
 
-### Update on Existing Client Server
+### Update on Existing Client Server (Single Correct Command Set)
 
-If app is already installed, do not run `bench get-app` again. Use:
+If app is already installed, do not run `bench get-app` again.
+Use this exact sequence (works for benches where remote is either `origin` or `upstream`):
 
 ```bash
-cd /home/frappe/frappe-bench
+# set your values
+BENCH_PATH=/home/frappe/frappe-bench
+SITE=site1.local
 
-# 0) Recommended backup before update
-bench --site site1.local backup --with-files
+cd "$BENCH_PATH" || exit 1
 
-# 1) Pull latest app code from GitHub
+# 0) backup before update
+bench --site "$SITE" backup --with-files
+
+# 1) pull latest code
 git -C apps/per_piece_payroll remote -v
 git -C apps/per_piece_payroll pull origin main || git -C apps/per_piece_payroll pull upstream main
+git -C apps/per_piece_payroll log -1 --oneline
 
-# 2) Verify latest features exist in code (for servers without rg)
-grep -nE "pp-po-number|pp-entry-no|pp-search-any|simple_month_amount" apps/per_piece_payroll/per_piece_payroll/per_piece_setup.py
+# 2) apply schema + fixtures + app setup
+bench --site "$SITE" migrate
 
-# 3) Apply to your site
-bench --site site1.local migrate
-bench --site site1.local clear-cache
-bench --site site1.local clear-website-cache
+# 3) force app setup once (ensures legacy UI scripts/web page are cleaned if present)
+bench --site "$SITE" execute per_piece_payroll.per_piece_setup.apply
 
-# 4) Rebuild and restart
+# 4) cache/build/restart
+bench --site "$SITE" clear-cache
+bench --site "$SITE" clear-website-cache
 bench build --app per_piece_payroll
 bench restart
 ```
 
-Optional only when setup drift is suspected (normally not needed because migrate already runs setup):
+If `bench restart` is not available on your hosting platform, restart processes from your hosting panel/container supervisor.
 
-```bash
-bench --site site1.local execute per_piece_payroll.api.apply_per_piece_payroll_setup
-```
+Where to run:
 
-If `bench restart` is not available on your hosting platform, restart services from your platform panel/container instead.
+- Run all commands on the **client server terminal** (SSH), not on your local VS Code machine.
+- Run from bench root: `cd /home/frappe/frappe-bench` (or your actual bench path).
+- Replace `site1.local` with your real site name.
 
-### Update Other Server from GitHub (Quick Copy)
-
-Use this on any other ERPNext server where app is already installed:
+If you want to scan all installed apps to find who is recreating legacy UI scripts:
 
 ```bash
 cd /home/frappe/frappe-bench
-git -C apps/per_piece_payroll remote -v
-git -C apps/per_piece_payroll pull origin main || git -C apps/per_piece_payroll pull upstream main
-grep -nE "pp-po-number|pp-entry-no|pp-search-any|simple_month_amount" apps/per_piece_payroll/per_piece_payroll/per_piece_setup.py
-bench --site site1.local backup --with-files
-bench --site site1.local migrate
-bench --site site1.local clear-cache
-bench --site site1.local clear-website-cache
-bench build --app per_piece_payroll
-bench restart
+
+# Search all apps for legacy script IDs
+grep -RInE "create_per_piece_salary_entry|create_per_piece_salary_jv|create_per_piece_salary_payment_jv|cancel_per_piece_salary_jv|cancel_per_piece_salary_payment_jv|get_per_piece_salary_report|Per Piece Salary Auto Load|Per Piece Salary Update Child" apps
+
+# Search fixture declarations that import Server/Client Script
+grep -RInE "\"dt\"[[:space:]]*:[[:space:]]*\"Server Script\"|\"dt\"[[:space:]]*:[[:space:]]*\"Client Script\"|\"doctype\"[[:space:]]*:[[:space:]]*\"Server Script\"|\"doctype\"[[:space:]]*:[[:space:]]*\"Client Script\"" apps
 ```
 
-Example:
+Optional (`rg` / ripgrep): faster search tool used in some commands.
 
 ```bash
-bench --site site1.local migrate
-bench --site site1.local execute per_piece_payroll.api.apply_per_piece_payroll_setup
+# Ubuntu/Debian
+sudo apt update
+sudo apt install -y ripgrep
+
+# verify
+rg --version
+```
+
+Quick check after update:
+
+```bash
+bench --site "$SITE" console
+```
+
+```python
+frappe.get_all("Server Script", filters={"name": ["in", [
+    "get_per_piece_salary_report",
+    "create_per_piece_salary_entry",
+    "create_per_piece_salary_jv",
+    "cancel_per_piece_salary_jv",
+    "create_per_piece_salary_payment_jv",
+    "cancel_per_piece_salary_payment_jv",
+]]}, fields=["name", "disabled"])
+
+frappe.get_all("Client Script", filters={"name": ["in", [
+    "Per Piece Salary Auto Load",
+    "Per Piece Salary Update Child",
+]]}, fields=["name", "enabled"])
 ```
 
 ### Screenshots
