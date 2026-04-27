@@ -3702,6 +3702,7 @@ def _cleanup_legacy_ui_docs(results: list[str]) -> None:
 		"cancel_per_piece_salary_payment_jv",
 	):
 		_delete_doc_if_exists("Server Script", name, results)
+	_delete_doc_if_exists("Client Script", "Per Piece Salary Auto Load", results)
 	_delete_doc_if_exists("Client Script", "Per Piece Salary Update Child", results)
 
 
@@ -4142,18 +4143,6 @@ def apply() -> list[str]:
 	_migrate_jv_status(results)
 
 	_cleanup_legacy_ui_docs(results)
-	_upsert_doc(
-		"Client Script",
-		"Per Piece Salary Auto Load",
-		{
-			"dt": "Per Piece Salary",
-			"enabled": 1,
-			"view": "Form",
-			"module": "Per Piece Payroll",
-			"script": CLIENT_SCRIPT_SCRIPT,
-		},
-		results,
-	)
 	_upsert_doc(
 		"Report",
 		"Per Piece Salary Report",
