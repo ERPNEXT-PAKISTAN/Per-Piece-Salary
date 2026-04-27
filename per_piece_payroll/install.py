@@ -22,7 +22,6 @@ def ensure_workspace() -> None:
 	if not frappe.db.exists("DocType", "Workspace"):
 		return
 
-	workspace_name = "Per Piece Payroll"
 	module_name = "Per Piece Payroll"
 
 	shortcuts = [
@@ -101,32 +100,118 @@ def ensure_workspace() -> None:
 		},
 	]
 
-	if frappe.db.exists("Workspace", workspace_name):
-		doc = frappe.get_doc("Workspace", workspace_name)
-	else:
-		doc = frappe.new_doc("Workspace")
-		doc.label = workspace_name
+	def upsert_workspace(
+		workspace_name: str,
+		title: str,
+		icon: str,
+		workspace_shortcuts: list[dict],
+		workspace_links: list[dict],
+		workspace_content: list[dict],
+	) -> None:
+		if frappe.db.exists("Workspace", workspace_name):
+			doc = frappe.get_doc("Workspace", workspace_name)
+		else:
+			doc = frappe.new_doc("Workspace")
+			doc.label = workspace_name
 
-	doc.title = workspace_name
-	doc.module = module_name
-	doc.app = "per_piece_payroll"
-	doc.icon = "money-coins-1"
-	doc.public = 1
-	doc.is_hidden = 0
-	doc.type = "Workspace"
-	doc.content = json.dumps(content, separators=(",", ":"))
+		doc.title = title
+		doc.module = module_name
+		doc.app = "per_piece_payroll"
+		doc.icon = icon
+		doc.public = 1
+		doc.is_hidden = 0
+		doc.type = "Workspace"
+		doc.content = json.dumps(workspace_content, separators=(",", ":"))
 
-	doc.set("shortcuts", [])
-	for row in shortcuts:
-		doc.append("shortcuts", row)
+		doc.set("shortcuts", [])
+		for row in workspace_shortcuts:
+			doc.append("shortcuts", row)
 
-	doc.set("links", [])
-	for row in links:
-		doc.append("links", row)
+		doc.set("links", [])
+		for row in workspace_links:
+			doc.append("links", row)
 
-	if doc.is_new():
-		doc.insert(ignore_permissions=True)
-	else:
-		doc.save(ignore_permissions=True)
+		if doc.is_new():
+			doc.insert(ignore_permissions=True)
+		else:
+			doc.save(ignore_permissions=True)
+
+	upsert_workspace(
+		workspace_name="Per Piece Payroll",
+		title="Per Piece Payroll",
+		icon="money-coins-1",
+		workspace_shortcuts=shortcuts,
+		workspace_links=links,
+		workspace_content=content,
+	)
+
+	create_shortcuts = [
+		{"type": "Page", "link_to": "per-piece-entry", "label": "Create Per Piece Salary"},
+		{"type": "Page", "link_to": "per-piece-reporting", "label": "Per Piece Reporting"},
+		{
+			"type": "DocType",
+			"link_to": "Per Piece Salary",
+			"doc_view": "List",
+			"label": "Per Piece Salary List",
+		},
+	]
+	create_links = [
+		{"type": "Card Break", "label": "Create Per Piece Salary"},
+		{
+			"type": "Link",
+			"label": "Create Per Piece Salary",
+			"link_type": "Page",
+			"link_to": "per-piece-entry",
+		},
+		{
+			"type": "Link",
+			"label": "Per Piece Reporting",
+			"link_type": "Page",
+			"link_to": "per-piece-reporting",
+		},
+		{
+			"type": "Link",
+			"label": "Per Piece Salary List",
+			"link_type": "DocType",
+			"link_to": "Per Piece Salary",
+		},
+	]
+	create_content = [
+		{
+			"id": "header_shortcuts",
+			"type": "header",
+			"data": {"text": "Create Per Piece Salary", "col": 12},
+		},
+		{
+			"id": "shortcuts",
+			"type": "shortcut",
+			"data": {"shortcut_name": "Create Per Piece Salary", "col": 4},
+		},
+		{
+			"id": "shortcuts_2",
+			"type": "shortcut",
+			"data": {"shortcut_name": "Per Piece Reporting", "col": 4},
+		},
+		{
+			"id": "shortcuts_3",
+			"type": "shortcut",
+			"data": {"shortcut_name": "Per Piece Salary List", "col": 4},
+		},
+		{
+			"id": "header_links",
+			"type": "header",
+			"data": {"text": "Links", "col": 12},
+		},
+		{"id": "links", "type": "links", "data": {"links_name": "Create Per Piece Salary", "col": 12}},
+	]
+
+	upsert_workspace(
+		workspace_name="Create Per Piece Salary",
+		title="Create Per Piece Salary",
+		icon="calculator",
+		workspace_shortcuts=create_shortcuts,
+		workspace_links=create_links,
+		workspace_content=create_content,
+	)
 
 	frappe.clear_cache()
