@@ -6,15 +6,52 @@ import frappe
 
 from per_piece_payroll.per_piece_setup import apply
 
+LEGACY_SERVER_SCRIPTS = (
+	"get_per_piece_salary_report",
+	"create_per_piece_salary_entry",
+	"create_per_piece_salary_jv",
+	"cancel_per_piece_salary_jv",
+	"create_per_piece_salary_payment_jv",
+	"cancel_per_piece_salary_payment_jv",
+)
+
+LEGACY_CLIENT_SCRIPTS = (
+	"Per Piece Salary Auto Load",
+	"Per Piece Salary Update Child",
+)
+
 
 def after_install() -> None:
 	apply()
 	ensure_workspace()
+	cleanup_legacy_ui_scripts()
 
 
 def after_migrate() -> None:
 	apply()
 	ensure_workspace()
+	cleanup_legacy_ui_scripts()
+
+
+def cleanup_legacy_ui_scripts() -> None:
+	"""Force-remove legacy UI scripts so per_piece logic stays app-backed only."""
+	if LEGACY_SERVER_SCRIPTS:
+		frappe.db.sql(
+			"""
+			DELETE FROM `tabServer Script`
+			WHERE name IN %(names)s
+			""",
+			{"names": tuple(LEGACY_SERVER_SCRIPTS)},
+		)
+	if LEGACY_CLIENT_SCRIPTS:
+		frappe.db.sql(
+			"""
+			DELETE FROM `tabClient Script`
+			WHERE name IN %(names)s
+			""",
+			{"names": tuple(LEGACY_CLIENT_SCRIPTS)},
+		)
+	frappe.db.commit()
 
 
 def ensure_workspace() -> None:
