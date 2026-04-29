@@ -733,8 +733,99 @@ def recalculate_per_piece_child_financials(
 	return {"ok": True, "rows_checked": len(rows or []), "rows_updated": updated}
 
 
+def _normalize_entry_booked_amounts(
+	entry_names: list[str] | tuple[str] | str | None = None,
+) -> dict:
+	"""Fix legacy rows where no deductions were saved but booked/net got reduced."""
+	names = _parse_entry_names(entry_names)
+	if not names:
+		return {"ok": True, "rows_checked": 0, "rows_updated": 0}
+
+	rows = frappe.get_all(
+		"Per Piece",
+		filters={
+			"parent": ["in", names],
+			"parenttype": "Per Piece Salary",
+			"parentfield": "perpiece",
+		},
+		fields=[
+			"name",
+			"parent",
+			"amount",
+			"booked_amount",
+			"paid_amount",
+			"unpaid_amount",
+			"allowance",
+			"advance_deduction",
+			"other_deduction",
+			"net_amount",
+			"jv_status",
+		],
+		limit_page_length=200000,
+	)
+
+	updated = 0
+	for row in rows or []:
+		amount = flt((row or {}).get("amount"))
+		booked = flt((row or {}).get("booked_amount"))
+		paid = flt((row or {}).get("paid_amount"))
+		unpaid = flt((row or {}).get("unpaid_amount"))
+		allowance = flt((row or {}).get("allowance"))
+		advance = flt((row or {}).get("advance_deduction"))
+		other = flt((row or {}).get("other_deduction"))
+		net = flt((row or {}).get("net_amount"))
+		jv_status = str((row or {}).get("jv_status") or "").strip()
+
+		no_split = abs(allowance) <= 0.005 and abs(advance) <= 0.005 and abs(other) <= 0.005
+		needs_fix = (
+			no_split
+			and amount > 0
+			and jv_status in ("Posted", "Accounted")
+			and (booked + 0.005 < amount or net + 0.005 < amount)
+		)
+		if not needs_fix:
+			continue
+
+		new_booked = amount
+		new_net = amount
+		new_paid = max(min(paid, new_booked), 0.0)
+		new_unpaid = max(new_booked - new_paid, 0.0)
+		if new_unpaid <= 0.005:
+			new_status = "Paid"
+		elif new_paid > 0.005:
+			new_status = "Partly Paid"
+		else:
+			new_status = "Unpaid"
+
+		new_vals = {
+			"booked_amount": round(new_booked, 2),
+			"net_amount": round(new_net, 2),
+			"paid_amount": round(new_paid, 2),
+			"unpaid_amount": round(new_unpaid, 2),
+			"payment_status": new_status,
+		}
+		cur_vals = {
+			"booked_amount": round(booked, 2),
+			"net_amount": round(net, 2),
+			"paid_amount": round(paid, 2),
+			"unpaid_amount": round(unpaid, 2),
+			"payment_status": str((row or {}).get("payment_status") or ""),
+		}
+		if cur_vals != new_vals:
+			frappe.db.set_value("Per Piece", row.get("name"), new_vals, update_modified=False)
+			updated += 1
+
+	if names and updated:
+		recalculate_per_piece_salary_totals(names)
+	return {"ok": True, "rows_checked": len(rows or []), "rows_updated": updated}
+
+
 @frappe.whitelist()
 def get_per_piece_salary_report(**kwargs):
+	names: list[str] = []
+	names.extend(_parse_entry_names(kwargs.get("entry_nos")))
+	names.extend(_parse_entry_names(kwargs.get("entry_no")))
+	_normalize_entry_booked_amounts(names)
 	return _run_legacy_api_script(GET_REPORT_SERVER_SCRIPT, kwargs)
 
 
@@ -772,10 +863,11 @@ def cancel_per_piece_salary_jv(**kwargs):
 
 @frappe.whitelist()
 def create_per_piece_salary_payment_jv(**kwargs):
-	out = _run_legacy_api_script(CREATE_PAYMENT_JV_SERVER_SCRIPT, kwargs)
 	names: list[str] = []
 	names.extend(_parse_entry_names(kwargs.get("entry_nos")))
 	names.extend(_parse_entry_names(kwargs.get("entry_no")))
+	_normalize_entry_booked_amounts(names)
+	out = _run_legacy_api_script(CREATE_PAYMENT_JV_SERVER_SCRIPT, kwargs)
 	recalculate_per_piece_child_financials(names)
 	recalculate_per_piece_salary_totals(names)
 	return out

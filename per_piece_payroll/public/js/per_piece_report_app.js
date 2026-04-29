@@ -4744,6 +4744,7 @@
 			var v = String(el("pp-jv-entry-filter").value || "").trim();
 			state.forcedEntryNo = v;
 			state.excludedEmployees = {};
+			state.adjustments = {};
 			if (el("pp-entry-no")) el("pp-entry-no").value = v;
 			if (el("pp-pay-entry-filter")) el("pp-pay-entry-filter").value = v;
 			if (el("pp-jv-entry-multi")) el("pp-jv-entry-multi").value = v;
@@ -4757,6 +4758,7 @@
 			var single = list.length === 1 ? list[0] : "";
 			state.forcedEntryNo = single;
 			state.excludedEmployees = {};
+			state.adjustments = {};
 			if (el("pp-entry-no")) el("pp-entry-no").value = single;
 			if (el("pp-jv-entry-filter")) el("pp-jv-entry-filter").value = single;
 			if (el("pp-pay-entry-filter")) el("pp-pay-entry-filter").value = single;
@@ -4784,6 +4786,7 @@
 			if (el("pp-jv-entry-multi")) el("pp-jv-entry-multi").value = current.join(", ");
 			state.forcedEntryNo = current.length === 1 ? current[0] : "";
 			state.excludedEmployees = {};
+			state.adjustments = {};
 			if (el("pp-entry-no")) el("pp-entry-no").value = state.forcedEntryNo;
 			setPageForCurrentTab(1);
 			renderCurrentTab();
@@ -4804,6 +4807,7 @@
 			if (el("pp-jv-entry-multi")) el("pp-jv-entry-multi").value = current.join(", ");
 			state.forcedEntryNo = current.length === 1 ? current[0] : "";
 			state.excludedEmployees = {};
+			state.adjustments = {};
 			if (el("pp-entry-no")) el("pp-entry-no").value = state.forcedEntryNo;
 			if (el("pp-jv-entry-filter")) el("pp-jv-entry-filter").value = state.forcedEntryNo;
 			if (el("pp-pay-entry-filter")) el("pp-pay-entry-filter").value = state.forcedEntryNo;
