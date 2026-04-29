@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
 import frappe
@@ -447,15 +446,6 @@ def get_salary_entry_financials(entry_names: str | list[str] | None = None) -> d
 			seen.add(name)
 		return out[:500]
 
-	def _credit_amount(row: dict) -> float:
-		return flt(row.get("credit_in_account_currency") or row.get("credit"))
-
-	def _employee_from_remark(remark: str, pattern: str) -> str:
-		m = re.match(pattern, remark or "")
-		if not m:
-			return ""
-		return str(m.group(1) or "").strip()
-
 	entries = _to_names(entry_names)
 	if not entries:
 		return {"data": {}}
@@ -463,19 +453,36 @@ def get_salary_entry_financials(entry_names: str | list[str] | None = None) -> d
 	per_piece_rows = frappe.get_all(
 		"Per Piece",
 		filters={"parent": ["in", entries], "parenttype": "Per Piece Salary"},
-		fields=["parent", "employee", "amount", "jv_entry_no"],
+		fields=[
+			"parent",
+			"employee",
+			"amount",
+			"booked_amount",
+			"allowance",
+			"advance_deduction",
+			"other_deduction",
+			"net_amount",
+		],
 		limit_page_length=200000,
 		ignore_permissions=True,
 	)
 
 	by_entry: dict[str, dict] = {}
-	jv_to_entry: dict[str, set[str]] = {}
 	for row in per_piece_rows:
 		entry = str(row.get("parent") or "").strip()
 		if not entry:
 			continue
 		emp = str(row.get("employee") or "").strip()
 		amount = flt(row.get("amount"))
+		booked = flt(row.get("booked_amount"))
+		allowance = flt(row.get("allowance"))
+		advance_deduction = flt(row.get("advance_deduction"))
+		other_deduction = flt(row.get("other_deduction"))
+		net_amount = flt(row.get("net_amount"))
+		if booked > 0 and net_amount <= 0:
+			net_amount = booked
+		if net_amount <= 0:
+			net_amount = max(amount + allowance - advance_deduction - other_deduction, 0)
 		if entry not in by_entry:
 			by_entry[entry] = {
 				"salary_amount": 0.0,
@@ -484,10 +491,13 @@ def get_salary_entry_financials(entry_names: str | list[str] | None = None) -> d
 				"other_deduction_amount": 0.0,
 				"net_salary": 0.0,
 				"by_employee": {},
-				"jv_names": set(),
 			}
 		target = by_entry[entry]
 		target["salary_amount"] += amount
+		target["allowance_amount"] += allowance
+		target["advance_deduction_amount"] += advance_deduction
+		target["other_deduction_amount"] += other_deduction
+		target["net_salary"] += net_amount
 		if emp:
 			emp_row = target["by_employee"].setdefault(
 				emp,
@@ -500,110 +510,25 @@ def get_salary_entry_financials(entry_names: str | list[str] | None = None) -> d
 				},
 			)
 			emp_row["salary_amount"] += amount
-		jv = str(row.get("jv_entry_no") or "").strip()
-		if jv:
-			target["jv_names"].add(jv)
-			jv_to_entry.setdefault(jv, set()).add(entry)
-
-	jv_names = sorted(jv_to_entry.keys())
-	accounts = []
-	if jv_names:
-		accounts = frappe.get_all(
-			"Journal Entry Account",
-			filters={"parent": ["in", jv_names], "parenttype": "Journal Entry", "docstatus": 1},
-			fields=["parent", "party", "user_remark", "credit_in_account_currency", "credit"],
-			limit_page_length=200000,
-			ignore_permissions=True,
-		)
-
-	for acc in accounts:
-		jv = str(acc.get("parent") or "").strip()
-		entries_for_jv = jv_to_entry.get(jv) or set()
-		if not entries_for_jv:
-			continue
-		credit = _credit_amount(acc)
-		if credit <= 0:
-			continue
-		remark = str(acc.get("user_remark") or "").strip()
-		party = str(acc.get("party") or "").strip()
-		advance_emp = _employee_from_remark(remark, r"^Advance Recovery - (.+)$")
-		other_emp = _employee_from_remark(remark, r"^Salary Deduction - (.+)$")
-		net_emp = _employee_from_remark(remark, r"^Net Salary - (.+?)(\s*\||$)")
-		for entry in entries_for_jv:
-			fin = by_entry.get(entry)
-			if not fin:
-				continue
-			if advance_emp or (party and remark.startswith("Advance Recovery - ")):
-				emp = advance_emp or party
-				emp_row = fin["by_employee"].setdefault(
-					emp,
-					{
-						"salary_amount": 0.0,
-						"allowance_amount": 0.0,
-						"advance_deduction_amount": 0.0,
-						"other_deduction_amount": 0.0,
-						"net_amount": 0.0,
-					},
-				)
-				emp_row["advance_deduction_amount"] += credit
-			elif other_emp or (party and remark.startswith("Salary Deduction - ")):
-				emp = other_emp or party
-				emp_row = fin["by_employee"].setdefault(
-					emp,
-					{
-						"salary_amount": 0.0,
-						"allowance_amount": 0.0,
-						"advance_deduction_amount": 0.0,
-						"other_deduction_amount": 0.0,
-						"net_amount": 0.0,
-					},
-				)
-				emp_row["other_deduction_amount"] += credit
-			elif net_emp or (party and remark.startswith("Net Salary - ")):
-				emp = net_emp or party
-				emp_row = fin["by_employee"].setdefault(
-					emp,
-					{
-						"salary_amount": 0.0,
-						"allowance_amount": 0.0,
-						"advance_deduction_amount": 0.0,
-						"other_deduction_amount": 0.0,
-						"net_amount": 0.0,
-					},
-				)
-				emp_row["net_amount"] += credit
+			emp_row["allowance_amount"] += allowance
+			emp_row["advance_deduction_amount"] += advance_deduction
+			emp_row["other_deduction_amount"] += other_deduction
+			emp_row["net_amount"] += net_amount
 
 	for _entry, fin in by_entry.items():
-		total_salary = 0.0
-		total_allow = 0.0
-		total_adv = 0.0
-		total_other = 0.0
-		total_net = 0.0
 		for _emp, emp_row in (fin.get("by_employee") or {}).items():
 			salary_amount = flt(emp_row.get("salary_amount"))
 			adv = flt(emp_row.get("advance_deduction_amount"))
 			other = flt(emp_row.get("other_deduction_amount"))
 			net = flt(emp_row.get("net_amount"))
+			allow = flt(emp_row.get("allowance_amount"))
 			if net <= 0:
-				net = max(salary_amount - adv - other, 0)
-			allow = max(net - salary_amount + adv + other, 0)
+				net = max(salary_amount + allow - adv - other, 0)
 			emp_row["salary_amount"] = salary_amount
 			emp_row["advance_deduction_amount"] = adv
 			emp_row["other_deduction_amount"] = other
 			emp_row["allowance_amount"] = allow
 			emp_row["net_amount"] = net
-			total_salary += salary_amount
-			total_allow += allow
-			total_adv += adv
-			total_other += other
-			total_net += net
-
-		fin["salary_amount"] = total_salary
-		fin["allowance_amount"] = total_allow
-		fin["advance_deduction_amount"] = total_adv
-		fin["other_deduction_amount"] = total_other
-		fin["net_salary"] = total_net
-		fin.pop("jv_names", None)
 
 	return {"data": by_entry}
 
@@ -743,6 +668,71 @@ def recalculate_per_piece_salary_totals(entry_names: list[str] | tuple[str] | st
 		frappe.db.set_value("Per Piece Salary", name, update_data, update_modified=False)
 
 
+def recalculate_per_piece_child_financials(
+	entry_names: list[str] | tuple[str] | str | None = None,
+) -> dict:
+	names = _parse_entry_names(entry_names)
+	filters: dict[str, object] = {
+		"parenttype": "Per Piece Salary",
+		"parentfield": "perpiece",
+	}
+	if names:
+		filters["parent"] = ["in", names]
+
+	rows = frappe.get_all(
+		"Per Piece",
+		filters=filters,
+		fields=[
+			"name",
+			"parent",
+			"amount",
+			"booked_amount",
+			"allowance",
+			"advance_deduction",
+			"other_deduction",
+			"net_amount",
+		],
+		limit_page_length=200000,
+	)
+	updated = 0
+	for row in rows or []:
+		amount = flt((row or {}).get("amount"))
+		booked = flt((row or {}).get("booked_amount"))
+		allowance = flt((row or {}).get("allowance"))
+		advance = flt((row or {}).get("advance_deduction"))
+		other = flt((row or {}).get("other_deduction"))
+		net = flt((row or {}).get("net_amount"))
+
+		# Backfill legacy rows where financial splits were not persisted.
+		if net <= 0:
+			if booked > 0:
+				net = booked
+				if allowance <= 0 and advance <= 0 and other <= 0:
+					allowance = max(net - amount, 0)
+			else:
+				net = max(amount + allowance - advance - other, 0)
+
+		new_vals = {
+			"allowance": round(allowance, 2),
+			"advance_deduction": round(max(advance, 0), 2),
+			"other_deduction": round(max(other, 0), 2),
+			"net_amount": round(max(net, 0), 2),
+		}
+		cur_vals = {
+			"allowance": round(flt((row or {}).get("allowance")), 2),
+			"advance_deduction": round(flt((row or {}).get("advance_deduction")), 2),
+			"other_deduction": round(flt((row or {}).get("other_deduction")), 2),
+			"net_amount": round(flt((row or {}).get("net_amount")), 2),
+		}
+		if cur_vals != new_vals:
+			frappe.db.set_value("Per Piece", row.get("name"), new_vals, update_modified=False)
+			updated += 1
+
+	if names:
+		recalculate_per_piece_salary_totals(names)
+	return {"ok": True, "rows_checked": len(rows or []), "rows_updated": updated}
+
+
 @frappe.whitelist()
 def get_per_piece_salary_report(**kwargs):
 	return _run_legacy_api_script(GET_REPORT_SERVER_SCRIPT, kwargs)
@@ -765,6 +755,7 @@ def create_per_piece_salary_jv(**kwargs):
 	names: list[str] = []
 	names.extend(_parse_entry_names(kwargs.get("entry_nos")))
 	names.extend(_parse_entry_names(kwargs.get("entry_no")))
+	recalculate_per_piece_child_financials(names)
 	recalculate_per_piece_salary_totals(names)
 	return out
 
@@ -774,6 +765,7 @@ def cancel_per_piece_salary_jv(**kwargs):
 	jv = kwargs.get("journal_entry")
 	names = _get_entries_for_jv(jv, payment=False)
 	out = _run_legacy_api_script(CANCEL_JV_SERVER_SCRIPT, kwargs)
+	recalculate_per_piece_child_financials(names)
 	recalculate_per_piece_salary_totals(names)
 	return out
 
@@ -784,6 +776,7 @@ def create_per_piece_salary_payment_jv(**kwargs):
 	names: list[str] = []
 	names.extend(_parse_entry_names(kwargs.get("entry_nos")))
 	names.extend(_parse_entry_names(kwargs.get("entry_no")))
+	recalculate_per_piece_child_financials(names)
 	recalculate_per_piece_salary_totals(names)
 	return out
 
@@ -793,5 +786,6 @@ def cancel_per_piece_salary_payment_jv(**kwargs):
 	jv = kwargs.get("journal_entry")
 	names = _get_entries_for_jv(jv, payment=True)
 	out = _run_legacy_api_script(CANCEL_PAYMENT_JV_SERVER_SCRIPT, kwargs)
+	recalculate_per_piece_child_financials(names)
 	recalculate_per_piece_salary_totals(names)
 	return out

@@ -1149,13 +1149,8 @@
 		};
 
 	function getNetBookedAmountForRow(r) {
-		var entry = String((r && r.per_piece_salary) || "").trim();
-		var emp = String((r && r.employee) || "").trim();
-		var cache = (state.entryMeta && state.entryMeta.salaryFinancialByEntry) || {};
-		if (entry && emp && cache[entry] && cache[entry].by_employee) {
-			var byEmp = cache[entry].by_employee[emp];
-			if (byEmp && byEmp.net_amount != null) return Math.max(num(byEmp.net_amount), 0);
-		}
+		// Always use persisted row values for payment base.
+		// Avoid deriving from JV cache because one JV can contain multiple entries.
 		return Math.max(num((r && r.booked_amount) || (r && r.amount)), 0);
 	}
 
@@ -2348,50 +2343,31 @@
 		var list = rows || [];
 		if (!list.length) return;
 		if (String(state.currentTab || "") !== "salary_creation") return;
-		var cache = getSalaryFinancialCache();
 		var totals = { salary: 0, allowance: 0, advance: 0, other: 0, net: 0 };
-		var names = list
-			.map(function (r) {
-				return String((r && r.name) || "").trim();
-			})
-			.filter(function (n) {
-				return !!n;
-			});
-		ensureSalaryFinancials(names).then(function () {
-			list.forEach(function (r) {
-				var entry = String((r && r.name) || "").trim();
-				if (!entry) return;
-				var fin = cache[entry] || null;
-				var vals = fin
-					? {
-							salary: num(fin.salary_amount),
-							allowance: num(fin.allowance_amount),
-							advance: num(fin.advance_deduction_amount),
-							other: num(fin.other_deduction_amount),
-							net: num(fin.net_salary),
-					  }
-					: {
-							salary: num(r.amount),
-							allowance: num(r.allowance_amount),
-							advance: num(r.advance_deduction_amount),
-							other: num(r.other_deduction_amount),
-							net: num(r.net_salary),
-					  };
-				setSalaryHistoryCell(entry, "salary", vals.salary);
-				setSalaryHistoryCell(entry, "allowance", vals.allowance);
-				setSalaryHistoryCell(entry, "advance", vals.advance);
-				setSalaryHistoryCell(entry, "other", vals.other);
-				setSalaryHistoryCell(entry, "net", vals.net);
-				totals.salary += vals.salary;
-				totals.allowance += vals.allowance;
-				totals.advance += vals.advance;
-				totals.other += vals.other;
-				totals.net += vals.net;
-			});
-			if (String(state.currentTab || "") !== "salary_creation") return;
-			setSalaryHistoryTotalsRow(totals);
-			normalizePaymentAdjustments();
+		list.forEach(function (r) {
+			var entry = String((r && r.name) || "").trim();
+			if (!entry) return;
+			var vals = {
+				salary: num(r.amount),
+				allowance: num(r.allowance_amount),
+				advance: num(r.advance_deduction_amount),
+				other: num(r.other_deduction_amount),
+				net: num(r.net_salary),
+			};
+			setSalaryHistoryCell(entry, "salary", vals.salary);
+			setSalaryHistoryCell(entry, "allowance", vals.allowance);
+			setSalaryHistoryCell(entry, "advance", vals.advance);
+			setSalaryHistoryCell(entry, "other", vals.other);
+			setSalaryHistoryCell(entry, "net", vals.net);
+			totals.salary += vals.salary;
+			totals.allowance += vals.allowance;
+			totals.advance += vals.advance;
+			totals.other += vals.other;
+			totals.net += vals.net;
 		});
+		if (String(state.currentTab || "") !== "salary_creation") return;
+		setSalaryHistoryTotalsRow(totals);
+		normalizePaymentAdjustments();
 	}
 
 	function parsePaymentRefsJs(text) {

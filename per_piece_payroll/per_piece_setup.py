@@ -56,6 +56,10 @@ def cleanup_canceled_jv_links():
             frappe.db.set_value("Per Piece", row_name, "jv_status", "Pending", update_modified=False)
             frappe.db.set_value("Per Piece", row_name, "jv_line_remark", "", update_modified=False)
             frappe.db.set_value("Per Piece", row_name, "booked_amount", 0, update_modified=False)
+            frappe.db.set_value("Per Piece", row_name, "allowance", 0, update_modified=False)
+            frappe.db.set_value("Per Piece", row_name, "advance_deduction", 0, update_modified=False)
+            frappe.db.set_value("Per Piece", row_name, "other_deduction", 0, update_modified=False)
+            frappe.db.set_value("Per Piece", row_name, "net_amount", 0, update_modified=False)
             frappe.db.set_value("Per Piece", row_name, "paid_amount", 0, update_modified=False)
             frappe.db.set_value("Per Piece", row_name, "unpaid_amount", 0, update_modified=False)
             frappe.db.set_value("Per Piece", row_name, "payment_status", "Unpaid", update_modified=False)
@@ -860,6 +864,10 @@ def cleanup_canceled_links_for_entry(entry_name):
       frappe.db.set_value("Per Piece", row_name, "jv_entry_no", "", update_modified=False)
       frappe.db.set_value("Per Piece", row_name, "jv_status", "Pending", update_modified=False)
       frappe.db.set_value("Per Piece", row_name, "booked_amount", 0, update_modified=False)
+      frappe.db.set_value("Per Piece", row_name, "allowance", 0, update_modified=False)
+      frappe.db.set_value("Per Piece", row_name, "advance_deduction", 0, update_modified=False)
+      frappe.db.set_value("Per Piece", row_name, "other_deduction", 0, update_modified=False)
+      frappe.db.set_value("Per Piece", row_name, "net_amount", 0, update_modified=False)
       frappe.db.set_value("Per Piece", row_name, "paid_amount", 0, update_modified=False)
       frappe.db.set_value("Per Piece", row_name, "unpaid_amount", 0, update_modified=False)
       frappe.db.set_value("Per Piece", row_name, "payment_status", "Unpaid", update_modified=False)
@@ -1615,26 +1623,54 @@ else:
         for rr in emp_rows:
             emp_base = emp_base + max(to_float(rr.get("amount")), 0.0)
         emp_net = max(to_float((employee_totals.get(emp) or {}).get("net_amount")), 0.0)
+        emp_allowance = max(to_float((employee_totals.get(emp) or {}).get("allowance")), 0.0)
+        emp_advance = max(to_float((employee_totals.get(emp) or {}).get("advance_deduction")), 0.0)
+        emp_other = max(to_float((employee_totals.get(emp) or {}).get("other_deduction")), 0.0)
 
         running = 0.0
+        running_allowance = 0.0
+        running_advance = 0.0
+        running_other = 0.0
         for idx, rr in enumerate(emp_rows):
             child_name = rr.get("child_name")
             if not child_name:
                 continue
+            row_base = max(to_float(rr.get("amount")), 0.0)
             if idx == len(emp_rows) - 1:
                 booked = max(emp_net - running, 0.0)
+                row_allowance = max(emp_allowance - running_allowance, 0.0)
+                row_advance = max(emp_advance - running_advance, 0.0)
+                row_other = max(emp_other - running_other, 0.0)
             else:
                 if emp_base > 0:
-                    booked = round((max(to_float(rr.get("amount")), 0.0) / emp_base) * emp_net, 2)
+                    row_ratio = row_base / emp_base
+                    booked = round(row_ratio * emp_net, 2)
+                    row_allowance = round(row_ratio * emp_allowance, 2)
+                    row_advance = round(row_ratio * emp_advance, 2)
+                    row_other = round(row_ratio * emp_other, 2)
                 else:
                     booked = round(emp_net / len(emp_rows), 2)
+                    row_allowance = round(emp_allowance / len(emp_rows), 2)
+                    row_advance = round(emp_advance / len(emp_rows), 2)
+                    row_other = round(emp_other / len(emp_rows), 2)
                 running = running + booked
+                running_allowance = running_allowance + row_allowance
+                running_advance = running_advance + row_advance
+                running_other = running_other + row_other
             booked = round(max(booked, 0.0), 2)
+            row_allowance = round(max(row_allowance, 0.0), 2)
+            row_advance = round(max(row_advance, 0.0), 2)
+            row_other = round(max(row_other, 0.0), 2)
+            row_net = booked
 
             frappe.db.set_value("Per Piece", child_name, "jv_entry_no", je.name, update_modified=False)
             frappe.db.set_value("Per Piece", child_name, "jv_status", "Posted", update_modified=False)
             frappe.db.set_value("Per Piece", child_name, "jv_line_remark", rr.get("line_remark"), update_modified=False)
             frappe.db.set_value("Per Piece", child_name, "booked_amount", booked, update_modified=False)
+            frappe.db.set_value("Per Piece", child_name, "allowance", row_allowance, update_modified=False)
+            frappe.db.set_value("Per Piece", child_name, "advance_deduction", row_advance, update_modified=False)
+            frappe.db.set_value("Per Piece", child_name, "other_deduction", row_other, update_modified=False)
+            frappe.db.set_value("Per Piece", child_name, "net_amount", row_net, update_modified=False)
             frappe.db.set_value("Per Piece", child_name, "paid_amount", 0, update_modified=False)
             frappe.db.set_value("Per Piece", child_name, "unpaid_amount", booked, update_modified=False)
             frappe.db.set_value("Per Piece", child_name, "payment_status", "Unpaid", update_modified=False)
@@ -1696,6 +1732,10 @@ for row in rows:
     frappe.db.set_value("Per Piece", row.get("name"), "jv_status", "Pending", update_modified=False)
     frappe.db.set_value("Per Piece", row.get("name"), "jv_line_remark", "", update_modified=False)
     frappe.db.set_value("Per Piece", row.get("name"), "booked_amount", 0, update_modified=False)
+    frappe.db.set_value("Per Piece", row.get("name"), "allowance", 0, update_modified=False)
+    frappe.db.set_value("Per Piece", row.get("name"), "advance_deduction", 0, update_modified=False)
+    frappe.db.set_value("Per Piece", row.get("name"), "other_deduction", 0, update_modified=False)
+    frappe.db.set_value("Per Piece", row.get("name"), "net_amount", 0, update_modified=False)
     frappe.db.set_value("Per Piece", row.get("name"), "paid_amount", 0, update_modified=False)
     frappe.db.set_value("Per Piece", row.get("name"), "unpaid_amount", 0, update_modified=False)
     frappe.db.set_value("Per Piece", row.get("name"), "payment_status", "Unpaid", update_modified=False)
@@ -3909,6 +3949,10 @@ def apply() -> list[str]:
 		"jv_line_remark", "JV Line Remark", "Small Text", None, "jv_entry_no", results, in_list_view=0
 	)
 	_ensure_custom_field("booked_amount", "Booked Amount", "Float", None, "jv_line_remark", results)
+	_ensure_custom_field("allowance", "Allowance", "Float", None, "booked_amount", results)
+	_ensure_custom_field("advance_deduction", "Advance Deduction", "Float", None, "allowance", results)
+	_ensure_custom_field("other_deduction", "Other Deduction", "Float", None, "advance_deduction", results)
+	_ensure_custom_field("net_amount", "Net Amount", "Float", None, "other_deduction", results)
 	_ensure_custom_field("paid_amount", "Paid Amount", "Float", None, "booked_amount", results)
 	_ensure_custom_field("unpaid_amount", "Unpaid Amount", "Float", None, "paid_amount", results)
 	_ensure_custom_field(
