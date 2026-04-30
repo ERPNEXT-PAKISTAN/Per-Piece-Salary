@@ -1149,7 +1149,9 @@
 		};
 
 	function getNetBookedAmountForRow(r) {
-		// Payment base must stay entry-specific.
+		// Payment base must stay entry-specific and equal finalized Net Salary.
+		var net = Math.max(num((r && r.net_amount) || 0), 0);
+		if (net > 0) return net;
 		// Legacy safeguard: when row has no deductions/allowances, booked should equal amount.
 		var amount = Math.max(num((r && r.amount) || 0), 0);
 		var booked = Math.max(num((r && r.booked_amount) || 0), 0);

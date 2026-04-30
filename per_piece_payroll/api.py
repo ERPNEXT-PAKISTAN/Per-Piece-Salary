@@ -629,6 +629,10 @@ def recalculate_per_piece_salary_totals(entry_names: list[str] | tuple[str] | st
 	has_total_booked = meta.has_field("total_booked_amount")
 	has_total_paid = meta.has_field("total_paid_amount")
 	has_total_unpaid = meta.has_field("total_unpaid_amount")
+	has_total_allowance = meta.has_field("total_allowance_amount")
+	has_total_advance = meta.has_field("total_advance_deduction_amount")
+	has_total_other = meta.has_field("total_other_deduction_amount")
+	has_total_net = meta.has_field("total_net_salary")
 
 	parent_map: dict[str, dict] = {
 		name: {
@@ -637,6 +641,10 @@ def recalculate_per_piece_salary_totals(entry_names: list[str] | tuple[str] | st
 			"total_booked_amount": 0.0,
 			"total_paid_amount": 0.0,
 			"total_unpaid_amount": 0.0,
+			"total_allowance_amount": 0.0,
+			"total_advance_deduction_amount": 0.0,
+			"total_other_deduction_amount": 0.0,
+			"total_net_salary": 0.0,
 		}
 		for name in names
 	}
@@ -648,7 +656,18 @@ def recalculate_per_piece_salary_totals(entry_names: list[str] | tuple[str] | st
 			"parenttype": "Per Piece Salary",
 			"parentfield": "perpiece",
 		},
-		fields=["parent", "qty", "amount", "booked_amount", "paid_amount", "unpaid_amount"],
+		fields=[
+			"parent",
+			"qty",
+			"amount",
+			"booked_amount",
+			"paid_amount",
+			"unpaid_amount",
+			"allowance",
+			"advance_deduction",
+			"other_deduction",
+			"net_amount",
+		],
 		limit_page_length=50000,
 	)
 	for row in rows or []:
@@ -660,6 +679,10 @@ def recalculate_per_piece_salary_totals(entry_names: list[str] | tuple[str] | st
 		parent_map[parent]["total_booked_amount"] += flt((row or {}).get("booked_amount"))
 		parent_map[parent]["total_paid_amount"] += flt((row or {}).get("paid_amount"))
 		parent_map[parent]["total_unpaid_amount"] += flt((row or {}).get("unpaid_amount"))
+		parent_map[parent]["total_allowance_amount"] += flt((row or {}).get("allowance"))
+		parent_map[parent]["total_advance_deduction_amount"] += flt((row or {}).get("advance_deduction"))
+		parent_map[parent]["total_other_deduction_amount"] += flt((row or {}).get("other_deduction"))
+		parent_map[parent]["total_net_salary"] += flt((row or {}).get("net_amount"))
 
 	for name in names:
 		if not frappe.db.exists("Per Piece Salary", name):
@@ -675,6 +698,14 @@ def recalculate_per_piece_salary_totals(entry_names: list[str] | tuple[str] | st
 			update_data["total_paid_amount"] = flt(t.get("total_paid_amount"))
 		if has_total_unpaid:
 			update_data["total_unpaid_amount"] = flt(t.get("total_unpaid_amount"))
+		if has_total_allowance:
+			update_data["total_allowance_amount"] = flt(t.get("total_allowance_amount"))
+		if has_total_advance:
+			update_data["total_advance_deduction_amount"] = flt(t.get("total_advance_deduction_amount"))
+		if has_total_other:
+			update_data["total_other_deduction_amount"] = flt(t.get("total_other_deduction_amount"))
+		if has_total_net:
+			update_data["total_net_salary"] = flt(t.get("total_net_salary"))
 		frappe.db.set_value("Per Piece Salary", name, update_data, update_modified=False)
 
 

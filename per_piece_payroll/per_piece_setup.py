@@ -4168,6 +4168,54 @@ def apply() -> list[str]:
 		in_list_view=0,
 		no_copy=1,
 	)
+	_ensure_custom_field(
+		"total_allowance_amount",
+		"Total Allowance",
+		"Float",
+		None,
+		"total_unpaid_amount",
+		results,
+		doctype="Per Piece Salary",
+		read_only=1,
+		in_list_view=0,
+		no_copy=1,
+	)
+	_ensure_custom_field(
+		"total_advance_deduction_amount",
+		"Total Advance Deduction",
+		"Float",
+		None,
+		"total_allowance_amount",
+		results,
+		doctype="Per Piece Salary",
+		read_only=1,
+		in_list_view=0,
+		no_copy=1,
+	)
+	_ensure_custom_field(
+		"total_other_deduction_amount",
+		"Total Other Deduction",
+		"Float",
+		None,
+		"total_advance_deduction_amount",
+		results,
+		doctype="Per Piece Salary",
+		read_only=1,
+		in_list_view=0,
+		no_copy=1,
+	)
+	_ensure_custom_field(
+		"total_net_salary",
+		"Net Salary",
+		"Float",
+		None,
+		"total_other_deduction_amount",
+		results,
+		doctype="Per Piece Salary",
+		read_only=1,
+		in_list_view=0,
+		no_copy=1,
+	)
 	_delete_custom_field("Item", "custom_process_type", results)
 	_delete_custom_field("Item", "custom_process_size", results)
 	_delete_custom_field("Item", "custom_rate_per_piece", results)
