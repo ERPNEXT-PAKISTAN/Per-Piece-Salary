@@ -156,55 +156,62 @@
 				Array.isArray(basis.rows) &&
 				basis.rows.length
 			) {
-				return basis.rows.map(function (r) {
-					var emp = String((r && r.employee) || "");
-					var booked = num((r && r.booked_amount) || 0);
-					var paid = num((r && r.paid_amount) || 0);
-					var unpaid = num((r && r.unpaid_amount) || 0);
-					var key = emp || "";
-					var adj = state.paymentAdjustments[key] || {};
-					var pay = whole(adj.payment_amount);
-					if (pay > unpaid) pay = whole(unpaid);
-					return {
-						employee: emp,
-						name1: (r && r.name1) || "",
-						booked_amount: booked,
-						paid_amount: paid,
-						unpaid_amount: unpaid,
-						payment_status: String((r && r.payment_status) || "Unpaid"),
-						payment_amount: pay,
-					};
-				});
+				return basis.rows
+					.map(function (r) {
+						var emp = String((r && r.employee) || "");
+						var booked = num((r && r.booked_amount) || 0);
+						var paid = num((r && r.paid_amount) || 0);
+						var unpaid = num((r && r.unpaid_amount) || 0);
+						var key = emp || "";
+						var adj = state.paymentAdjustments[key] || {};
+						var pay = whole(adj.payment_amount);
+						if (pay > unpaid) pay = whole(unpaid);
+						return {
+							employee: emp,
+							name1: (r && r.name1) || "",
+							booked_amount: booked,
+							paid_amount: paid,
+							unpaid_amount: unpaid,
+							payment_status: String((r && r.payment_status) || "Unpaid"),
+							payment_amount: pay,
+						};
+					})
+					.filter(isPaymentOpenRow);
 			}
 
-			return buildPaymentEmployeeRows(getBookedRows()).map(function (r) {
-				var key = r.employee || "";
-				var adj = state.paymentAdjustments[key] || {};
-				var pay = whole(adj.payment_amount);
-				if (pay > num(r.unpaid_amount)) pay = whole(r.unpaid_amount);
-				return {
-					employee: r.employee,
-					name1: r.name1,
-					booked_amount: num(r.booked_amount),
-					paid_amount: num(r.paid_amount),
-					unpaid_amount: num(r.unpaid_amount),
-					payment_status: r.payment_status,
-					payment_amount: pay,
-				};
-			});
+			return buildPaymentEmployeeRows(getBookedRows())
+				.map(function (r) {
+					var key = r.employee || "";
+					var adj = state.paymentAdjustments[key] || {};
+					var pay = whole(adj.payment_amount);
+					if (pay > num(r.unpaid_amount)) pay = whole(r.unpaid_amount);
+					return {
+						employee: r.employee,
+						name1: r.name1,
+						booked_amount: num(r.booked_amount),
+						paid_amount: num(r.paid_amount),
+						unpaid_amount: num(r.unpaid_amount),
+						payment_status: r.payment_status,
+						payment_amount: pay,
+					};
+				})
+				.filter(isPaymentOpenRow);
 		}
 
 		function isPaymentOpenRow(r) {
 			var unpaid = num(r && r.unpaid_amount);
-			var status = String((r && r.payment_status) || "Unpaid");
-			if (status === "Paid" && unpaid <= 0) return false;
-			return unpaid > 0 || status === "Unpaid" || status === "Partly Paid";
+			var paid = num(r && r.paid_amount);
+			var booked = num(r && r.booked_amount);
+			var rawStatus = String((r && r.payment_status) || "Unpaid");
+			var status = rawStatus.trim().toLowerCase();
+			var isPaidByStatus = status === "paid";
+			var isFullyPaidByAmount = booked > 0.0001 && Math.max(booked - paid, 0) <= 0.005;
+			if (unpaid <= 0.005 && (isPaidByStatus || isFullyPaidByAmount)) return false;
+			return unpaid > 0.005 || status === "unpaid" || status === "partly paid";
 		}
 
 		function getPaymentActiveRows() {
-			// Keep full per-entry financial picture visible in Payment tab.
-			// Posting flow still filters to payable rows only.
-			return getPaymentRows();
+			return getPaymentRows().filter(isPaymentOpenRow);
 		}
 
 		function getPaymentPostingRows() {
