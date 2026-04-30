@@ -787,6 +787,14 @@
 			var singleEntry = String(
 				(el("pp-jv-entry-filter") && el("pp-jv-entry-filter").value) || ""
 			).trim();
+			var selectedHistory = Object.keys(state.entryMeta.selected_salary_history || {})
+				.filter(function (k) {
+					return !!state.entryMeta.selected_salary_history[k];
+				})
+				.sort();
+			selectedHistory.forEach(function (name) {
+				if (selectedEntries.indexOf(name) < 0) selectedEntries.push(name);
+			});
 			if (singleEntry && selectedEntries.indexOf(singleEntry) < 0) {
 				selectedEntries.unshift(singleEntry);
 			}
