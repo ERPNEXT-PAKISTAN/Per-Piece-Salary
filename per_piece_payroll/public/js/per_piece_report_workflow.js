@@ -780,6 +780,72 @@
 			});
 		}
 
+		function recalculateSelectedEntry() {
+			var selectedEntries = parseEntryNoList(
+				(el("pp-jv-entry-multi") && el("pp-jv-entry-multi").value) || ""
+			);
+			var singleEntry = String(
+				(el("pp-jv-entry-filter") && el("pp-jv-entry-filter").value) || ""
+			).trim();
+			if (singleEntry && selectedEntries.indexOf(singleEntry) < 0) {
+				selectedEntries.unshift(singleEntry);
+			}
+			if (!selectedEntries.length) {
+				showResult(
+					el("pp-jv-result"),
+					"error",
+					"No Entry Selected",
+					"Select one or more entries first in Salary Creation."
+				);
+				return;
+			}
+
+			confirmActionModal(
+				"Recalculate Selected Entry",
+				"Recalculate booked/net/payment amounts for selected entries?",
+				"Recalculate"
+			).then(function (ok) {
+				if (!ok) return;
+				var result = el("pp-jv-result");
+				if (result) {
+					result.style.color = "#334155";
+					result.textContent = "Recalculating selected entries...";
+				}
+				callApi("per_piece_payroll.api.recalculate_selected_entries", {
+					entry_nos: selectedEntries.join(","),
+					entry_no: singleEntry || "",
+				})
+					.then(function (msg) {
+						if (!msg || msg.ok === false) {
+							showResult(
+								result,
+								"error",
+								"Recalculate Failed",
+								(msg && msg.message) || "Unknown error"
+							);
+							return;
+						}
+						var details =
+							"Entries: " +
+							esc((msg.entries || []).join(", ")) +
+							"<br>Normalized rows updated: " +
+							esc(msg.normalized_rows_updated || 0) +
+							" / " +
+							esc(msg.normalized_rows_checked || 0) +
+							"<br>Financial rows updated: " +
+							esc(msg.financial_rows_updated || 0) +
+							" / " +
+							esc(msg.financial_rows_checked || 0);
+						showResult(result, "success", "Recalculation Completed", details);
+						loadReport();
+					})
+					.catch(function (e) {
+						showResult(result, "error", "Recalculate Failed", prettyError(errText(e)));
+						console.error(e);
+					});
+			});
+		}
+
 		function cancelJVEntry() {
 			var jv = el("pp-jv-existing").value || "";
 			if (!jv) {
@@ -823,6 +889,7 @@
 			createPaymentJV: createPaymentJV,
 			cancelPaymentJV: cancelPaymentJV,
 			createJV: createJV,
+			recalculateSelectedEntry: recalculateSelectedEntry,
 			cancelJVEntry: cancelJVEntry,
 		};
 	}

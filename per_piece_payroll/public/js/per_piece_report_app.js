@@ -4501,6 +4501,7 @@
 	var createPaymentJV = workflow.createPaymentJV || function () {};
 	var cancelPaymentJV = workflow.cancelPaymentJV || function () {};
 	var createJV = workflow.createJV || function () {};
+	var recalculateSelectedEntry = workflow.recalculateSelectedEntry || function () {};
 	var cancelJVEntry = workflow.cancelJVEntry || function () {};
 
 	function isEntryTab(tabName) {
@@ -4965,6 +4966,7 @@
 		});
 	}
 	el("pp-jv-preview-btn").addEventListener("click", previewJV);
+	el("pp-jv-recalc-entry-btn").addEventListener("click", recalculateSelectedEntry);
 	el("pp-jv-create-btn").addEventListener("click", createJV);
 	el("pp-jv-cancel-btn").addEventListener("click", cancelJVEntry);
 	el("pp-pay-preview-btn").addEventListener("click", previewPaymentJV);

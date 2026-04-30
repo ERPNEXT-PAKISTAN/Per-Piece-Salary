@@ -874,6 +874,27 @@ def create_per_piece_salary_payment_jv(**kwargs):
 
 
 @frappe.whitelist()
+def recalculate_selected_entries(entry_nos=None, entry_no=None):
+	names: list[str] = []
+	names.extend(_parse_entry_names(entry_nos))
+	names.extend(_parse_entry_names(entry_no))
+	if not names:
+		return {"ok": False, "message": "No entry selected."}
+
+	norm = _normalize_entry_booked_amounts(names)
+	fin = recalculate_per_piece_child_financials(names)
+	recalculate_per_piece_salary_totals(names)
+	return {
+		"ok": True,
+		"entries": names,
+		"normalized_rows_checked": norm.get("rows_checked", 0),
+		"normalized_rows_updated": norm.get("rows_updated", 0),
+		"financial_rows_checked": fin.get("rows_checked", 0),
+		"financial_rows_updated": fin.get("rows_updated", 0),
+	}
+
+
+@frappe.whitelist()
 def cancel_per_piece_salary_payment_jv(**kwargs):
 	jv = kwargs.get("journal_entry")
 	names = _get_entries_for_jv(jv, payment=True)
