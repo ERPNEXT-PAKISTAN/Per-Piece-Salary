@@ -620,19 +620,144 @@ def _get_entries_for_jv(journal_entry: str, payment: bool = False) -> list[str]:
 	return out
 
 
+def _collect_entry_names_from_context(
+	kwargs: dict | None = None,
+	out: dict | None = None,
+	*,
+	jv_payment: bool = False,
+) -> list[str]:
+	kwargs = kwargs or {}
+	out = out or {}
+	names: list[str] = []
+	names.extend(_parse_entry_names(kwargs.get("entry_nos")))
+	names.extend(_parse_entry_names(kwargs.get("entry_no")))
+	names.extend(_parse_entry_names(kwargs.get("entry_name")))
+	names.extend(_parse_entry_names(out.get("entry_nos")))
+	names.extend(_parse_entry_names(out.get("entry_no")))
+	names.extend(_parse_entry_names(out.get("name")))
+
+	# Fallback path: derive entry names from posted/cancelled JV when payload has no entry list.
+	if not names:
+		jv = (
+			kwargs.get("journal_entry")
+			or kwargs.get("jv_entry_no")
+			or out.get("jv_entry_no")
+			or out.get("journal_entry")
+		)
+		if jv:
+			names.extend(_get_entries_for_jv(jv, payment=jv_payment))
+
+	seen: set[str] = set()
+	result: list[str] = []
+	for n in names:
+		key = str(n or "").strip()
+		if not key or key in seen:
+			continue
+		seen.add(key)
+		result.append(key)
+	return result
+
+
+def _extract_jv_name_from_context(kwargs: dict | None = None, out: dict | None = None) -> str:
+	kwargs = kwargs or {}
+	out = out or {}
+	candidates = [
+		out.get("journal_entry"),
+		out.get("jv_entry_no"),
+		out.get("payment_jv_no"),
+		out.get("name"),
+		kwargs.get("journal_entry"),
+		kwargs.get("jv_entry_no"),
+	]
+	for v in candidates:
+		name = str(v or "").strip()
+		if name and name.startswith("ACC-JV-"):
+			return name
+	return ""
+
+
+def _append_payment_ref_text(existing: str, jv_name: str, amount: float) -> str:
+	jv = str(jv_name or "").strip()
+	if not jv:
+		return existing or ""
+	amt = round(flt(amount), 2)
+	if amt <= 0:
+		return existing or ""
+	existing_txt = str(existing or "").strip()
+	ref = f"{jv}::{amt}"
+	if not existing_txt:
+		return ref
+	return existing_txt + ";;" + ref
+
+
+def _force_link_payment_jv_to_paid_rows(
+	entry_names: list[str] | tuple[str] | str | None,
+	before_paid_map: dict[str, float] | None,
+	jv_name: str,
+) -> int:
+	names = _parse_entry_names(entry_names)
+	if not names:
+		return 0
+	jv = str(jv_name or "").strip()
+	if not jv:
+		return 0
+	before_paid_map = before_paid_map or {}
+	rows = frappe.get_all(
+		"Per Piece",
+		filters={
+			"parent": ["in", names],
+			"parenttype": "Per Piece Salary",
+			"parentfield": "perpiece",
+		},
+		fields=["name", "paid_amount", "payment_jv_no", "payment_refs"],
+		limit_page_length=200000,
+	)
+	updated = 0
+	for row in rows or []:
+		row_name = str((row or {}).get("name") or "").strip()
+		if not row_name:
+			continue
+		before_paid = flt(before_paid_map.get(row_name))
+		after_paid = flt((row or {}).get("paid_amount"))
+		delta = round(after_paid - before_paid, 2)
+		if delta <= 0:
+			continue
+		cur_jv = str((row or {}).get("payment_jv_no") or "").strip()
+		cur_refs = str((row or {}).get("payment_refs") or "")
+		new_refs = _append_payment_ref_text(cur_refs, jv, delta)
+		update_data = {}
+		if cur_jv != jv:
+			update_data["payment_jv_no"] = jv
+		if new_refs != cur_refs:
+			update_data["payment_refs"] = new_refs
+		if update_data:
+			frappe.db.set_value("Per Piece", row_name, update_data, update_modified=False)
+			updated += 1
+	return updated
+
+
 def recalculate_per_piece_salary_totals(entry_names: list[str] | tuple[str] | str | None) -> None:
 	names = _parse_entry_names(entry_names)
 	if not names:
 		return
 
-	meta = frappe.get_meta("Per Piece Salary")
-	has_total_booked = meta.has_field("total_booked_amount")
-	has_total_paid = meta.has_field("total_paid_amount")
-	has_total_unpaid = meta.has_field("total_unpaid_amount")
-	has_total_allowance = meta.has_field("total_allowance_amount")
-	has_total_advance = meta.has_field("total_advance_deduction_amount")
-	has_total_other = meta.has_field("total_other_deduction_amount")
-	has_total_net = meta.has_field("total_net_salary")
+	def has_col(fieldname: str) -> bool:
+		try:
+			return bool(frappe.db.has_column("Per Piece Salary", fieldname))
+		except Exception:
+			return False
+
+	has_total_booked = has_col("total_booked_amount")
+	has_total_paid = has_col("total_paid_amount")
+	has_total_unpaid = has_col("total_unpaid_amount")
+	has_total_allowance_amount = has_col("total_allowance_amount")
+	has_total_allowance = has_col("total_allowance")
+	has_total_advance_amount = has_col("total_advance_deduction_amount")
+	has_total_advance = has_col("total_advance_deduction")
+	has_total_other_amount = has_col("total_other_deduction_amount")
+	has_total_other = has_col("total_other_deduction")
+	has_total_net_salary = has_col("total_net_salary")
+	has_total_net_amount = has_col("total_net_amount")
 
 	parent_map: dict[str, dict] = {
 		name: {
@@ -642,9 +767,13 @@ def recalculate_per_piece_salary_totals(entry_names: list[str] | tuple[str] | st
 			"total_paid_amount": 0.0,
 			"total_unpaid_amount": 0.0,
 			"total_allowance_amount": 0.0,
+			"total_allowance": 0.0,
 			"total_advance_deduction_amount": 0.0,
+			"total_advance_deduction": 0.0,
 			"total_other_deduction_amount": 0.0,
+			"total_other_deduction": 0.0,
 			"total_net_salary": 0.0,
+			"total_net_amount": 0.0,
 		}
 		for name in names
 	}
@@ -680,9 +809,13 @@ def recalculate_per_piece_salary_totals(entry_names: list[str] | tuple[str] | st
 		parent_map[parent]["total_paid_amount"] += flt((row or {}).get("paid_amount"))
 		parent_map[parent]["total_unpaid_amount"] += flt((row or {}).get("unpaid_amount"))
 		parent_map[parent]["total_allowance_amount"] += flt((row or {}).get("allowance"))
+		parent_map[parent]["total_allowance"] += flt((row or {}).get("allowance"))
 		parent_map[parent]["total_advance_deduction_amount"] += flt((row or {}).get("advance_deduction"))
+		parent_map[parent]["total_advance_deduction"] += flt((row or {}).get("advance_deduction"))
 		parent_map[parent]["total_other_deduction_amount"] += flt((row or {}).get("other_deduction"))
+		parent_map[parent]["total_other_deduction"] += flt((row or {}).get("other_deduction"))
 		parent_map[parent]["total_net_salary"] += flt((row or {}).get("net_amount"))
+		parent_map[parent]["total_net_amount"] += flt((row or {}).get("net_amount"))
 
 	for name in names:
 		if not frappe.db.exists("Per Piece Salary", name):
@@ -698,15 +831,34 @@ def recalculate_per_piece_salary_totals(entry_names: list[str] | tuple[str] | st
 			update_data["total_paid_amount"] = flt(t.get("total_paid_amount"))
 		if has_total_unpaid:
 			update_data["total_unpaid_amount"] = flt(t.get("total_unpaid_amount"))
-		if has_total_allowance:
+		if has_total_allowance_amount:
 			update_data["total_allowance_amount"] = flt(t.get("total_allowance_amount"))
-		if has_total_advance:
+		if has_total_allowance:
+			update_data["total_allowance"] = flt(t.get("total_allowance"))
+		if has_total_advance_amount:
 			update_data["total_advance_deduction_amount"] = flt(t.get("total_advance_deduction_amount"))
-		if has_total_other:
+		if has_total_advance:
+			update_data["total_advance_deduction"] = flt(t.get("total_advance_deduction"))
+		if has_total_other_amount:
 			update_data["total_other_deduction_amount"] = flt(t.get("total_other_deduction_amount"))
-		if has_total_net:
+		if has_total_other:
+			update_data["total_other_deduction"] = flt(t.get("total_other_deduction"))
+		if has_total_net_salary:
 			update_data["total_net_salary"] = flt(t.get("total_net_salary"))
+		if has_total_net_amount:
+			update_data["total_net_amount"] = flt(t.get("total_net_amount"))
 		frappe.db.set_value("Per Piece Salary", name, update_data, update_modified=False)
+
+
+@frappe.whitelist()
+def backfill_parent_totals_from_child(entry_nos=None, entry_no=None):
+	names: list[str] = []
+	names.extend(_parse_entry_names(entry_nos))
+	names.extend(_parse_entry_names(entry_no))
+	if not names:
+		names = frappe.get_all("Per Piece Salary", pluck="name", limit_page_length=500000) or []
+	recalculate_per_piece_salary_totals(names)
+	return {"ok": True, "entries": len(names)}
 
 
 def recalculate_per_piece_child_financials(
@@ -726,15 +878,139 @@ def recalculate_per_piece_child_financials(
 		fields=[
 			"name",
 			"parent",
+			"employee",
 			"amount",
 			"booked_amount",
 			"allowance",
 			"advance_deduction",
 			"other_deduction",
 			"net_amount",
+			"paid_amount",
+			"unpaid_amount",
+			"payment_status",
+			"jv_entry_no",
+			"jv_status",
 		],
 		limit_page_length=200000,
 	)
+
+	# Rebuild employee financial splits from posted salary JV remarks when available.
+	rows_by_entry_emp: dict[tuple[str, str], list[dict]] = {}
+	jv_names: set[str] = set()
+	for r in rows or []:
+		entry = str((r or {}).get("parent") or "").strip()
+		emp = str((r or {}).get("employee") or "").strip()
+		if entry and emp:
+			rows_by_entry_emp.setdefault((entry, emp), []).append(r)
+		jv = str((r or {}).get("jv_entry_no") or "").strip()
+		jv_status = str((r or {}).get("jv_status") or "").strip()
+		if jv and jv_status in ("Posted", "Accounted"):
+			jv_names.add(jv)
+
+	jv_emp_fin: dict[str, dict[str, dict[str, float]]] = {}
+	if jv_names:
+		for je in frappe.get_all(
+			"Journal Entry",
+			filters={"name": ["in", list(jv_names)], "docstatus": 1},
+			fields=["name"],
+			limit_page_length=5000,
+		):
+			jv_name = str((je or {}).get("name") or "").strip()
+			if not jv_name:
+				continue
+			jv_emp_fin[jv_name] = {}
+			for acc in frappe.get_all(
+				"Journal Entry Account",
+				filters={"parent": jv_name},
+				fields=["party", "user_remark", "credit_in_account_currency", "credit"],
+				limit_page_length=50000,
+			):
+				credit = flt(acc.get("credit_in_account_currency")) or flt(acc.get("credit"))
+				if credit <= 0:
+					continue
+				party = str(acc.get("party") or "").strip()
+				remark = str(acc.get("user_remark") or "").strip()
+				emp = ""
+				kind = ""
+				if remark.startswith("Advance Recovery - "):
+					kind = "advance_deduction"
+					emp = remark.replace("Advance Recovery - ", "", 1).strip()
+				elif remark.startswith("Salary Deduction - "):
+					kind = "other_deduction"
+					emp = remark.replace("Salary Deduction - ", "", 1).strip()
+				elif remark.startswith("Net Salary - "):
+					kind = "net_amount"
+					emp = remark.replace("Net Salary - ", "", 1).split("|", 1)[0].strip()
+				elif party and remark.startswith("Advance Recovery - "):
+					kind = "advance_deduction"
+					emp = party
+				elif party and remark.startswith("Salary Deduction - "):
+					kind = "other_deduction"
+					emp = party
+				elif party and remark.startswith("Net Salary - "):
+					kind = "net_amount"
+					emp = party
+				if not emp or not kind:
+					continue
+				fin = jv_emp_fin[jv_name].setdefault(
+					emp,
+					{"advance_deduction": 0.0, "other_deduction": 0.0, "net_amount": 0.0},
+				)
+				fin[kind] = flt(fin.get(kind)) + flt(credit)
+
+	# Apply JV-based employee totals to rows (proportional by base amount).
+	jv_rebuilt = 0
+	for (_entry, emp), emp_rows in rows_by_entry_emp.items():
+		if not emp_rows:
+			continue
+		jv_name = str((emp_rows[0] or {}).get("jv_entry_no") or "").strip()
+		if not jv_name or jv_name not in jv_emp_fin:
+			continue
+		fin = (jv_emp_fin.get(jv_name) or {}).get(emp) or {}
+		emp_amount = sum(flt((x or {}).get("amount")) for x in emp_rows)
+		adv_total = max(flt(fin.get("advance_deduction")), 0.0)
+		other_total = max(flt(fin.get("other_deduction")), 0.0)
+		net_total = max(flt(fin.get("net_amount")), 0.0)
+		if net_total <= 0:
+			net_total = max(emp_amount - adv_total - other_total, 0.0)
+		allow_total = max(net_total - emp_amount + adv_total + other_total, 0.0)
+		den = emp_amount if emp_amount > 0 else float(len(emp_rows))
+		for row in emp_rows:
+			amount = flt((row or {}).get("amount"))
+			share = (amount / den) if den > 0 else 0.0
+			if emp_amount <= 0:
+				share = 1.0 / float(len(emp_rows) or 1)
+			adv = round(adv_total * share, 2)
+			other = round(other_total * share, 2)
+			allow = round(allow_total * share, 2)
+			net = round(max(amount + allow - adv - other, 0.0), 2)
+			paid = max(flt((row or {}).get("paid_amount")), 0.0)
+			if paid > net:
+				paid = net
+			unpaid = round(max(net - paid, 0.0), 2)
+			status = "Unpaid" if net <= 0 or paid <= 0 else ("Paid" if unpaid <= 0 else "Partly Paid")
+			new_vals = {
+				"allowance": allow,
+				"advance_deduction": adv,
+				"other_deduction": other,
+				"net_amount": net,
+				"booked_amount": net,
+				"unpaid_amount": unpaid,
+				"payment_status": status,
+			}
+			cur_vals = {
+				"allowance": round(flt((row or {}).get("allowance")), 2),
+				"advance_deduction": round(flt((row or {}).get("advance_deduction")), 2),
+				"other_deduction": round(flt((row or {}).get("other_deduction")), 2),
+				"net_amount": round(flt((row or {}).get("net_amount")), 2),
+				"booked_amount": round(flt((row or {}).get("booked_amount")), 2),
+				"unpaid_amount": round(flt((row or {}).get("unpaid_amount")), 2),
+				"payment_status": str((row or {}).get("payment_status") or ""),
+			}
+			if cur_vals != new_vals:
+				frappe.db.set_value("Per Piece", row.get("name"), new_vals, update_modified=False)
+				jv_rebuilt += 1
+
 	updated = 0
 	for row in rows or []:
 		amount = flt((row or {}).get("amount"))
@@ -771,7 +1047,12 @@ def recalculate_per_piece_child_financials(
 
 	if names:
 		recalculate_per_piece_salary_totals(names)
-	return {"ok": True, "rows_checked": len(rows or []), "rows_updated": updated}
+	return {
+		"ok": True,
+		"rows_checked": len(rows or []),
+		"rows_updated": updated,
+		"rows_rebuilt_from_jv": jv_rebuilt,
+	}
 
 
 def _normalize_entry_booked_amounts(
@@ -945,12 +1226,168 @@ def get_per_piece_salary_report(**kwargs):
 
 
 @frappe.whitelist()
+def get_payment_entry_basis(entry_no: str):
+	entry = str(entry_no or "").strip()
+	if not entry:
+		return {"entry_no": "", "rows": [], "totals": {}}
+
+	rows = frappe.get_all(
+		"Per Piece",
+		filters={
+			"parent": entry,
+			"parenttype": "Per Piece Salary",
+			"parentfield": "perpiece",
+		},
+		fields=[
+			"employee",
+			"name1",
+			"amount",
+			"booked_amount",
+			"net_amount",
+			"paid_amount",
+			"unpaid_amount",
+			"payment_status",
+		],
+		order_by="idx asc",
+		limit_page_length=200000,
+	)
+
+	by_emp: dict[str, dict[str, float | str]] = {}
+	for r in rows or []:
+		emp = str((r or {}).get("employee") or "").strip()
+		if not emp:
+			continue
+		if emp not in by_emp:
+			by_emp[emp] = {
+				"employee": emp,
+				"name1": str((r or {}).get("name1") or "").strip(),
+				"booked_amount": 0.0,
+				"paid_amount": 0.0,
+				"unpaid_amount": 0.0,
+				"payment_status": "Unpaid",
+			}
+		base = by_emp[emp]
+		net = flt((r or {}).get("net_amount"))
+		booked = flt((r or {}).get("booked_amount"))
+		amount = flt((r or {}).get("amount"))
+		row_booked = net if net > 0 else (booked if booked > 0 else amount)
+		row_paid = max(flt((r or {}).get("paid_amount")), 0.0)
+		if row_paid > row_booked:
+			row_paid = row_booked
+		row_unpaid = flt((r or {}).get("unpaid_amount"))
+		if row_unpaid < 0 or row_unpaid > row_booked:
+			row_unpaid = max(row_booked - row_paid, 0.0)
+		base["booked_amount"] = flt(base.get("booked_amount")) + row_booked
+		base["paid_amount"] = flt(base.get("paid_amount")) + row_paid
+		base["unpaid_amount"] = flt(base.get("unpaid_amount")) + row_unpaid
+
+	parent_total_formula = 0.0
+	try:
+		parent = (
+			frappe.db.get_value(
+				"Per Piece Salary",
+				entry,
+				[
+					"total_amount",
+					"total_allowance",
+					"total_allowance_amount",
+					"total_advance_deduction",
+					"total_advance_deduction_amount",
+					"total_other_deduction",
+					"total_other_deduction_amount",
+				],
+				as_dict=True,
+			)
+			or {}
+		)
+		total_amount = flt(parent.get("total_amount"))
+		total_allowance = flt(parent.get("total_allowance")) or flt(parent.get("total_allowance_amount"))
+		total_advance = flt(parent.get("total_advance_deduction")) or flt(
+			parent.get("total_advance_deduction_amount")
+		)
+		total_other = flt(parent.get("total_other_deduction")) or flt(
+			parent.get("total_other_deduction_amount")
+		)
+		parent_total_formula = round(
+			max(total_amount + total_allowance - total_advance - total_other, 0.0), 2
+		)
+	except Exception:
+		parent_total_formula = 0.0
+
+	out_rows = []
+	total_booked = 0.0
+	total_paid = 0.0
+	total_unpaid = 0.0
+	for emp in sorted(by_emp.keys()):
+		r = by_emp[emp]
+		booked = round(flt(r.get("booked_amount")), 2)
+		paid = round(min(flt(r.get("paid_amount")), booked), 2)
+		unpaid = round(max(flt(r.get("unpaid_amount")), 0.0), 2)
+		if unpaid <= 0.005 and booked > 0:
+			status = "Paid"
+		elif paid > 0.005:
+			status = "Partly Paid"
+		else:
+			status = "Unpaid"
+		out_rows.append(
+			{
+				"employee": emp,
+				"name1": str(r.get("name1") or ""),
+				"booked_amount": booked,
+				"paid_amount": paid,
+				"unpaid_amount": unpaid,
+				"payment_status": status,
+				"payment_amount": round(unpaid, 2),
+			}
+		)
+		total_booked += booked
+		total_paid += paid
+		total_unpaid += unpaid
+
+	# Hard rule requested: Payment basis must follow doctype total formula.
+	if parent_total_formula > 0 and out_rows:
+		delta = round(parent_total_formula - round(total_booked, 2), 2)
+		if abs(delta) > 0.005:
+			target_idx = 0
+			max_unpaid = -1.0
+			for i, r in enumerate(out_rows):
+				u = flt(r.get("unpaid_amount"))
+				if u > max_unpaid:
+					max_unpaid = u
+					target_idx = i
+			row = out_rows[target_idx]
+			row_booked = round(max(flt(row.get("booked_amount")) + delta, 0.0), 2)
+			row_paid = round(min(flt(row.get("paid_amount")), row_booked), 2)
+			row_unpaid = round(max(row_booked - row_paid, 0.0), 2)
+			if row_unpaid <= 0.005 and row_booked > 0:
+				row_status = "Paid"
+			elif row_paid > 0.005:
+				row_status = "Partly Paid"
+			else:
+				row_status = "Unpaid"
+			row["booked_amount"] = row_booked
+			row["unpaid_amount"] = row_unpaid
+			row["payment_status"] = row_status
+			row["payment_amount"] = row_unpaid
+			total_booked = sum(flt(x.get("booked_amount")) for x in out_rows)
+			total_paid = sum(flt(x.get("paid_amount")) for x in out_rows)
+			total_unpaid = sum(flt(x.get("unpaid_amount")) for x in out_rows)
+
+	return {
+		"entry_no": entry,
+		"rows": out_rows,
+		"totals": {
+			"booked": round(total_booked, 2),
+			"paid": round(total_paid, 2),
+			"unpaid": round(total_unpaid, 2),
+		},
+	}
+
+
+@frappe.whitelist()
 def create_per_piece_salary_entry(**kwargs):
 	out = _run_legacy_api_script(CREATE_ENTRY_SERVER_SCRIPT, kwargs)
-	names: list[str] = []
-	if isinstance(out, dict):
-		names.extend(_parse_entry_names(out.get("name")))
-	names.extend(_parse_entry_names(kwargs.get("entry_name")))
+	names = _collect_entry_names_from_context(kwargs, out, jv_payment=False)
 	recalculate_per_piece_salary_totals(names)
 	return out
 
@@ -958,9 +1395,7 @@ def create_per_piece_salary_entry(**kwargs):
 @frappe.whitelist()
 def create_per_piece_salary_jv(**kwargs):
 	out = _run_legacy_api_script(CREATE_JV_SERVER_SCRIPT, kwargs)
-	names: list[str] = []
-	names.extend(_parse_entry_names(kwargs.get("entry_nos")))
-	names.extend(_parse_entry_names(kwargs.get("entry_no")))
+	names = _collect_entry_names_from_context(kwargs, out, jv_payment=False)
 	recalculate_per_piece_child_financials(names)
 	recalculate_per_piece_salary_totals(names)
 	return out
@@ -978,11 +1413,26 @@ def cancel_per_piece_salary_jv(**kwargs):
 
 @frappe.whitelist()
 def create_per_piece_salary_payment_jv(**kwargs):
-	names: list[str] = []
-	names.extend(_parse_entry_names(kwargs.get("entry_nos")))
-	names.extend(_parse_entry_names(kwargs.get("entry_no")))
+	names = _collect_entry_names_from_context(kwargs, None, jv_payment=True)
 	_normalize_entry_booked_amounts(names)
+	before_rows = frappe.get_all(
+		"Per Piece",
+		filters={
+			"parent": ["in", names or [""]],
+			"parenttype": "Per Piece Salary",
+			"parentfield": "perpiece",
+		},
+		fields=["name", "paid_amount"],
+		limit_page_length=200000,
+	)
+	before_paid = {
+		str((r or {}).get("name") or "").strip(): flt((r or {}).get("paid_amount"))
+		for r in (before_rows or [])
+	}
 	out = _run_legacy_api_script(CREATE_PAYMENT_JV_SERVER_SCRIPT, kwargs)
+	names = _collect_entry_names_from_context(kwargs, out, jv_payment=True)
+	jv_name = _extract_jv_name_from_context(kwargs, out)
+	_force_link_payment_jv_to_paid_rows(names, before_paid, jv_name)
 	recalculate_per_piece_child_financials(names)
 	recalculate_per_piece_salary_totals(names)
 	return out
@@ -996,10 +1446,10 @@ def recalculate_selected_entries(entry_nos=None, entry_no=None):
 	if not names:
 		return {"ok": False, "message": "No entry selected."}
 
-	# Keep force mode ON by default so older cached frontend builds still
-	# run the correct correction behavior for selected entries.
+	# Force reset is destructive for allowance/deduction splits.
+	# Default must stay OFF unless explicitly requested.
 	raw_force = frappe.form_dict.get("force_from_amount")
-	force_mode = True if raw_force in (None, "", "null") else int(flt(raw_force or 0)) == 1
+	force_mode = False if raw_force in (None, "", "null") else int(flt(raw_force or 0)) == 1
 	forced = {"rows_checked": 0, "rows_updated": 0}
 	if force_mode:
 		forced = _force_reset_entry_amounts(names)

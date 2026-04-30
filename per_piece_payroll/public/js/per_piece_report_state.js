@@ -37,28 +37,37 @@
 		}
 
 		function getBookedRows() {
-			var range = getWorkflowHistoryRange("payment_manage");
-			return filterRowsBySelectedEntries(
-				filterRowsByDateRange(
-					getRowsByHeaderFilters(state.rows || [], { ignore_date_filter: true }),
-					range.from,
-					range.to
-				),
-				"payment_manage"
-			).filter(function (r) {
-				var status = r && r.jv_status ? String(r.jv_status) : "Pending";
+			var selected = getSelectedEntryNosForTab("payment_manage");
+			var baseRows = [];
+			if (selected.length) {
+				// Payment must follow selected salary entry number(s) exactly,
+				// without accidental header/date filters clipping rows.
+				baseRows = filterRowsBySelectedEntries(state.rows || [], "payment_manage");
+			} else {
+				var range = getWorkflowHistoryRange("payment_manage");
+				baseRows = filterRowsBySelectedEntries(
+					filterRowsByDateRange(
+						getRowsByHeaderFilters(state.rows || [], { ignore_date_filter: true }),
+						range.from,
+						range.to
+					),
+					"payment_manage"
+				);
+			}
+			return baseRows.filter(function (r) {
+				var status = String((r && r.jv_status) || "");
 				var hasJV = !!String((r && r.jv_entry_no) || "").trim();
-				return hasJV && status === "Posted";
+				var booking = String((r && r.booking_status) || "");
+				var booked = num((r && r.booked_amount) || 0);
+				return (hasJV && status === "Posted") || booking === "Booked" || booked > 0.0001;
 			});
 		}
 
 		function buildPaymentEmployeeRows(rows) {
 			var map = {};
-			var entryEmployeeBooked = {};
 			(rows || []).forEach(function (r) {
 				var emp = String(r.employee || "");
 				if (!emp) return;
-				var entry = String(r.per_piece_salary || "").trim();
 				if (!map[emp]) {
 					map[emp] = {
 						employee: emp,
@@ -69,13 +78,8 @@
 						payment_status: "Unpaid",
 					};
 				}
-				var entryEmpKey = (entry || String(r.row_id || r.name || "")) + "::" + emp;
-				var booked = 0;
-				if (!entryEmployeeBooked[entryEmpKey]) {
-					booked = Math.max(num(getBookedAmountForPaymentRow(r)), 0);
-					entryEmployeeBooked[entryEmpKey] = 1;
-					map[emp].booked_amount += booked;
-				}
+				var booked = Math.max(num(getBookedAmountForPaymentRow(r)), 0);
+				map[emp].booked_amount += booked;
 				var paid = Math.max(num(r.paid_amount), 0);
 				map[emp].paid_amount += paid;
 			});
@@ -96,7 +100,23 @@
 
 		function normalizePaymentAdjustments() {
 			var next = {};
-			buildPaymentEmployeeRows(getBookedRows()).forEach(function (r) {
+			var selected = getSelectedEntryNosForTab("payment_manage");
+			var basisRows = null;
+			if (
+				selected.length === 1 &&
+				state.paymentEntryBasis &&
+				String(state.paymentEntryBasis.entry_no || "").trim() ===
+					String(selected[0] || "").trim() &&
+				Array.isArray(state.paymentEntryBasis.rows)
+			) {
+				basisRows = state.paymentEntryBasis.rows.map(function (r) {
+					return {
+						employee: String((r && r.employee) || ""),
+						unpaid_amount: num((r && r.unpaid_amount) || 0),
+					};
+				});
+			}
+			(basisRows || buildPaymentEmployeeRows(getBookedRows())).forEach(function (r) {
 				var key = r.employee || "";
 				var amount = whole(r.unpaid_amount);
 				next[key] = { payment_amount: amount, unpaid_amount: num(r.unpaid_amount) };
@@ -106,7 +126,20 @@
 
 		function normalizePaymentExcludedEmployees() {
 			var next = {};
-			buildPaymentEmployeeRows(getBookedRows()).forEach(function (r) {
+			var selected = getSelectedEntryNosForTab("payment_manage");
+			var basisRows = null;
+			if (
+				selected.length === 1 &&
+				state.paymentEntryBasis &&
+				String(state.paymentEntryBasis.entry_no || "").trim() ===
+					String(selected[0] || "").trim() &&
+				Array.isArray(state.paymentEntryBasis.rows)
+			) {
+				basisRows = state.paymentEntryBasis.rows.map(function (r) {
+					return { employee: String((r && r.employee) || "") };
+				});
+			}
+			(basisRows || buildPaymentEmployeeRows(getBookedRows())).forEach(function (r) {
 				var key = r.employee || "";
 				if (state.paymentExcludedEmployees[key]) next[key] = true;
 			});
@@ -114,6 +147,36 @@
 		}
 
 		function getPaymentRows() {
+			var selected = getSelectedEntryNosForTab("payment_manage");
+			var basis = state.paymentEntryBasis || null;
+			if (
+				selected.length === 1 &&
+				basis &&
+				String(basis.entry_no || "").trim() === String(selected[0] || "").trim() &&
+				Array.isArray(basis.rows) &&
+				basis.rows.length
+			) {
+				return basis.rows.map(function (r) {
+					var emp = String((r && r.employee) || "");
+					var booked = num((r && r.booked_amount) || 0);
+					var paid = num((r && r.paid_amount) || 0);
+					var unpaid = num((r && r.unpaid_amount) || 0);
+					var key = emp || "";
+					var adj = state.paymentAdjustments[key] || {};
+					var pay = whole(adj.payment_amount);
+					if (pay > unpaid) pay = whole(unpaid);
+					return {
+						employee: emp,
+						name1: (r && r.name1) || "",
+						booked_amount: booked,
+						paid_amount: paid,
+						unpaid_amount: unpaid,
+						payment_status: String((r && r.payment_status) || "Unpaid"),
+						payment_amount: pay,
+					};
+				});
+			}
+
 			return buildPaymentEmployeeRows(getBookedRows()).map(function (r) {
 				var key = r.employee || "";
 				var adj = state.paymentAdjustments[key] || {};
@@ -139,13 +202,17 @@
 		}
 
 		function getPaymentActiveRows() {
-			return getPaymentRows().filter(isPaymentOpenRow);
+			// Keep full per-entry financial picture visible in Payment tab.
+			// Posting flow still filters to payable rows only.
+			return getPaymentRows();
 		}
 
 		function getPaymentPostingRows() {
-			return getPaymentActiveRows().filter(function (r) {
+			return getPaymentRows().filter(function (r) {
 				return (
-					!state.paymentExcludedEmployees[r.employee || ""] && num(r.payment_amount) > 0
+					isPaymentOpenRow(r) &&
+					!state.paymentExcludedEmployees[r.employee || ""] &&
+					num(r.payment_amount) > 0
 				);
 			});
 		}
@@ -190,8 +257,10 @@
 				var unpaid = num((r && r.unpaid_amount) || 0);
 				var payStatus = String((r && r.payment_status) || "Unpaid");
 				var hasBooked =
-					!!String((r && r.jv_entry_no) || "").trim() &&
-					String((r && r.jv_status) || "") === "Posted";
+					num((r && r.booked_amount) || 0) > 0.0001 ||
+					String((r && r.booking_status) || "") === "Booked" ||
+					(!!String((r && r.jv_entry_no) || "").trim() &&
+						String((r && r.jv_status) || "") === "Posted");
 				if (
 					hasBooked &&
 					(unpaid > 0.0001 || payStatus === "Unpaid" || payStatus === "Partly Paid")
@@ -328,9 +397,9 @@
 				if (!jvEntry)
 					jvMeta.innerHTML =
 						"Booking Status: " +
-						statusBadgeHtml("Mixed") +
+						statusBadgeHtml("All") +
 						" | Payment Status: " +
-						statusBadgeHtml("Mixed");
+						statusBadgeHtml("All");
 				else {
 					var s = getEntrySummary(jvEntry);
 					if (!s) jvMeta.textContent = "";
@@ -352,9 +421,9 @@
 				if (!payEntry)
 					payMeta.innerHTML =
 						"Booking Status: " +
-						statusBadgeHtml("Mixed") +
+						statusBadgeHtml("All") +
 						" | Payment Status: " +
-						statusBadgeHtml("Mixed");
+						statusBadgeHtml("All");
 				else {
 					var ps = getEntrySummary(payEntry);
 					if (!ps) payMeta.textContent = "";
@@ -397,12 +466,25 @@
 
 		function getSelectedEntryNosForTab(tabName) {
 			var raw = "";
+			var single = "";
 			if (tabName === "salary_creation")
 				raw = (el("pp-jv-entry-multi") && el("pp-jv-entry-multi").value) || "";
 			else if (tabName === "payment_manage")
 				raw = (el("pp-pay-entry-multi") && el("pp-pay-entry-multi").value) || "";
+			if (tabName === "salary_creation")
+				single = (el("pp-jv-entry-filter") && el("pp-jv-entry-filter").value) || "";
+			else if (tabName === "payment_manage")
+				single = (el("pp-pay-entry-filter") && el("pp-pay-entry-filter").value) || "";
 			var list = parseEntryNoList(raw);
-			if (!list.length && state.forcedEntryNo) list = [String(state.forcedEntryNo).trim()];
+			var forced = String(state.forcedEntryNo || "").trim();
+			if (forced) {
+				// Explicit row action (Pay/Book) must win over any stale selector values.
+				return [forced];
+			}
+			// Single selector must win to avoid stale multi-entry list mixing entries.
+			if (String(single || "").trim()) {
+				list = [String(single || "").trim()];
+			}
 			return list;
 		}
 
@@ -421,7 +503,7 @@
 
 		function getPaymentTotals() {
 			var totals = { booked: 0, paid: 0, unpaid: 0, payment: 0, debit: 0, credit: 0 };
-			getPaymentActiveRows().forEach(function (r) {
+			getPaymentRows().forEach(function (r) {
 				if (!state.paymentExcludedEmployees[r.employee || ""]) {
 					totals.booked += num(r.booked_amount);
 					totals.paid += num(r.paid_amount);

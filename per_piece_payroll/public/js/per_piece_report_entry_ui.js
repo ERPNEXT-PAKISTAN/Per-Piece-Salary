@@ -1455,6 +1455,7 @@
 					if (el("pp-pay-entry-multi")) el("pp-pay-entry-multi").value = entry;
 					if (el("pp-jv-entry-multi")) el("pp-jv-entry-multi").value = "";
 					setWorkflowHistoryRange("payment_manage", "", "");
+					setWorkflowStatusFilter("payment_manage", "", "");
 					document.querySelectorAll(".pp-tab").forEach(function (x) {
 						x.classList.remove("active");
 					});
@@ -1470,6 +1471,8 @@
 					);
 					if (activePayBtn2) activePayBtn2.classList.add("active");
 					state.paymentExcludedEmployees = {};
+					state.paymentAdjustments = {};
+					state.paymentEntryBasis = null;
 					setPageForCurrentTab(1);
 					loadReport();
 				});

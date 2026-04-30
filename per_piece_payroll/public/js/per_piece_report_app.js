@@ -1155,10 +1155,19 @@
 		// Legacy safeguard: when row has no deductions/allowances, booked should equal amount.
 		var amount = Math.max(num((r && r.amount) || 0), 0);
 		var booked = Math.max(num((r && r.booked_amount) || 0), 0);
+		var hasAllowance = r && Object.prototype.hasOwnProperty.call(r, "allowance");
+		var hasAdvance = r && Object.prototype.hasOwnProperty.call(r, "advance_deduction");
+		var hasOther = r && Object.prototype.hasOwnProperty.call(r, "other_deduction");
 		var allowance = Math.abs(num((r && r.allowance) || 0));
 		var advance = Math.abs(num((r && r.advance_deduction) || 0));
 		var other = Math.abs(num((r && r.other_deduction) || 0));
-		var noSplits = allowance <= 0.005 && advance <= 0.005 && other <= 0.005;
+		var noSplits =
+			hasAllowance &&
+			hasAdvance &&
+			hasOther &&
+			allowance <= 0.005 &&
+			advance <= 0.005 &&
+			other <= 0.005;
 		if (noSplits && amount > 0 && (booked <= 0 || booked + 0.005 < amount)) {
 			return amount;
 		}
@@ -1851,6 +1860,7 @@
 				if (el("pp-pay-entry-filter")) el("pp-pay-entry-filter").value = entry;
 				if (el("pp-pay-entry-multi")) el("pp-pay-entry-multi").value = entry;
 				setWorkflowHistoryRange("payment_manage", "", "");
+				setWorkflowStatusFilter("payment_manage", "", "");
 				document.querySelectorAll(".pp-tab").forEach(function (x) {
 					x.classList.remove("active");
 				});
@@ -1864,6 +1874,8 @@
 				var activePayBtn4 = document.querySelector(".pp-tab[data-tab='payment_manage']");
 				if (activePayBtn4) activePayBtn4.classList.add("active");
 				state.paymentExcludedEmployees = {};
+				state.paymentAdjustments = {};
+				state.paymentEntryBasis = null;
 				setPageForCurrentTab(1);
 				loadReport();
 			});
@@ -1962,6 +1974,7 @@
 				if (el("pp-pay-entry-multi")) el("pp-pay-entry-multi").value = selected.join(", ");
 				if (el("pp-jv-entry-multi")) el("pp-jv-entry-multi").value = "";
 				setWorkflowHistoryRange("payment_manage", "", "");
+				setWorkflowStatusFilter("payment_manage", "", "");
 				document.querySelectorAll(".pp-tab").forEach(function (x) {
 					x.classList.remove("active");
 				});
@@ -1975,6 +1988,8 @@
 				var activePayBtn5 = document.querySelector(".pp-tab[data-tab='payment_manage']");
 				if (activePayBtn5) activePayBtn5.classList.add("active");
 				state.paymentExcludedEmployees = {};
+				state.paymentAdjustments = {};
+				state.paymentEntryBasis = null;
 				setPageForCurrentTab(1);
 				loadReport();
 			});
@@ -2424,10 +2439,14 @@
 				].join("::");
 			if (seen[rowKey]) return;
 			seen[rowKey] = 1;
+			var booked = Math.max(num(getNetBookedAmountForRow(r)), 0);
+			var paid = Math.max(num(r.paid_amount), 0);
+			if (paid > booked) paid = booked;
+			var unpaid = Math.max(booked - paid, 0);
 			totals.amount += num(r.amount);
-			totals.booked_amount += num(r.booked_amount);
-			totals.paid_amount += num(r.paid_amount);
-			totals.unpaid_amount += num(r.unpaid_amount);
+			totals.booked_amount += booked;
+			totals.paid_amount += paid;
+			totals.unpaid_amount += unpaid;
 			totals.rows += 1;
 		});
 		return totals;
@@ -2483,10 +2502,14 @@
 					unpaid_amount: 0,
 				};
 			}
+			var booked = Math.max(num(getNetBookedAmountForRow(r)), 0);
+			var paid = Math.max(num(r.paid_amount), 0);
+			if (paid > booked) paid = booked;
+			var unpaid = Math.max(booked - paid, 0);
 			out[emp].amount += num(r.amount);
-			out[emp].booked_amount += num(r.booked_amount);
-			out[emp].paid_amount += num(r.paid_amount);
-			out[emp].unpaid_amount += num(r.unpaid_amount);
+			out[emp].booked_amount += booked;
+			out[emp].paid_amount += paid;
+			out[emp].unpaid_amount += unpaid;
 		});
 		return out;
 	}
@@ -2974,7 +2997,19 @@
 					};
 				}
 				var bookedKey =
-					String(r.per_piece_salary || "").trim() || String(r.row_id || "").trim();
+					String(r.row_id || "").trim() ||
+					[
+						String(r.per_piece_salary || "").trim(),
+						String(r.employee || "").trim(),
+						String(r.product || "").trim(),
+						String(r.process_type || "").trim(),
+						String(r.process_size || "").trim(),
+						String(r.sales_order || "").trim(),
+						String(r.delivery_note || "").trim(),
+						String(r.qty || "").trim(),
+						String(r.rate || "").trim(),
+						String(r.amount || "").trim(),
+					].join("::");
 				if (!map[emp]._booked_keys[bookedKey]) {
 					map[emp]._booked_keys[bookedKey] = 1;
 					map[emp].booked_amount += getNetBookedAmountForRow(r);
@@ -3910,7 +3945,7 @@
 			];
 			outRows = buildPaymentEmployeeRows(getBookedRows());
 		} else if (state.currentTab === "payment_manage") {
-			outRows = getPaymentActiveRows();
+			outRows = getPaymentRows();
 			paged = paginateRows(outRows);
 			renderPaymentTable(paged.rows);
 			state.lastTabRender = {
@@ -4394,47 +4429,76 @@
 		callApi("per_piece_payroll.api.get_per_piece_salary_report", args)
 			.then(function (msg) {
 				state.rows = (msg && msg.data) || [];
+				state.paymentEntryBasis = null;
 				if (state.entryMeta) {
 					state.entryMeta.salaryFinancialByEntry = {};
 					state.entryMeta.salaryFinancialPending = {};
+				}
+				var selectedPayEntry = "";
+				if (state.currentTab === "payment_manage") {
+					selectedPayEntry = String(
+						state.forcedEntryNo ||
+							(el("pp-pay-entry-filter") && el("pp-pay-entry-filter").value) ||
+							""
+					).trim();
 				}
 				applyReportRateProcessFix(state.rows);
 				normalizeReportStatusValues(state.rows);
 				state.columns = (msg && msg.columns) || [];
 				refreshHeaderFilterOptions();
+				var basisPromise = Promise.resolve();
+				if (selectedPayEntry) {
+					basisPromise = callApi("per_piece_payroll.api.get_payment_entry_basis", {
+						entry_no: selectedPayEntry,
+					})
+						.then(function (basisMsg) {
+							if (
+								basisMsg &&
+								String(basisMsg.entry_no || "").trim() === selectedPayEntry
+							) {
+								state.paymentEntryBasis = basisMsg;
+							}
+						})
+						.catch(function (e) {
+							console.error(e);
+							state.paymentEntryBasis = null;
+						});
+				}
 				// Fast first paint: render current tab immediately with current dataset.
-				rebuildEntryMetaLookups();
-				refreshTopProductOptions();
-				normalizeExcludedEmployees();
-				normalizeAdjustmentsForEmployees();
-				normalizePaymentExcludedEmployees();
-				normalizePaymentAdjustments();
-				renderCurrentTab();
-				loadJVEntryOptions();
-				loadPaymentJVEntryOptions();
+				return basisPromise.then(function () {
+					rebuildEntryMetaLookups();
+					refreshTopProductOptions();
+					normalizeExcludedEmployees();
+					normalizeAdjustmentsForEmployees();
+					normalizePaymentExcludedEmployees();
+					normalizePaymentAdjustments();
+					renderCurrentTab();
+					loadJVEntryOptions();
+					loadPaymentJVEntryOptions();
 
-				// Background hydrate for heavy datasets (recent docs + advances), then refresh.
-				return loadAllRowsForRecentDocs()
-					.then(function () {
-						return loadAdvancesFromGL();
-					})
-					.catch(function (e) {
-						console.error(e);
-						state.advanceBalances = (msg && msg.advance_balances) || {};
-						state.advanceRows = (msg && msg.advance_rows) || [];
-						state.advanceMonths = (msg && msg.advance_months) || [];
-					})
-					.then(function () {
-						rebuildEntryMetaLookups();
-						refreshTopProductOptions();
-						normalizeExcludedEmployees();
-						normalizeAdjustmentsForEmployees();
-						normalizePaymentExcludedEmployees();
-						normalizePaymentAdjustments();
-						renderCurrentTab();
-						loadJVEntryOptions();
-						loadPaymentJVEntryOptions();
-					});
+					// Background hydrate for heavy datasets (recent docs + advances), then refresh.
+					return loadAllRowsForRecentDocs()
+						.then(function () {
+							return loadAdvancesFromGL();
+						})
+						.catch(function (e) {
+							console.error(e);
+							state.advanceBalances = (msg && msg.advance_balances) || {};
+							state.advanceRows = (msg && msg.advance_rows) || [];
+							state.advanceMonths = (msg && msg.advance_months) || [];
+						})
+						.then(function () {
+							rebuildEntryMetaLookups();
+							refreshTopProductOptions();
+							normalizeExcludedEmployees();
+							normalizeAdjustmentsForEmployees();
+							normalizePaymentExcludedEmployees();
+							normalizePaymentAdjustments();
+							renderCurrentTab();
+							loadJVEntryOptions();
+							loadPaymentJVEntryOptions();
+						});
+				});
 			})
 			.catch(function (e) {
 				el("pp-msg").textContent = "Error loading report";

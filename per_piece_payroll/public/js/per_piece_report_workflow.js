@@ -43,7 +43,8 @@
 					return { name: name };
 				});
 			setOptions(select, options, "name", "name", "Select Posted JV");
-			if (options.length) select.value = options[0].name;
+			// Keep placeholder by default; user explicitly picks JV to view/cancel.
+			select.value = "";
 		}
 
 		function loadPaymentJVEntryOptions() {
@@ -60,7 +61,8 @@
 					return { name: name };
 				});
 			setOptions(select, options, "name", "name", "Select Payment JV");
-			if (options.length) select.value = options[0].name;
+			// Keep placeholder by default; user explicitly picks Payment JV.
+			select.value = "";
 		}
 
 		function selectPreferred(selectEl, rows, preferredKeywords) {
@@ -427,6 +429,10 @@
 			var selectedEntries = parseEntryNoList(
 				(el("pp-jv-entry-multi") && el("pp-jv-entry-multi").value) || ""
 			);
+			var singleJVEntry = (el("pp-jv-entry-filter") && el("pp-jv-entry-filter").value) || "";
+			if (String(singleJVEntry || "").trim()) {
+				selectedEntries = [String(singleJVEntry || "").trim()];
+			}
 			if (args.entry_no && selectedEntries.indexOf(String(args.entry_no)) < 0)
 				selectedEntries.unshift(String(args.entry_no));
 			args.entry_nos = selectedEntries.join(",");
@@ -462,6 +468,11 @@
 			var selectedEntries = parseEntryNoList(
 				(el("pp-pay-entry-multi") && el("pp-pay-entry-multi").value) || ""
 			);
+			var singlePayEntry =
+				(el("pp-pay-entry-filter") && el("pp-pay-entry-filter").value) || "";
+			if (String(singlePayEntry || "").trim()) {
+				selectedEntries = [String(singlePayEntry || "").trim()];
+			}
 			if (args.entry_no && selectedEntries.indexOf(String(args.entry_no)) < 0)
 				selectedEntries.unshift(String(args.entry_no));
 			args.entry_nos = selectedEntries.join(",");
