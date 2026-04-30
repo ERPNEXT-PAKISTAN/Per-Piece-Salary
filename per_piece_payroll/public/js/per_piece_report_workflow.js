@@ -822,6 +822,7 @@
 				callApi("per_piece_payroll.api.recalculate_selected_entries", {
 					entry_nos: selectedEntries.join(","),
 					entry_no: singleEntry || "",
+					force_from_amount: 1,
 				})
 					.then(function (msg) {
 						if (!msg || msg.ok === false) {
@@ -836,6 +837,10 @@
 						var details =
 							"Entries: " +
 							esc((msg.entries || []).join(", ")) +
+							"<br>Forced rows updated: " +
+							esc(msg.forced_rows_updated || 0) +
+							" / " +
+							esc(msg.forced_rows_checked || 0) +
 							"<br>Normalized rows updated: " +
 							esc(msg.normalized_rows_updated || 0) +
 							" / " +

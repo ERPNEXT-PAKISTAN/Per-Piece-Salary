@@ -820,6 +820,80 @@ def _normalize_entry_booked_amounts(
 	return {"ok": True, "rows_checked": len(rows or []), "rows_updated": updated}
 
 
+def _force_reset_entry_amounts(
+	entry_names: list[str] | tuple[str] | str | None = None,
+) -> dict:
+	"""Force selected entries to use Data Entry base amount as Net/Booked amount."""
+	names = _parse_entry_names(entry_names)
+	if not names:
+		return {"ok": True, "rows_checked": 0, "rows_updated": 0}
+
+	rows = frappe.get_all(
+		"Per Piece",
+		filters={
+			"parent": ["in", names],
+			"parenttype": "Per Piece Salary",
+			"parentfield": "perpiece",
+		},
+		fields=[
+			"name",
+			"amount",
+			"booked_amount",
+			"paid_amount",
+			"unpaid_amount",
+			"allowance",
+			"advance_deduction",
+			"other_deduction",
+			"net_amount",
+			"payment_status",
+		],
+		limit_page_length=200000,
+	)
+
+	updated = 0
+	for row in rows or []:
+		amount = flt((row or {}).get("amount"))
+		paid = max(flt((row or {}).get("paid_amount")), 0.0)
+		new_booked = max(amount, 0.0)
+		if paid > new_booked:
+			paid = new_booked
+		new_unpaid = max(new_booked - paid, 0.0)
+		if new_unpaid <= 0.005:
+			new_status = "Paid"
+		elif paid > 0.005:
+			new_status = "Partly Paid"
+		else:
+			new_status = "Unpaid"
+
+		new_vals = {
+			"allowance": 0.0,
+			"advance_deduction": 0.0,
+			"other_deduction": 0.0,
+			"net_amount": round(new_booked, 2),
+			"booked_amount": round(new_booked, 2),
+			"paid_amount": round(paid, 2),
+			"unpaid_amount": round(new_unpaid, 2),
+			"payment_status": new_status,
+		}
+		cur_vals = {
+			"allowance": round(flt((row or {}).get("allowance")), 2),
+			"advance_deduction": round(flt((row or {}).get("advance_deduction")), 2),
+			"other_deduction": round(flt((row or {}).get("other_deduction")), 2),
+			"net_amount": round(flt((row or {}).get("net_amount")), 2),
+			"booked_amount": round(flt((row or {}).get("booked_amount")), 2),
+			"paid_amount": round(flt((row or {}).get("paid_amount")), 2),
+			"unpaid_amount": round(flt((row or {}).get("unpaid_amount")), 2),
+			"payment_status": str((row or {}).get("payment_status") or ""),
+		}
+		if cur_vals != new_vals:
+			frappe.db.set_value("Per Piece", row.get("name"), new_vals, update_modified=False)
+			updated += 1
+
+	if names and updated:
+		recalculate_per_piece_salary_totals(names)
+	return {"ok": True, "rows_checked": len(rows or []), "rows_updated": updated}
+
+
 @frappe.whitelist()
 def get_per_piece_salary_report(**kwargs):
 	names: list[str] = []
@@ -881,12 +955,19 @@ def recalculate_selected_entries(entry_nos=None, entry_no=None):
 	if not names:
 		return {"ok": False, "message": "No entry selected."}
 
+	force_mode = int(flt(frappe.form_dict.get("force_from_amount") or 0)) == 1
+	forced = {"rows_checked": 0, "rows_updated": 0}
+	if force_mode:
+		forced = _force_reset_entry_amounts(names)
 	norm = _normalize_entry_booked_amounts(names)
 	fin = recalculate_per_piece_child_financials(names)
 	recalculate_per_piece_salary_totals(names)
 	return {
 		"ok": True,
 		"entries": names,
+		"force_mode": force_mode,
+		"forced_rows_checked": forced.get("rows_checked", 0),
+		"forced_rows_updated": forced.get("rows_updated", 0),
 		"normalized_rows_checked": norm.get("rows_checked", 0),
 		"normalized_rows_updated": norm.get("rows_updated", 0),
 		"financial_rows_checked": fin.get("rows_checked", 0),
