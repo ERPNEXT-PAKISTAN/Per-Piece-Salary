@@ -3733,14 +3733,6 @@ def _ensure_inline_per_piece_and_salary_fields(results: list[str]) -> None:
 			"no_copy": 1,
 		},
 		{
-			"fieldname": "process_size",
-			"label": "Process Size",
-			"fieldtype": "Data",
-			"read_only": 1,
-			"in_list_view": 1,
-			"no_copy": 0,
-		},
-		{
 			"fieldname": "sales_order",
 			"label": "Sales Order",
 			"fieldtype": "Link",
@@ -4403,25 +4395,11 @@ def apply() -> list[str]:
 		"payment_line_remark", "Payment Remark", "Small Text", None, "payment_refs", results, in_list_view=0
 	)
 	_ensure_custom_field(
-		"process_size",
-		"Process Size",
-		"Data",
-		"",
-		"process_type",
-		results,
-		doctype="Per Piece",
-		read_only=1,
-		in_list_view=1,
-		default="No Size",
-		no_copy=0,
-		allow_fieldtype_override=1,
-	)
-	_ensure_custom_field(
 		"sales_order",
 		"Sales Order",
 		"Link",
 		"Sales Order",
-		"process_size",
+		"process_type",
 		results,
 		doctype="Per Piece",
 		read_only=0,
