@@ -3732,24 +3732,6 @@ def _ensure_inline_per_piece_and_salary_fields(results: list[str]) -> None:
 			"in_list_view": 0,
 			"no_copy": 1,
 		},
-		{
-			"fieldname": "sales_order",
-			"label": "Sales Order",
-			"fieldtype": "Link",
-			"options": "Sales Order",
-			"read_only": 0,
-			"in_list_view": 1,
-			"no_copy": 0,
-		},
-		{
-			"fieldname": "delivery_note",
-			"label": "Delivery Note",
-			"fieldtype": "Link",
-			"options": "Delivery Note",
-			"read_only": 1,
-			"in_list_view": 1,
-			"no_copy": 0,
-		},
 	]
 	per_piece_salary_specs = [
 		{
@@ -3843,6 +3825,10 @@ def _ensure_inline_per_piece_and_salary_fields(results: list[str]) -> None:
 	if per_piece_used_inline:
 		for spec in per_piece_specs:
 			_delete_custom_field("Per Piece", spec["fieldname"], results)
+	# Do not own these fields in this app to avoid cross-app fixture conflicts.
+	for old_fn in ("process_size", "sales_order", "delivery_note"):
+		_delete_custom_field("Per Piece", old_fn, results)
+		_delete_inline_field_from_custom_doctype("Per Piece", old_fn, results)
 
 	per_piece_salary_used_inline = _ensure_inline_fields_on_custom_doctype(
 		"Per Piece Salary", per_piece_salary_specs, results
@@ -4393,32 +4379,6 @@ def apply() -> list[str]:
 	)
 	_ensure_custom_field(
 		"payment_line_remark", "Payment Remark", "Small Text", None, "payment_refs", results, in_list_view=0
-	)
-	_ensure_custom_field(
-		"sales_order",
-		"Sales Order",
-		"Link",
-		"Sales Order",
-		"process_type",
-		results,
-		doctype="Per Piece",
-		read_only=0,
-		in_list_view=1,
-		no_copy=0,
-		allow_fieldtype_override=1,
-	)
-	_ensure_custom_field(
-		"delivery_note",
-		"Delivery Note",
-		"Link",
-		"Delivery Note",
-		"sales_order",
-		results,
-		doctype="Per Piece",
-		read_only=1,
-		in_list_view=1,
-		no_copy=0,
-		allow_fieldtype_override=1,
 	)
 	_ensure_custom_field(
 		"pp_filters_section_break",
