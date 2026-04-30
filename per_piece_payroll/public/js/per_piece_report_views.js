@@ -330,7 +330,7 @@
 			var html =
 				"<table class='pp-table'><thead><tr>" +
 				"<th>Use In JV</th><th>Employee</th><th>Qty</th><th>Rate</th><th>Salary Amount</th>" +
-				"<th>Advance Balance</th><th>Advance Deduction</th><th>Allowance</th><th>Other Deduction</th><th>Net Amount</th>" +
+				"<th>Advance Balance</th><th>Advance Deduction</th><th>Allowance</th><th>Other Deduction</th><th>Net Salary</th>" +
 				"</tr></thead><tbody>";
 			rows.forEach(function (r) {
 				var emp = r.employee || "";
@@ -1093,7 +1093,7 @@
 			if (!wrap) return;
 			var html =
 				"<table class='pp-table'><thead><tr>" +
-				"<th>Use In Payment</th><th>Employee</th><th>Booked Amount</th><th>Paid Amount</th><th>Unpaid Amount</th><th>Payment Amount</th><th>Status</th>" +
+				"<th>Use In Payment</th><th>Employee</th><th>Net Salary</th><th>Paid Amount</th><th>Unpaid Amount</th><th>Payment Amount</th><th>Status</th>" +
 				"</tr></thead><tbody>";
 			rows.forEach(function (r) {
 				var emp = r.employee || "";

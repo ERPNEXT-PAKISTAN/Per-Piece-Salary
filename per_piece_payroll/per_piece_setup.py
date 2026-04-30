@@ -3207,6 +3207,10 @@ frappe.ui.form.on("Per Piece Salary", {
 	        let totalBookedAmount = 0;
 	        let totalPaidAmount = 0;
 	        let totalUnpaidAmount = 0;
+	        let totalAllowance = 0;
+	        let totalAdvanceDeduction = 0;
+	        let totalOtherDeduction = 0;
+	        let totalNetAmount = 0;
 
 	        rows.forEach((row) => {
 	            if (!row.process_size) {
@@ -3218,6 +3222,10 @@ frappe.ui.form.on("Per Piece Salary", {
 	            totalBookedAmount += flt(row.booked_amount, DECIMALS);
 	            totalPaidAmount += flt(row.paid_amount, DECIMALS);
 	            totalUnpaidAmount += flt(row.unpaid_amount, DECIMALS);
+	            totalAllowance += flt(row.allowance, DECIMALS);
+	            totalAdvanceDeduction += flt(row.advance_deduction, DECIMALS);
+	            totalOtherDeduction += flt(row.other_deduction, DECIMALS);
+	            totalNetAmount += flt(row.net_amount, DECIMALS);
 	        });
 
 	        frm.refresh_field(CHILD_TABLE_FIELD);
@@ -3231,6 +3239,30 @@ frappe.ui.form.on("Per Piece Salary", {
 	        }
 	        if (frm.fields_dict.total_unpaid_amount) {
 	            frm.set_value("total_unpaid_amount", flt(totalUnpaidAmount, DECIMALS));
+	        }
+	        if (frm.fields_dict.total_allowance) {
+	            frm.set_value("total_allowance", flt(totalAllowance, DECIMALS));
+	        }
+	        if (frm.fields_dict.total_allowance_amount) {
+	            frm.set_value("total_allowance_amount", flt(totalAllowance, DECIMALS));
+	        }
+	        if (frm.fields_dict.total_advance_deduction) {
+	            frm.set_value("total_advance_deduction", flt(totalAdvanceDeduction, DECIMALS));
+	        }
+	        if (frm.fields_dict.total_advance_deduction_amount) {
+	            frm.set_value("total_advance_deduction_amount", flt(totalAdvanceDeduction, DECIMALS));
+	        }
+	        if (frm.fields_dict.total_other_deduction) {
+	            frm.set_value("total_other_deduction", flt(totalOtherDeduction, DECIMALS));
+	        }
+	        if (frm.fields_dict.total_other_deduction_amount) {
+	            frm.set_value("total_other_deduction_amount", flt(totalOtherDeduction, DECIMALS));
+	        }
+	        if (frm.fields_dict.total_net_amount) {
+	            frm.set_value("total_net_amount", flt(totalNetAmount, DECIMALS));
+	        }
+	        if (frm.fields_dict.total_net_salary) {
+	            frm.set_value("total_net_salary", flt(totalNetAmount, DECIMALS));
 	        }
 	    },
 
@@ -3366,6 +3398,24 @@ def _ensure_custom_field(
 	no_copy: int = 1,
 	allow_fieldtype_override: int = 0,
 ) -> None:
+	# If field already exists directly on DocType, do not create/update Custom Field.
+	try:
+		meta = frappe.get_meta(doctype)
+		if meta.has_field(fieldname):
+			inline_exists = False
+			try:
+				doc = frappe.get_doc("DocType", doctype)
+				inline_exists = any(
+					str((f or {}).get("fieldname") or "").strip() == fieldname for f in (doc.fields or [])
+				)
+			except Exception:
+				inline_exists = False
+			if inline_exists:
+				results.append(f"No change: Inline DocField '{doctype}.{fieldname}' already present")
+				return
+	except Exception:
+		pass
+
 	existing = frappe.db.get_value("Custom Field", {"dt": doctype, "fieldname": fieldname}, "name")
 	payload = {
 		"dt": doctype,
@@ -3427,6 +3477,387 @@ def _delete_custom_field(doctype: str, fieldname: str, results: list[str]) -> No
 		return
 	frappe.delete_doc("Custom Field", existing, ignore_permissions=True, force=1)
 	results.append(f"Deleted: Custom Field '{doctype}.{fieldname}'")
+
+
+def _ensure_inline_fields_on_custom_doctype(
+	doctype: str,
+	field_specs: list[dict],
+	results: list[str],
+) -> bool:
+	"""Ensure fields exist directly in DocType.fields when the DocType itself is custom.
+
+	Returns True when inline DocField strategy was applied, False otherwise.
+	"""
+	if not frappe.db.exists("DocType", doctype):
+		return False
+	doc = frappe.get_doc("DocType", doctype)
+	if not int(doc.get("custom") or 0):
+		return False
+
+	existing = {str((f or {}).get("fieldname") or "").strip(): f for f in (doc.fields or [])}
+	changed = False
+	for spec in field_specs:
+		fn = str((spec or {}).get("fieldname") or "").strip()
+		if not fn:
+			continue
+		if fn in existing:
+			# keep important properties aligned
+			f = existing[fn]
+			for k in ("label", "fieldtype", "read_only", "in_list_view", "no_copy", "precision"):
+				if k in spec and str(f.get(k) or "") != str(spec.get(k) or ""):
+					f.set(k, spec.get(k))
+					changed = True
+			continue
+		doc.append("fields", spec)
+		changed = True
+		results.append(f"Created inline DocField: {doctype}.{fn}")
+
+	if changed:
+		doc.save(ignore_permissions=True)
+		frappe.clear_cache(doctype=doctype)
+		results.append(f"Updated: DocType '{doctype}' inline fields")
+	else:
+		results.append(f"No change: DocType '{doctype}' inline fields")
+	return True
+
+
+def _delete_inline_field_from_custom_doctype(doctype: str, fieldname: str, results: list[str]) -> None:
+	if not frappe.db.exists("DocType", doctype):
+		results.append(f"No change: DocType '{doctype}' not found for inline delete")
+		return
+	doc = frappe.get_doc("DocType", doctype)
+	if not int(doc.get("custom") or 0):
+		results.append(f"No change: DocType '{doctype}' is not custom (inline delete skipped)")
+		return
+	fields = list(doc.fields or [])
+	next_fields = [f for f in fields if str((f or {}).get("fieldname") or "") != fieldname]
+	if len(next_fields) == len(fields):
+		results.append(f"No change: Inline DocField '{doctype}.{fieldname}' already absent")
+		return
+	doc.fields = next_fields
+	doc.save(ignore_permissions=True)
+	frappe.clear_cache(doctype=doctype)
+	results.append(f"Deleted inline DocField: {doctype}.{fieldname}")
+
+
+def _ensure_per_piece_salary_total_fields(results: list[str]) -> None:
+	specs = [
+		{
+			"fieldname": "total_booked_amount",
+			"label": "Total Booked Amount",
+			"fieldtype": "Float",
+			"precision": "2",
+			"read_only": 1,
+			"in_list_view": 0,
+			"no_copy": 1,
+		},
+		{
+			"fieldname": "total_paid_amount",
+			"label": "Total Paid Amount",
+			"fieldtype": "Float",
+			"precision": "2",
+			"read_only": 1,
+			"in_list_view": 0,
+			"no_copy": 1,
+		},
+		{
+			"fieldname": "total_unpaid_amount",
+			"label": "Total Unpaid Amount",
+			"fieldtype": "Float",
+			"precision": "2",
+			"read_only": 1,
+			"in_list_view": 0,
+			"no_copy": 1,
+		},
+	]
+
+	used_inline = _ensure_inline_fields_on_custom_doctype("Per Piece Salary", specs, results)
+	if used_inline:
+		for spec in specs:
+			_delete_custom_field("Per Piece Salary", spec["fieldname"], results)
+		for old_fn in (
+			"total_allowance_amount",
+			"total_advance_deduction_amount",
+			"total_other_deduction_amount",
+			"total_net_salary",
+		):
+			_delete_custom_field("Per Piece Salary", old_fn, results)
+			_delete_inline_field_from_custom_doctype("Per Piece Salary", old_fn, results)
+		return
+
+	# Non-custom/base DocType fallback: keep as Custom Fields
+	for spec in specs:
+		_ensure_custom_field(
+			spec["fieldname"],
+			spec["label"],
+			spec["fieldtype"],
+			None,
+			"total_amount",
+			results,
+			doctype="Per Piece Salary",
+			read_only=int(spec.get("read_only") or 0),
+			in_list_view=int(spec.get("in_list_view") or 0),
+			no_copy=int(spec.get("no_copy") or 0),
+		)
+	# User keeps these totals directly in DocType; do not keep duplicate Custom Fields.
+	_delete_custom_field("Per Piece Salary", "total_allowance", results)
+	_delete_custom_field("Per Piece Salary", "total_advance_deduction", results)
+	_delete_custom_field("Per Piece Salary", "total_other_deduction", results)
+	_delete_custom_field("Per Piece Salary", "total_net_amount", results)
+	_delete_custom_field("Per Piece Salary", "total_allowance_amount", results)
+
+
+def _ensure_inline_per_piece_and_salary_fields(results: list[str]) -> None:
+	per_piece_specs = [
+		{
+			"fieldname": "jv_status",
+			"label": "JV Status",
+			"fieldtype": "Select",
+			"options": "Pending\nPosted",
+			"read_only": 1,
+			"in_list_view": 1,
+			"no_copy": 1,
+		},
+		{
+			"fieldname": "jv_entry_no",
+			"label": "JV Entry No",
+			"fieldtype": "Link",
+			"options": "Journal Entry",
+			"read_only": 1,
+			"in_list_view": 1,
+			"no_copy": 1,
+		},
+		{
+			"fieldname": "jv_line_remark",
+			"label": "JV Line Remark",
+			"fieldtype": "Small Text",
+			"read_only": 1,
+			"in_list_view": 0,
+			"no_copy": 1,
+		},
+		{
+			"fieldname": "booked_amount",
+			"label": "Booked Amount",
+			"fieldtype": "Float",
+			"read_only": 1,
+			"in_list_view": 1,
+			"no_copy": 1,
+			"precision": "2",
+		},
+		{
+			"fieldname": "allowance",
+			"label": "Allowance",
+			"fieldtype": "Float",
+			"read_only": 1,
+			"in_list_view": 1,
+			"no_copy": 1,
+			"precision": "2",
+		},
+		{
+			"fieldname": "advance_deduction",
+			"label": "Advance Deduction",
+			"fieldtype": "Float",
+			"read_only": 1,
+			"in_list_view": 1,
+			"no_copy": 1,
+			"precision": "2",
+		},
+		{
+			"fieldname": "other_deduction",
+			"label": "Other Deduction",
+			"fieldtype": "Float",
+			"read_only": 1,
+			"in_list_view": 1,
+			"no_copy": 1,
+			"precision": "2",
+		},
+		{
+			"fieldname": "net_amount",
+			"label": "Net Amount",
+			"fieldtype": "Float",
+			"read_only": 1,
+			"in_list_view": 1,
+			"no_copy": 1,
+			"precision": "2",
+		},
+		{
+			"fieldname": "paid_amount",
+			"label": "Paid Amount",
+			"fieldtype": "Float",
+			"read_only": 1,
+			"in_list_view": 1,
+			"no_copy": 1,
+			"precision": "2",
+		},
+		{
+			"fieldname": "unpaid_amount",
+			"label": "Unpaid Amount",
+			"fieldtype": "Float",
+			"read_only": 1,
+			"in_list_view": 1,
+			"no_copy": 1,
+			"precision": "2",
+		},
+		{
+			"fieldname": "payment_status",
+			"label": "Payment Status",
+			"fieldtype": "Select",
+			"options": "Unpaid\nPartly Paid\nPaid",
+			"read_only": 1,
+			"in_list_view": 1,
+			"no_copy": 1,
+		},
+		{
+			"fieldname": "payment_jv_no",
+			"label": "Payment JV",
+			"fieldtype": "Link",
+			"options": "Journal Entry",
+			"read_only": 1,
+			"in_list_view": 1,
+			"no_copy": 1,
+		},
+		{
+			"fieldname": "payment_refs",
+			"label": "Payment Refs",
+			"fieldtype": "Small Text",
+			"read_only": 1,
+			"in_list_view": 0,
+			"no_copy": 1,
+		},
+		{
+			"fieldname": "payment_line_remark",
+			"label": "Payment Remark",
+			"fieldtype": "Small Text",
+			"read_only": 1,
+			"in_list_view": 0,
+			"no_copy": 1,
+		},
+		{
+			"fieldname": "process_size",
+			"label": "Process Size",
+			"fieldtype": "Data",
+			"read_only": 1,
+			"in_list_view": 1,
+			"no_copy": 0,
+		},
+		{
+			"fieldname": "sales_order",
+			"label": "Sales Order",
+			"fieldtype": "Link",
+			"options": "Sales Order",
+			"read_only": 0,
+			"in_list_view": 1,
+			"no_copy": 0,
+		},
+		{
+			"fieldname": "delivery_note",
+			"label": "Delivery Note",
+			"fieldtype": "Link",
+			"options": "Delivery Note",
+			"read_only": 1,
+			"in_list_view": 1,
+			"no_copy": 0,
+		},
+	]
+	per_piece_salary_specs = [
+		{
+			"fieldname": "pp_filters_section_break",
+			"label": "",
+			"fieldtype": "Section Break",
+			"read_only": 0,
+			"in_list_view": 0,
+			"no_copy": 0,
+		},
+		{
+			"fieldname": "item_group",
+			"label": "Item Group",
+			"fieldtype": "Link",
+			"options": "Item Group",
+			"read_only": 0,
+			"in_list_view": 0,
+			"no_copy": 0,
+		},
+		{
+			"fieldname": "pp_filters_col_break_1",
+			"label": "",
+			"fieldtype": "Column Break",
+			"read_only": 0,
+			"in_list_view": 0,
+			"no_copy": 0,
+		},
+		{
+			"fieldname": "item",
+			"label": "Item",
+			"fieldtype": "Link",
+			"options": "Item",
+			"read_only": 0,
+			"in_list_view": 0,
+			"no_copy": 0,
+		},
+		{
+			"fieldname": "delivery_note",
+			"label": "Delivery Note",
+			"fieldtype": "Link",
+			"options": "Delivery Note",
+			"read_only": 0,
+			"in_list_view": 0,
+			"no_copy": 0,
+		},
+		{
+			"fieldname": "pp_filters_col_break_2",
+			"label": "",
+			"fieldtype": "Column Break",
+			"read_only": 0,
+			"in_list_view": 0,
+			"no_copy": 0,
+		},
+		{
+			"fieldname": "employee",
+			"label": "Employee",
+			"fieldtype": "Link",
+			"options": "Employee",
+			"read_only": 0,
+			"in_list_view": 0,
+			"no_copy": 0,
+		},
+		{
+			"fieldname": "company",
+			"label": "Company",
+			"fieldtype": "Link",
+			"options": "Company",
+			"read_only": 0,
+			"in_list_view": 0,
+			"no_copy": 0,
+		},
+		{
+			"fieldname": "pp_filters_col_break_3",
+			"label": "",
+			"fieldtype": "Column Break",
+			"read_only": 0,
+			"in_list_view": 0,
+			"no_copy": 0,
+		},
+		{
+			"fieldname": "load_by_item",
+			"label": "Load By Item",
+			"fieldtype": "Check",
+			"read_only": 0,
+			"in_list_view": 0,
+			"no_copy": 0,
+		},
+	]
+
+	per_piece_used_inline = _ensure_inline_fields_on_custom_doctype("Per Piece", per_piece_specs, results)
+	if per_piece_used_inline:
+		for spec in per_piece_specs:
+			_delete_custom_field("Per Piece", spec["fieldname"], results)
+
+	per_piece_salary_used_inline = _ensure_inline_fields_on_custom_doctype(
+		"Per Piece Salary", per_piece_salary_specs, results
+	)
+	if per_piece_salary_used_inline:
+		for spec in per_piece_salary_specs:
+			_delete_custom_field("Per Piece Salary", spec["fieldname"], results)
 
 
 def _ensure_field_property_setter(
@@ -4132,90 +4563,12 @@ def apply() -> list[str]:
 		no_copy=0,
 		default="1",
 	)
-	_ensure_custom_field(
-		"total_booked_amount",
-		"Total Booked Amount",
-		"Float",
-		None,
-		"total_amount",
-		results,
-		doctype="Per Piece Salary",
-		read_only=1,
-		in_list_view=0,
-		no_copy=1,
-	)
-	_ensure_custom_field(
-		"total_paid_amount",
-		"Total Paid Amount",
-		"Float",
-		None,
-		"total_booked_amount",
-		results,
-		doctype="Per Piece Salary",
-		read_only=1,
-		in_list_view=0,
-		no_copy=1,
-	)
-	_ensure_custom_field(
-		"total_unpaid_amount",
-		"Total Unpaid Amount",
-		"Float",
-		None,
-		"total_paid_amount",
-		results,
-		doctype="Per Piece Salary",
-		read_only=1,
-		in_list_view=0,
-		no_copy=1,
-	)
-	_ensure_custom_field(
-		"total_allowance_amount",
-		"Total Allowance",
-		"Float",
-		None,
-		"total_unpaid_amount",
-		results,
-		doctype="Per Piece Salary",
-		read_only=1,
-		in_list_view=0,
-		no_copy=1,
-	)
-	_ensure_custom_field(
-		"total_advance_deduction_amount",
-		"Total Advance Deduction",
-		"Float",
-		None,
-		"total_allowance_amount",
-		results,
-		doctype="Per Piece Salary",
-		read_only=1,
-		in_list_view=0,
-		no_copy=1,
-	)
-	_ensure_custom_field(
-		"total_other_deduction_amount",
-		"Total Other Deduction",
-		"Float",
-		None,
-		"total_advance_deduction_amount",
-		results,
-		doctype="Per Piece Salary",
-		read_only=1,
-		in_list_view=0,
-		no_copy=1,
-	)
-	_ensure_custom_field(
-		"total_net_salary",
-		"Net Salary",
-		"Float",
-		None,
-		"total_other_deduction_amount",
-		results,
-		doctype="Per Piece Salary",
-		read_only=1,
-		in_list_view=0,
-		no_copy=1,
-	)
+	_ensure_inline_per_piece_and_salary_fields(results)
+	_ensure_per_piece_salary_total_fields(results)
+	_delete_custom_field("Per Piece Salary", "total_allowance", results)
+	_delete_custom_field("Per Piece Salary", "total_advance_deduction", results)
+	_delete_custom_field("Per Piece Salary", "total_other_deduction", results)
+	_delete_custom_field("Per Piece Salary", "total_net_amount", results)
 	_delete_custom_field("Item", "custom_process_type", results)
 	_delete_custom_field("Item", "custom_process_size", results)
 	_delete_custom_field("Item", "custom_rate_per_piece", results)
@@ -4225,7 +4578,7 @@ def apply() -> list[str]:
 	_ensure_doctype_property_setter(
 		"Per Piece Salary",
 		"autoname",
-		"format:Date-{YY}-{MM}-PO-{po_number}-{#####}",
+		"format:PPE-DE-{YYYY}-{#####}",
 		"Data",
 		results,
 	)

@@ -1,0 +1,36 @@
+[
+ {
+  "content": null,
+  "docstatus": 0,
+  "doctype": "Page",
+  "icon": null,
+  "modified": "2026-04-25 00:00:00",
+  "module": "Per Piece Payroll",
+  "name": "per-piece-entry",
+  "page_name": "per-piece-entry",
+  "restrict_to_domain": null,
+  "roles": [],
+  "script": null,
+  "standard": "Yes",
+  "style": null,
+  "system_page": 0,
+  "title": "Per Piece Entry"
+ },
+ {
+  "content": null,
+  "docstatus": 0,
+  "doctype": "Page",
+  "icon": null,
+  "modified": "2026-04-25 00:00:00",
+  "module": "Per Piece Payroll",
+  "name": "per-piece-reporting",
+  "page_name": "per-piece-reporting",
+  "restrict_to_domain": null,
+  "roles": [],
+  "script": null,
+  "standard": "Yes",
+  "style": null,
+  "system_page": 0,
+  "title": "Per Piece Reporting"
+ }
+]

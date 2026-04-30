@@ -618,6 +618,10 @@ frappe.ui.form.on("Per Piece Salary", {
 		let totalBookedAmount = 0;
 		let totalPaidAmount = 0;
 		let totalUnpaidAmount = 0;
+		let totalAllowanceAmount = 0;
+		let totalAdvanceDeductionAmount = 0;
+		let totalOtherDeductionAmount = 0;
+		let totalNetSalaryAmount = 0;
 
 		rows.forEach((row) => {
 			if (!row.process_size) {
@@ -629,6 +633,10 @@ frappe.ui.form.on("Per Piece Salary", {
 			totalBookedAmount += flt(row.booked_amount, DECIMALS);
 			totalPaidAmount += flt(row.paid_amount, DECIMALS);
 			totalUnpaidAmount += flt(row.unpaid_amount, DECIMALS);
+			totalAllowanceAmount += flt(row.allowance, DECIMALS);
+			totalAdvanceDeductionAmount += flt(row.advance_deduction, DECIMALS);
+			totalOtherDeductionAmount += flt(row.other_deduction, DECIMALS);
+			totalNetSalaryAmount += flt(row.net_amount, DECIMALS);
 		});
 
 		frm.refresh_field(CHILD_TABLE_FIELD);
@@ -642,6 +650,24 @@ frappe.ui.form.on("Per Piece Salary", {
 		}
 		if (frm.fields_dict.total_unpaid_amount) {
 			frm.set_value("total_unpaid_amount", flt(totalUnpaidAmount, DECIMALS));
+		}
+		if (frm.fields_dict.total_allowance_amount) {
+			frm.set_value("total_allowance_amount", flt(totalAllowanceAmount, DECIMALS));
+		}
+		if (frm.fields_dict.total_advance_deduction_amount) {
+			frm.set_value(
+				"total_advance_deduction_amount",
+				flt(totalAdvanceDeductionAmount, DECIMALS)
+			);
+		}
+		if (frm.fields_dict.total_other_deduction_amount) {
+			frm.set_value(
+				"total_other_deduction_amount",
+				flt(totalOtherDeductionAmount, DECIMALS)
+			);
+		}
+		if (frm.fields_dict.total_net_salary) {
+			frm.set_value("total_net_salary", flt(totalNetSalaryAmount, DECIMALS));
 		}
 	},
 
