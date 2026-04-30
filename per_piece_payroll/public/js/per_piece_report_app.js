@@ -3809,7 +3809,18 @@
 			];
 			outRows = buildPaymentEmployeeRows(getBookedRows());
 		} else if (state.currentTab === "payment_manage") {
-			outRows = getPaymentRows();
+			outRows = (getPaymentRows() || []).filter(function (r) {
+				var booked = num(r && r.booked_amount);
+				var paid = num(r && r.paid_amount);
+				var unpaid = num(r && r.unpaid_amount);
+				if (!(unpaid >= 0)) unpaid = Math.max(booked - paid, 0);
+				var status = String((r && r.payment_status) || "")
+					.trim()
+					.toLowerCase();
+				var fullyPaidByAmount = booked > 0.0001 && Math.max(booked - paid, 0) <= 0.005;
+				if (unpaid <= 0.005 && (status === "paid" || fullyPaidByAmount)) return false;
+				return true;
+			});
 			paged = paginateRows(outRows);
 			renderPaymentTable(paged.rows);
 			state.lastTabRender = {
