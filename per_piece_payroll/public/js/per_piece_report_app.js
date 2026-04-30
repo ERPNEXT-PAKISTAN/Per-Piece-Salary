@@ -1149,9 +1149,19 @@
 		};
 
 	function getNetBookedAmountForRow(r) {
-		// Always use persisted row values for payment base.
-		// Avoid deriving from JV cache because one JV can contain multiple entries.
-		return Math.max(num((r && r.booked_amount) || (r && r.amount)), 0);
+		// Payment base must stay entry-specific.
+		// Legacy safeguard: when row has no deductions/allowances, booked should equal amount.
+		var amount = Math.max(num((r && r.amount) || 0), 0);
+		var booked = Math.max(num((r && r.booked_amount) || 0), 0);
+		var allowance = Math.abs(num((r && r.allowance) || 0));
+		var advance = Math.abs(num((r && r.advance_deduction) || 0));
+		var other = Math.abs(num((r && r.other_deduction) || 0));
+		var noSplits = allowance <= 0.005 && advance <= 0.005 && other <= 0.005;
+		if (noSplits && amount > 0 && (booked <= 0 || booked + 0.005 < amount)) {
+			return amount;
+		}
+		if (booked > 0) return booked;
+		return amount;
 	}
 
 	var stateCalc =

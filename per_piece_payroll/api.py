@@ -479,6 +479,16 @@ def get_salary_entry_financials(entry_names: str | list[str] | None = None) -> d
 		advance_deduction = flt(row.get("advance_deduction"))
 		other_deduction = flt(row.get("other_deduction"))
 		net_amount = flt(row.get("net_amount"))
+		no_splits = (
+			abs(allowance) <= 0.005 and abs(advance_deduction) <= 0.005 and abs(other_deduction) <= 0.005
+		)
+		# Legacy correction path: if no deductions/allowances were saved for this row,
+		# financial values should match Data Entry base amount.
+		if no_splits and amount > 0:
+			if booked <= 0 or booked + 0.005 < amount:
+				booked = amount
+			if net_amount <= 0 or net_amount + 0.005 < amount:
+				net_amount = amount
 		if booked > 0 and net_amount <= 0:
 			net_amount = booked
 		if net_amount <= 0:
@@ -955,7 +965,10 @@ def recalculate_selected_entries(entry_nos=None, entry_no=None):
 	if not names:
 		return {"ok": False, "message": "No entry selected."}
 
-	force_mode = int(flt(frappe.form_dict.get("force_from_amount") or 0)) == 1
+	# Keep force mode ON by default so older cached frontend builds still
+	# run the correct correction behavior for selected entries.
+	raw_force = frappe.form_dict.get("force_from_amount")
+	force_mode = True if raw_force in (None, "", "null") else int(flt(raw_force or 0)) == 1
 	forced = {"rows_checked": 0, "rows_updated": 0}
 	if force_mode:
 		forced = _force_reset_entry_amounts(names)
