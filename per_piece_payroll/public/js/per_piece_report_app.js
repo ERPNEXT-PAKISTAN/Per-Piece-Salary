@@ -1916,6 +1916,85 @@
 				loadReport();
 			});
 		});
+		wrap.querySelectorAll(".pp-salary-history-delete").forEach(function (btn) {
+			btn.addEventListener("click", function () {
+				var entry = String(btn.getAttribute("data-entry") || "").trim();
+				if (!entry) return;
+				showResult(
+					el("pp-jv-result"),
+					"info",
+					"Checking Links",
+					"Checking linked records for " + esc(entry) + "..."
+				);
+				callApi("per_piece_payroll.api.preview_delete_per_piece_salary_bundle", {
+					entry_no: entry,
+				})
+					.then(function (resp) {
+						if (!resp || resp.ok === false) {
+							throw new Error((resp && resp.message) || "Entry not found.");
+						}
+						var links = resp.links || {};
+						var hasLinks = !!resp.delete_linked_required;
+						var linkedText =
+							"Rows: " +
+							esc(String(links.child_rows || 0)) +
+							" | Salary JVs: " +
+							esc(String((links.salary_jvs || []).length)) +
+							" | Payment JVs: " +
+							esc(String((links.payment_jvs || []).length)) +
+							" | Payment Entries: " +
+							esc(String((links.payment_entries || []).length)) +
+							" | Salary Batches: " +
+							esc(String((links.salary_batches || []).length));
+						if (!hasLinks) {
+							if (!confirm("Delete salary entry " + entry + " ?")) return;
+							return callApi(
+								"per_piece_payroll.api.delete_per_piece_salary_bundle",
+								{
+									entry_no: entry,
+									delete_linked: 0,
+								}
+							);
+						}
+						var yes = confirm(
+							"Linked records found for " +
+								entry +
+								".\n\n" +
+								linkedText +
+								"\n\nPress OK to Delete WITH linked records.\nPress Cancel to keep data."
+						);
+						if (!yes) return null;
+						return callApi("per_piece_payroll.api.delete_per_piece_salary_bundle", {
+							entry_no: entry,
+							delete_linked: 1,
+						});
+					})
+					.then(function (resp) {
+						if (!resp) return;
+						if (resp.ok === false) {
+							throw new Error(resp.message || "Delete failed.");
+						}
+						showResult(
+							el("pp-jv-result"),
+							"success",
+							"Deleted",
+							"Deleted salary entry: <strong>" + esc(entry) + "</strong>"
+						);
+						if (state.entryMeta && state.entryMeta.selected_salary_history) {
+							delete state.entryMeta.selected_salary_history[entry];
+						}
+						loadReport();
+					})
+					.catch(function (e) {
+						showResult(
+							el("pp-jv-result"),
+							"error",
+							"Delete Failed",
+							prettyError(errText(e))
+						);
+					});
+			});
+		});
 		wrap.querySelectorAll(".pp-salary-history-book").forEach(function (btn) {
 			btn.addEventListener("click", function () {
 				var entry = String(btn.getAttribute("data-entry") || "").trim();
@@ -1999,6 +2078,52 @@
 					return;
 				}
 				goToPaymentForEntries(selected);
+			});
+		}
+		if (el("pp-salary-history-backfill-batch")) {
+			el("pp-salary-history-backfill-batch").addEventListener("click", function () {
+				var selected = getSelectedSalaryHistoryEntries();
+				var hasSelected = selected && selected.length;
+				var question = hasSelected
+					? "Backfill selected entries into Salary Batch?"
+					: "No selected entries. Backfill ALL old booked entries into Salary Batch?";
+				if (!confirm(question)) return;
+				showResult(
+					el("pp-jv-result"),
+					"info",
+					"Backfill Running",
+					hasSelected
+						? "Backfilling selected entries..."
+						: "Backfilling all old booked entries..."
+				);
+				callApi("per_piece_payroll.api.backfill_auto_salary_batches", {
+					entry_nos: hasSelected ? selected.join(",") : "",
+				})
+					.then(function (resp) {
+						if (!resp || resp.ok === false) {
+							throw new Error((resp && resp.message) || "Backfill failed.");
+						}
+						showResult(
+							el("pp-jv-result"),
+							"success",
+							"Backfill Completed",
+							"Entries: " +
+								esc(resp.entries || 0) +
+								" | Batches touched: " +
+								esc(resp.batches || 0) +
+								" | Links created: " +
+								esc(resp.entries_linked || 0)
+						);
+						loadReport();
+					})
+					.catch(function (e) {
+						showResult(
+							el("pp-jv-result"),
+							"error",
+							"Backfill Failed",
+							prettyError(errText(e))
+						);
+					});
 			});
 		}
 		if (el("pp-salary-history-create-batch")) {
@@ -3274,6 +3399,7 @@
 					"<button type='button' class='btn btn-default btn-xs' id='pp-salary-history-select-page'>Select Page</button>" +
 					"<button type='button' class='btn btn-default btn-xs' id='pp-salary-history-clear-selected'>Clear Selected</button>" +
 					"<button type='button' class='btn btn-success btn-xs' id='pp-salary-history-pay-selected'>Pay Selected Entry</button>" +
+					"<button type='button' class='btn btn-warning btn-xs' id='pp-salary-history-backfill-batch'>Backfill Old Salary to Batch</button>" +
 					"<input type='text' id='pp-salary-history-batch-name' class='input-xs' placeholder='Batch name (optional)' style='min-width:180px;height:28px;' />" +
 					"<button type='button' class='btn btn-primary btn-xs' id='pp-salary-history-create-batch'>Create Batch</button>" +
 					"<button type='button' class='btn btn-default btn-xs' id='pp-salary-history-open-batch'>Open Batch</button>" +
@@ -3283,7 +3409,7 @@
 					"</strong></span>" +
 					"</div>";
 				html +=
-					"<table class='pp-table' style='margin-top:6px;'><thead><tr><th>Select</th><th>Salary Entry</th><th>PO Number</th><th>Delivery Note</th><th>JV Entry</th><th>Total Salary</th><th>Allowance</th><th>Adv Deduction</th><th>Oth Deduction</th><th>Net Salary</th><th>Book</th><th>Pay</th><th>Salary View</th><th>JV View</th></tr></thead><tbody>";
+					"<table class='pp-table' style='margin-top:6px;'><thead><tr><th>Select</th><th>Salary Entry</th><th>PO Number</th><th>Delivery Note</th><th>JV Entry</th><th>Total Salary</th><th>Allowance</th><th>Adv Deduction</th><th>Oth Deduction</th><th>Net Salary</th><th>Book</th><th>Pay</th><th>Delete</th><th>Salary View</th><th>JV View</th></tr></thead><tbody>";
 				(salaryPage.rows || []).forEach(function (r) {
 					tSalary += num(r.amount);
 					tAllow += num(r.allowance_amount);
@@ -3361,6 +3487,9 @@
 						"<td>" +
 						payAction +
 						"</td>" +
+						"<td><button type='button' class='btn btn-xs btn-danger pp-salary-history-delete' data-entry='" +
+						esc(r.name) +
+						"'>Delete</button></td>" +
 						"<td><button type='button' class='btn btn-xs btn-info pp-view-salary-create' data-entry='" +
 						esc(r.name) +
 						"'>View</button></td>" +
@@ -3384,7 +3513,7 @@
 					esc(fmt(tOther)) +
 					"</td><td id='pp-salary-history-total-net' class='num pp-amt-col'>" +
 					esc(fmt(tNet)) +
-					"</td><td></td><td></td><td></td><td></td><td></td></tr>";
+					"</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>";
 				html += "</tbody></table>";
 				html += historyPagerHtml(salaryPage);
 			}
@@ -4923,6 +5052,54 @@
 	el("pp-pay-preview-btn").addEventListener("click", previewPaymentJV);
 	el("pp-pay-create-btn").addEventListener("click", createPaymentJV);
 	el("pp-pay-cancel-btn").addEventListener("click", cancelPaymentJV);
+	if (el("pp-pay-backfill-batch")) {
+		el("pp-pay-backfill-batch").addEventListener("click", function () {
+			var selected = parseEntryNoList(
+				(el("pp-pay-entry-multi") && el("pp-pay-entry-multi").value) || ""
+			);
+			var hasSelected = selected && selected.length;
+			var question = hasSelected
+				? "Backfill selected entries into Salary Batch?"
+				: "No selected entries. Backfill ALL old booked entries into Salary Batch?";
+			if (!confirm(question)) return;
+			showResult(
+				el("pp-pay-result"),
+				"info",
+				"Backfill Running",
+				hasSelected
+					? "Backfilling selected entries..."
+					: "Backfilling all old booked entries..."
+			);
+			callApi("per_piece_payroll.api.backfill_auto_salary_batches", {
+				entry_nos: hasSelected ? selected.join(",") : "",
+			})
+				.then(function (resp) {
+					if (!resp || resp.ok === false) {
+						throw new Error((resp && resp.message) || "Backfill failed.");
+					}
+					showResult(
+						el("pp-pay-result"),
+						"success",
+						"Backfill Completed",
+						"Entries: " +
+							esc(resp.entries || 0) +
+							" | Batches touched: " +
+							esc(resp.batches || 0) +
+							" | Links created: " +
+							esc(resp.entries_linked || 0)
+					);
+					loadReport();
+				})
+				.catch(function (e) {
+					showResult(
+						el("pp-pay-result"),
+						"error",
+						"Backfill Failed",
+						prettyError(errText(e))
+					);
+				});
+		});
+	}
 	if (el("pp-summary-close")) {
 		el("pp-summary-close").addEventListener("click", hidePerPieceSummary);
 	}

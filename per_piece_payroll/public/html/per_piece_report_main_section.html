@@ -1,158 +1,439 @@
 <div class="pp-wrap">
-  <div class="pp-filters">
-    <label>From Date <input type="date" id="pp-from-date" /></label>
-    <label>To Date <input type="date" id="pp-to-date" /></label>
-    <label>Company <select id="pp-company"><option value="">All</option></select></label>
-    <label>Employee <select id="pp-employee"><option value="">All</option></select></label>
-    <label>Booking Status <select id="pp-booking-status"><option value="">All</option><option value="Booked">Booked</option><option value="UnBooked">UnBooked</option><option value="Partly Booked">Partly Booked</option></select></label>
-    <label>Payment Status <select id="pp-payment-status"><option value="">All</option><option value="Paid">Paid</option><option value="Unpaid">Unpaid</option><option value="Partly Paid">Partly Paid</option></select></label>
-    <label>Item Group <select id="pp-item-group"><option value="">All</option></select></label>
-    <label>Delivery Note <input type="text" id="pp-delivery-note" placeholder="Type or number to search..." autocomplete="off" /></label>
-    <label>Item <select id="pp-product"><option value="">All</option></select></label>
-    <label>Process Type <select id="pp-process-type"><option value="">All</option></select></label>
-    <label>Sales Order <select id="pp-sales-order"><option value="">All</option></select></label>
-    <label>PO Number <select id="pp-po-number"><option value="">All</option></select></label>
-    <label>Entry No <select id="pp-entry-no"><option value="">All</option></select></label>
-    <label>Search <input type="text" id="pp-search-any" placeholder="Type any word..." /></label>
-    <label id="pp-employee-summary-detail-wrap" style="display:none;">Detail <input type="checkbox" id="pp-employee-summary-detail" /></label>
-    <button id="pp-load-btn" class="btn btn-primary" type="button">Load Report</button>
-    <button id="pp-sync-status-btn" class="btn btn-default" type="button">Force Sync Status</button>
-    <button id="pp-print-tab-btn" class="btn btn-default" type="button">Print Tab</button>
-  </div>
+	<div class="pp-filters">
+		<label>From Date <input type="date" id="pp-from-date" /></label>
+		<label>To Date <input type="date" id="pp-to-date" /></label>
+		<label
+			>Company
+			<select id="pp-company">
+				<option value="">All</option>
+			</select></label
+		>
+		<label
+			>Employee
+			<select id="pp-employee">
+				<option value="">All</option>
+			</select></label
+		>
+		<label
+			>Booking Status
+			<select id="pp-booking-status">
+				<option value="">All</option>
+				<option value="Booked">Booked</option>
+				<option value="UnBooked">UnBooked</option>
+				<option value="Partly Booked">Partly Booked</option>
+			</select></label
+		>
+		<label
+			>Payment Status
+			<select id="pp-payment-status">
+				<option value="">All</option>
+				<option value="Paid">Paid</option>
+				<option value="Unpaid">Unpaid</option>
+				<option value="Partly Paid">Partly Paid</option>
+			</select></label
+		>
+		<label
+			>Item Group
+			<select id="pp-item-group">
+				<option value="">All</option>
+			</select></label
+		>
+		<label
+			>Delivery Note
+			<input
+				type="text"
+				id="pp-delivery-note"
+				placeholder="Type or number to search..."
+				autocomplete="off"
+		/></label>
+		<label
+			>Item
+			<select id="pp-product">
+				<option value="">All</option>
+			</select></label
+		>
+		<label
+			>Process Type
+			<select id="pp-process-type">
+				<option value="">All</option>
+			</select></label
+		>
+		<label
+			>Sales Order
+			<select id="pp-sales-order">
+				<option value="">All</option>
+			</select></label
+		>
+		<label
+			>PO Number
+			<select id="pp-po-number">
+				<option value="">All</option>
+			</select></label
+		>
+		<label
+			>Entry No
+			<select id="pp-entry-no">
+				<option value="">All</option>
+			</select></label
+		>
+		<label
+			>Search <input type="text" id="pp-search-any" placeholder="Type any word..."
+		/></label>
+		<label id="pp-employee-summary-detail-wrap" style="display: none"
+			>Detail <input type="checkbox" id="pp-employee-summary-detail"
+		/></label>
+		<button id="pp-load-btn" class="btn btn-primary" type="button">Load Report</button>
+		<button id="pp-sync-status-btn" class="btn btn-default" type="button">
+			Force Sync Status
+		</button>
+		<button id="pp-print-tab-btn" class="btn btn-default" type="button">Print Tab</button>
+	</div>
 
-  <div class="pp-nav-row">
-    <div class="pp-workspace-switch">
-      <button type="button" class="btn btn-default pp-workspace-btn active" id="pp-workspace-entry">Entry Workspace</button>
-      <button type="button" class="btn btn-default pp-workspace-btn" id="pp-workspace-reporting">Reporting Workspace</button>
-    </div>
-    <div class="pp-tabs">
-      <button type="button" class="pp-tab active" data-workspace="entry" data-tab="data_entry">Data Enter</button>
-      <button type="button" class="pp-tab" data-workspace="entry" data-tab="salary_creation">Salary Creation</button>
-      <button type="button" class="pp-tab" data-workspace="entry" data-tab="payment_manage">Payment Entry</button>
-      <button type="button" class="pp-tab" data-workspace="reporting" data-tab="all">History</button>
-      <button type="button" class="pp-tab" data-workspace="reporting" data-tab="jv_created">Salary Status</button>
-      <button type="button" class="pp-tab" data-workspace="reporting" data-tab="month_paid_unpaid">Month Paid/Unpaid</button>
-      <button type="button" class="pp-tab" data-workspace="reporting" data-tab="advances">Advances</button>
-      <button type="button" class="pp-tab" data-workspace="reporting" data-tab="employee_summary">Employee Summary</button>
-      <button type="button" class="pp-tab" data-workspace="reporting" data-tab="per_piece_salary">Employee item-wise</button>
-      <button type="button" class="pp-tab" data-workspace="reporting" data-tab="salary_slip">Salary Slip</button>
-      <button type="button" class="pp-tab" data-workspace="reporting" data-tab="salary_slip_dc">Salary Slip by DC</button>
-      <button type="button" class="pp-tab" data-workspace="reporting" data-tab="po_number">PO Summary</button>
-      <button type="button" class="pp-tab" data-workspace="reporting" data-tab="po_detail_all">PO Detail Print</button>
-      <button type="button" class="pp-tab" data-workspace="reporting" data-tab="month_year_salary">Month/Year Salary</button>
-      <button type="button" class="pp-tab" data-workspace="reporting" data-tab="simple_month_amount">Month-wise</button>
-      <button type="button" class="pp-tab" data-workspace="reporting" data-tab="product">Product Summary</button>
-      <button type="button" class="pp-tab" data-workspace="reporting" data-tab="process_product">Process Summary</button>
-    </div>
-  </div>
+	<div class="pp-nav-row">
+		<div class="pp-workspace-switch">
+			<button
+				type="button"
+				class="btn btn-default pp-workspace-btn active"
+				id="pp-workspace-entry"
+			>
+				Entry Workspace
+			</button>
+			<button
+				type="button"
+				class="btn btn-default pp-workspace-btn"
+				id="pp-workspace-reporting"
+			>
+				Reporting Workspace
+			</button>
+		</div>
+		<div class="pp-tabs">
+			<button
+				type="button"
+				class="pp-tab active"
+				data-workspace="entry"
+				data-tab="data_entry"
+			>
+				Data Enter
+			</button>
+			<button type="button" class="pp-tab" data-workspace="entry" data-tab="salary_creation">
+				Salary Creation
+			</button>
+			<button type="button" class="pp-tab" data-workspace="entry" data-tab="payment_manage">
+				Payment Entry
+			</button>
+			<button type="button" class="pp-tab" data-workspace="reporting" data-tab="all">
+				History
+			</button>
+			<button type="button" class="pp-tab" data-workspace="reporting" data-tab="jv_created">
+				Salary Status
+			</button>
+			<button
+				type="button"
+				class="pp-tab"
+				data-workspace="reporting"
+				data-tab="month_paid_unpaid"
+			>
+				Month Paid/Unpaid
+			</button>
+			<button type="button" class="pp-tab" data-workspace="reporting" data-tab="advances">
+				Advances
+			</button>
+			<button
+				type="button"
+				class="pp-tab"
+				data-workspace="reporting"
+				data-tab="employee_summary"
+			>
+				Employee Summary
+			</button>
+			<button
+				type="button"
+				class="pp-tab"
+				data-workspace="reporting"
+				data-tab="per_piece_salary"
+			>
+				Employee item-wise
+			</button>
+			<button type="button" class="pp-tab" data-workspace="reporting" data-tab="salary_slip">
+				Salary Slip
+			</button>
+			<button
+				type="button"
+				class="pp-tab"
+				data-workspace="reporting"
+				data-tab="salary_slip_dc"
+			>
+				Salary Slip by DC
+			</button>
+			<button type="button" class="pp-tab" data-workspace="reporting" data-tab="po_number">
+				PO Summary
+			</button>
+			<button
+				type="button"
+				class="pp-tab"
+				data-workspace="reporting"
+				data-tab="po_detail_all"
+			>
+				PO Detail Print
+			</button>
+			<button
+				type="button"
+				class="pp-tab"
+				data-workspace="reporting"
+				data-tab="month_year_salary"
+			>
+				Month/Year Salary
+			</button>
+			<button
+				type="button"
+				class="pp-tab"
+				data-workspace="reporting"
+				data-tab="simple_month_amount"
+			>
+				Month-wise
+			</button>
+			<button type="button" class="pp-tab" data-workspace="reporting" data-tab="product">
+				Product Summary
+			</button>
+			<button
+				type="button"
+				class="pp-tab"
+				data-workspace="reporting"
+				data-tab="process_product"
+			>
+				Process Summary
+			</button>
+		</div>
+	</div>
 
-  <div id="pp-msg" class="pp-msg"></div>
-  <div id="pp-table-wrap" class="pp-table-wrap"></div>
-  <div id="pp-totals" class="pp-totals"></div>
-  <div id="pp-pagination" class="pp-pagination"></div>
+	<div id="pp-msg" class="pp-msg"></div>
+	<div id="pp-table-wrap" class="pp-table-wrap"></div>
+	<div id="pp-totals" class="pp-totals"></div>
+	<div id="pp-pagination" class="pp-pagination"></div>
 
-  <div class="pp-jv-card" id="pp-salary-jv-card" style="display:none;">
-    <h4>Salary Creation Tab (Book Salary To Payable)</h4>
-    <div class="pp-jv-grid">
-      <label>Entry Filter (Unbooked) <select id="pp-jv-entry-filter"><option value="">All Unbooked Entries</option></select></label>
-      <label>Selected Entries <input type="text" id="pp-jv-entry-multi" placeholder="Entry1, Entry2, Entry3" /></label>
-      <label>Company <select id="pp-jv-company"><option value="">Select Company</option></select></label>
-      <label>Posting Date <input type="date" id="pp-jv-posting-date" /></label>
-      <label>Salary Account <select id="pp-jv-expense-account"><option value="">Select Salary Account</option></select></label>
-      <label>Allowance Account <select id="pp-jv-allowance-account"><option value="">Select Allowance Account</option></select></label>
-      <label>Payable Account <select id="pp-jv-payable-account"><option value="">Select Payable Account</option></select></label>
-      <label>Advance Account <select id="pp-jv-advance-account"><option value="">Select Advance Account</option></select></label>
-      <label>Deduction Account <select id="pp-jv-deduction-account"><option value="">Select Deduction Account</option></select></label>
-      <label>JV Remark <input type="text" id="pp-jv-remark" placeholder="Optional" /></label>
-      <label>Debit Amount <input type="text" id="pp-jv-debit-amount" readonly /></label>
-      <label>Credit Amount <input type="text" id="pp-jv-credit-amount" readonly /></label>
-      <label>JV Gross Total <input type="text" id="pp-jv-gross-amount" readonly /></label>
-      <label class="pp-jv-check"><input type="checkbox" id="pp-jv-employee-wise" /> Employee-wise Credit JV</label>
-    </div>
-    <div class="pp-jv-actions">
-      <button id="pp-jv-entry-clear" class="btn btn-default" type="button">Clear Entry Filter</button>
-      <button id="pp-jv-entry-add" class="btn btn-default" type="button">Add Filter Entry</button>
-      <button id="pp-jv-entry-remove" class="btn btn-default" type="button">Remove Filter Entry</button>
-      <button id="pp-jv-entry-refresh" class="btn btn-default" type="button">Refresh Entries</button>
-      <button id="pp-jv-recalc-entry-btn" class="btn btn-warning" type="button">Recalculate Selected Entry</button>
-      <button id="pp-jv-preview-btn" class="btn btn-default" type="button">Quick Preview JV</button>
-      <button id="pp-jv-create-btn" class="btn btn-primary" type="button">Post JV Entry</button>
-      <select id="pp-jv-existing"><option value="">Select Posted JV</option></select>
-      <button id="pp-jv-cancel-btn" class="btn btn-danger" type="button">Cancel JV Entry</button>
-    </div>
-    <div id="pp-jv-entry-meta" class="pp-msg" style="margin-top:6px;"></div>
-    <div id="pp-jv-result" class="pp-jv-result"></div>
-  </div>
+	<div class="pp-jv-card" id="pp-salary-jv-card" style="display: none">
+		<h4>Salary Creation Tab (Book Salary To Payable)</h4>
+		<div class="pp-jv-grid">
+			<label
+				>Entry Filter (Unbooked)
+				<select id="pp-jv-entry-filter">
+					<option value="">All Unbooked Entries</option>
+				</select></label
+			>
+			<label
+				>Selected Entries
+				<input type="text" id="pp-jv-entry-multi" placeholder="Entry1, Entry2, Entry3"
+			/></label>
+			<label
+				>Company
+				<select id="pp-jv-company">
+					<option value="">Select Company</option>
+				</select></label
+			>
+			<label>Posting Date <input type="date" id="pp-jv-posting-date" /></label>
+			<label
+				>Salary Account
+				<select id="pp-jv-expense-account">
+					<option value="">Select Salary Account</option>
+				</select></label
+			>
+			<label
+				>Allowance Account
+				<select id="pp-jv-allowance-account">
+					<option value="">Select Allowance Account</option>
+				</select></label
+			>
+			<label
+				>Payable Account
+				<select id="pp-jv-payable-account">
+					<option value="">Select Payable Account</option>
+				</select></label
+			>
+			<label
+				>Advance Account
+				<select id="pp-jv-advance-account">
+					<option value="">Select Advance Account</option>
+				</select></label
+			>
+			<label
+				>Deduction Account
+				<select id="pp-jv-deduction-account">
+					<option value="">Select Deduction Account</option>
+				</select></label
+			>
+			<label>JV Remark <input type="text" id="pp-jv-remark" placeholder="Optional" /></label>
+			<label>Debit Amount <input type="text" id="pp-jv-debit-amount" readonly /></label>
+			<label>Credit Amount <input type="text" id="pp-jv-credit-amount" readonly /></label>
+			<label>JV Gross Total <input type="text" id="pp-jv-gross-amount" readonly /></label>
+			<label class="pp-jv-check"
+				><input type="checkbox" id="pp-jv-employee-wise" /> Employee-wise Credit JV</label
+			>
+		</div>
+		<div class="pp-jv-actions">
+			<button id="pp-jv-entry-clear" class="btn btn-default" type="button">
+				Clear Entry Filter
+			</button>
+			<button id="pp-jv-entry-add" class="btn btn-default" type="button">
+				Add Filter Entry
+			</button>
+			<button id="pp-jv-entry-remove" class="btn btn-default" type="button">
+				Remove Filter Entry
+			</button>
+			<button id="pp-jv-entry-refresh" class="btn btn-default" type="button">
+				Refresh Entries
+			</button>
+			<button id="pp-jv-recalc-entry-btn" class="btn btn-warning" type="button">
+				Recalculate Selected Entry
+			</button>
+			<button id="pp-jv-preview-btn" class="btn btn-default" type="button">
+				Quick Preview JV
+			</button>
+			<button id="pp-jv-create-btn" class="btn btn-primary" type="button">
+				Post JV Entry
+			</button>
+			<select id="pp-jv-existing">
+				<option value="">Select Posted JV</option>
+			</select>
+			<button id="pp-jv-cancel-btn" class="btn btn-danger" type="button">
+				Cancel JV Entry
+			</button>
+		</div>
+		<div id="pp-jv-entry-meta" class="pp-msg" style="margin-top: 6px"></div>
+		<div id="pp-jv-result" class="pp-jv-result"></div>
+	</div>
 
-  <div class="pp-jv-card" id="pp-payment-jv-card" style="display:none;">
-    <h4>Payment Entry Create for Employees (Pay Booked Salary)</h4>
-    <div class="pp-jv-grid">
-      <label>Entry Filter (Unpaid) <select id="pp-pay-entry-filter"><option value="">All Unpaid Entries</option></select></label>
-      <label>Selected Entries <input type="text" id="pp-pay-entry-multi" placeholder="Entry1, Entry2, Entry3" /></label>
-      <label>Company <select id="pp-pay-company"><option value="">Select Company</option></select></label>
-      <label>Posting Date <input type="date" id="pp-pay-posting-date" /></label>
-      <label>Payable Account <select id="pp-pay-payable-account"><option value="">Select Payable Account</option></select></label>
-      <label>Paid From Account <select id="pp-pay-paid-from-account"><option value="">Select Bank/Cash Account</option></select></label>
-      <label>Payment Remark <input type="text" id="pp-pay-remark" placeholder="Optional" /></label>
-      <label>Payment Debit Amount <input type="text" id="pp-pay-debit-amount" readonly /></label>
-      <label>Payment Credit Amount <input type="text" id="pp-pay-credit-amount" readonly /></label>
-      <label>Total Unpaid <input type="text" id="pp-pay-unpaid-amount" readonly /></label>
-    </div>
-    <div class="pp-jv-actions">
-      <button id="pp-pay-entry-clear" class="btn btn-default" type="button">Clear Entry Filter</button>
-      <button id="pp-pay-entry-add" class="btn btn-default" type="button">Add Filter Entry</button>
-      <button id="pp-pay-entry-remove" class="btn btn-default" type="button">Remove Filter Entry</button>
-      <button id="pp-pay-entry-refresh" class="btn btn-default" type="button">Refresh Entries</button>
-      <button id="pp-pay-preview-btn" class="btn btn-default" type="button">Quick Preview Payment JV</button>
-      <button id="pp-pay-create-btn" class="btn btn-primary" type="button">Post Payment JV</button>
-      <select id="pp-pay-existing"><option value="">Select Payment JV</option></select>
-      <button id="pp-pay-cancel-btn" class="btn btn-danger" type="button">Cancel Payment JV</button>
-    </div>
-    <div id="pp-pay-entry-meta" class="pp-msg" style="margin-top:6px;"></div>
-    <div id="pp-pay-result" class="pp-jv-result"></div>
-  </div>
+	<div class="pp-jv-card" id="pp-payment-jv-card" style="display: none">
+		<h4>Payment Entry Create for Employees (Pay Booked Salary)</h4>
+		<div class="pp-jv-grid">
+			<label
+				>Entry Filter (Unpaid)
+				<select id="pp-pay-entry-filter">
+					<option value="">All Unpaid Entries</option>
+				</select></label
+			>
+			<label
+				>Selected Entries
+				<input type="text" id="pp-pay-entry-multi" placeholder="Entry1, Entry2, Entry3"
+			/></label>
+			<label
+				>Company
+				<select id="pp-pay-company">
+					<option value="">Select Company</option>
+				</select></label
+			>
+			<label>Posting Date <input type="date" id="pp-pay-posting-date" /></label>
+			<label
+				>Payable Account
+				<select id="pp-pay-payable-account">
+					<option value="">Select Payable Account</option>
+				</select></label
+			>
+			<label
+				>Paid From Account
+				<select id="pp-pay-paid-from-account">
+					<option value="">Select Bank/Cash Account</option>
+				</select></label
+			>
+			<label
+				>Payment Remark <input type="text" id="pp-pay-remark" placeholder="Optional"
+			/></label>
+			<label
+				>Payment Debit Amount <input type="text" id="pp-pay-debit-amount" readonly
+			/></label>
+			<label
+				>Payment Credit Amount <input type="text" id="pp-pay-credit-amount" readonly
+			/></label>
+			<label>Total Unpaid <input type="text" id="pp-pay-unpaid-amount" readonly /></label>
+		</div>
+		<div class="pp-jv-actions">
+			<button id="pp-pay-entry-clear" class="btn btn-default" type="button">
+				Clear Entry Filter
+			</button>
+			<button id="pp-pay-entry-add" class="btn btn-default" type="button">
+				Add Filter Entry
+			</button>
+			<button id="pp-pay-entry-remove" class="btn btn-default" type="button">
+				Remove Filter Entry
+			</button>
+			<button id="pp-pay-entry-refresh" class="btn btn-default" type="button">
+				Refresh Entries
+			</button>
+			<button id="pp-pay-backfill-batch" class="btn btn-warning" type="button">
+				Backfill Old Salary to Batch
+			</button>
+			<button id="pp-pay-preview-btn" class="btn btn-default" type="button">
+				Quick Preview Payment JV
+			</button>
+			<button id="pp-pay-create-btn" class="btn btn-primary" type="button">
+				Post Payment JV
+			</button>
+			<select id="pp-pay-existing">
+				<option value="">Select Payment JV</option>
+			</select>
+			<button id="pp-pay-cancel-btn" class="btn btn-danger" type="button">
+				Cancel Payment JV
+			</button>
+		</div>
+		<div id="pp-pay-entry-meta" class="pp-msg" style="margin-top: 6px"></div>
+		<div id="pp-pay-result" class="pp-jv-result"></div>
+	</div>
 
-  <div id="pp-created-list-wrap" class="pp-entry-list"></div>
+	<div id="pp-created-list-wrap" class="pp-entry-list"></div>
 
-  <div id="pp-summary-modal" class="pp-modal" style="display:none;">
-    <div class="pp-modal-card">
-      <div class="pp-modal-head">
-        <div>
-          <div class="pp-modal-title">Per Piece Salary Summary</div>
-          <div class="pp-modal-sub" id="pp-summary-subtitle"></div>
-        </div>
-        <div style="display:flex;gap:8px;align-items:center;">
-          <button type="button" class="btn btn-default" id="pp-summary-print">Print</button>
-          <button type="button" class="btn btn-default" id="pp-summary-close">Close</button>
-        </div>
-      </div>
-      <div id="pp-summary-content" class="pp-modal-body"></div>
-    </div>
-  </div>
+	<div id="pp-summary-modal" class="pp-modal" style="display: none">
+		<div class="pp-modal-card">
+			<div class="pp-modal-head">
+				<div>
+					<div class="pp-modal-title">Per Piece Salary Summary</div>
+					<div class="pp-modal-sub" id="pp-summary-subtitle"></div>
+				</div>
+				<div style="display: flex; gap: 8px; align-items: center">
+					<button type="button" class="btn btn-default" id="pp-summary-print">
+						Print
+					</button>
+					<button type="button" class="btn btn-default" id="pp-summary-close">
+						Close
+					</button>
+				</div>
+			</div>
+			<div id="pp-summary-content" class="pp-modal-body"></div>
+		</div>
+	</div>
 
-  <div id="pp-action-modal" class="pp-modal" style="display:none;">
-    <div class="pp-modal-card pp-action-card">
-      <div class="pp-modal-head">
-        <div style="display:flex;align-items:center;gap:10px;">
-          <div class="pp-action-logo" id="pp-action-logo">TCPL</div>
-          <div>
-            <div class="pp-modal-title" id="pp-action-title">Confirm Action</div>
-            <div class="pp-modal-sub" id="pp-action-sub">Please confirm to continue.</div>
-          </div>
-        </div>
-        <button type="button" class="btn btn-default" id="pp-action-close">Close</button>
-      </div>
-      <div class="pp-modal-body">
-        <div id="pp-action-icon" class="pp-action-icon pp-action-icon-info">i</div>
-        <div id="pp-action-message" style="font-size:14px;color:#334155;margin:8px 0 12px 0;"></div>
-        <div id="pp-action-meta" style="font-size:13px;color:#0f766e;font-weight:600;margin-bottom:12px;"></div>
-        <div id="pp-action-buttons" style="display:flex;gap:8px;justify-content:flex-end;"></div>
-      </div>
-    </div>
-  </div>
+	<div id="pp-action-modal" class="pp-modal" style="display: none">
+		<div class="pp-modal-card pp-action-card">
+			<div class="pp-modal-head">
+				<div style="display: flex; align-items: center; gap: 10px">
+					<div class="pp-action-logo" id="pp-action-logo">TCPL</div>
+					<div>
+						<div class="pp-modal-title" id="pp-action-title">Confirm Action</div>
+						<div class="pp-modal-sub" id="pp-action-sub">
+							Please confirm to continue.
+						</div>
+					</div>
+				</div>
+				<button type="button" class="btn btn-default" id="pp-action-close">Close</button>
+			</div>
+			<div class="pp-modal-body">
+				<div id="pp-action-icon" class="pp-action-icon pp-action-icon-info">i</div>
+				<div
+					id="pp-action-message"
+					style="font-size: 14px; color: #334155; margin: 8px 0 12px 0"
+				></div>
+				<div
+					id="pp-action-meta"
+					style="font-size: 13px; color: #0f766e; font-weight: 600; margin-bottom: 12px"
+				></div>
+				<div
+					id="pp-action-buttons"
+					style="display: flex; gap: 8px; justify-content: flex-end"
+				></div>
+			</div>
+		</div>
+	</div>
 </div>
 
-<link rel="stylesheet" href="/assets/per_piece_payroll/css/per_piece_report.css?v=20260426_12">
+<link rel="stylesheet" href="/assets/per_piece_payroll/css/per_piece_report.css?v=20260426_12" />
 <script src="/assets/per_piece_payroll/js/per_piece_report_core.js?v=20260426_12"></script>
 <script src="/assets/per_piece_payroll/js/per_piece_report_utils.js?v=20260426_12"></script>
 <script src="/assets/per_piece_payroll/js/per_piece_report_data_entry_helpers.js?v=20260426_12"></script>

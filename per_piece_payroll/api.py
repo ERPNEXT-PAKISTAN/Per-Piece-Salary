@@ -343,6 +343,132 @@ def rebuild_batches_for_entries(entry_names: list[str] | None = None) -> dict:
 	return {"ok": True, "batches": len(batch_names)}
 
 
+def _auto_batch_key(company: str) -> str:
+	day = frappe.utils.nowdate()  # YYYY-MM-DD
+	abbr = (str(company or "").strip() or "ALL").replace(" ", "-").replace("/", "-")
+	return f"AUTO-{day}-{abbr}"
+
+
+def _ensure_auto_salary_batch_for_entries(entry_names: list[str] | None = None) -> dict:
+	names = [str(x or "").strip() for x in (entry_names or []) if str(x or "").strip()]
+	if not names or not frappe.db.exists("DocType", "Per Piece Salary Batch"):
+		return {"ok": True, "batches": 0, "entries_linked": 0}
+
+	rows = frappe.get_all(
+		"Per Piece Salary",
+		filters={"name": ["in", names]},
+		fields=["name", "company", "salary_batch", "po_number", "delivery_note"],
+		limit_page_length=5000,
+	)
+	if not rows:
+		return {"ok": True, "batches": 0, "entries_linked": 0}
+
+	batch_cache: dict[str, str] = {}
+	touched_batches: set[str] = set()
+	entries_linked = 0
+
+	def get_or_create_batch(company_name: str) -> str:
+		company = str(company_name or "").strip()
+		key = _auto_batch_key(company)
+		if key in batch_cache:
+			return batch_cache[key]
+		existing = frappe.db.get_value("Per Piece Salary Batch", {"batch_name": key}, "name")
+		if existing:
+			batch_cache[key] = str(existing)
+			return batch_cache[key]
+		doc = frappe.new_doc("Per Piece Salary Batch")
+		doc.batch_name = key
+		doc.company = company
+		doc.posting_date = frappe.utils.nowdate()
+		doc.remarks = "Auto-created from Salary Creation booking"
+		doc.insert(ignore_permissions=True)
+		batch_cache[key] = str(doc.name)
+		return batch_cache[key]
+
+	for r in rows:
+		entry = str((r or {}).get("name") or "").strip()
+		if not entry:
+			continue
+		current_batch = str((r or {}).get("salary_batch") or "").strip()
+		target_batch = (
+			current_batch if current_batch else get_or_create_batch(str((r or {}).get("company") or ""))
+		)
+		if not target_batch:
+			continue
+		if not current_batch:
+			frappe.db.set_value(
+				"Per Piece Salary", entry, "salary_batch", target_batch, update_modified=False
+			)
+			entries_linked += 1
+
+		exists_in_child = frappe.db.exists(
+			"Per Piece Salary Batch Entry",
+			{
+				"parent": target_batch,
+				"parenttype": "Per Piece Salary Batch",
+				"parentfield": "entries",
+				"salary_entry": entry,
+			},
+		)
+		if not exists_in_child:
+			batch_doc = frappe.get_doc("Per Piece Salary Batch", target_batch)
+			batch_doc.append(
+				"entries",
+				{
+					"salary_entry": entry,
+					"po_number": str((r or {}).get("po_number") or ""),
+					"delivery_note": str((r or {}).get("delivery_note") or ""),
+				},
+			)
+			batch_doc.save(ignore_permissions=True)
+			entries_linked += 1
+		touched_batches.add(target_batch)
+
+	for batch_name in sorted(touched_batches):
+		rebuild_salary_batch(batch_name)
+
+	return {"ok": True, "batches": len(touched_batches), "entries_linked": entries_linked}
+
+
+@frappe.whitelist()
+def backfill_auto_salary_batches(entry_nos=None, entry_no=None) -> dict:
+	names: list[str] = []
+	names.extend(_parse_entry_names(entry_nos))
+	names.extend(_parse_entry_names(entry_no))
+
+	if not names:
+		booked_rows = frappe.get_all(
+			"Per Piece",
+			filters={
+				"parenttype": "Per Piece Salary",
+				"parentfield": "perpiece",
+				"jv_status": ["in", ["Posted", "Accounted"]],
+			},
+			fields=["parent"],
+			limit_page_length=200000,
+		)
+		names = sorted(
+			{
+				str((r or {}).get("parent") or "").strip()
+				for r in (booked_rows or [])
+				if str((r or {}).get("parent") or "").strip()
+			}
+		)
+	if not names:
+		return {"ok": True, "entries": 0, "batches": 0, "entries_linked": 0}
+
+	result = _ensure_auto_salary_batch_for_entries(names)
+	rebuild_salary_summary_rows(names)
+	rebuild_batches_for_entries(names)
+	frappe.db.commit()
+	return {
+		"ok": True,
+		"entries": len(names),
+		"batches": int((result or {}).get("batches") or 0),
+		"entries_linked": int((result or {}).get("entries_linked") or 0),
+	}
+
+
 @frappe.whitelist()
 def create_salary_batch(
 	entry_nos=None, batch_name: str | None = None, company: str | None = None, remarks: str | None = None
@@ -488,7 +614,7 @@ def _create_payment_entry_snapshot(
 	doc.journal_entry = str(jv_name or "").strip()
 	doc.remarks = str(remarks or "").strip()
 
-	total_payment = 0.0
+	agg: dict[tuple[str, str], dict] = {}
 	for row in after_rows:
 		row_name = str((row or {}).get("name") or "").strip()
 		paid_before = max(flt(before_map.get(row_name, 0.0)), 0.0)
@@ -503,28 +629,53 @@ def _create_payment_entry_snapshot(
 		booked_amount = flt((row or {}).get("booked_amount"))
 		base_amount = flt((row or {}).get("amount"))
 		net_salary = net_amount if net_amount > 0 else (booked_amount if booked_amount > 0 else base_amount)
+		emp = str((row or {}).get("employee") or "").strip()
+		emp_name = str((row or {}).get("name1") or "").strip()
+		key = (parent_name, emp)
+		if key not in agg:
+			agg[key] = {
+				"salary_entry": parent_name,
+				"employee": emp,
+				"employee_name": emp_name,
+				"salary_row": row_name,
+				"net_salary": 0.0,
+				"paid_amount_before": 0.0,
+				"unpaid_amount_before": 0.0,
+				"payment_amount": 0.0,
+				"paid_amount_after": 0.0,
+				"unpaid_amount_after": 0.0,
+			}
+		item = agg[key]
+		item["net_salary"] += round(max(net_salary, 0.0), 2)
+		item["paid_amount_before"] += round(paid_before, 2)
+		item["unpaid_amount_before"] += round(
+			max(flt((row or {}).get("unpaid_amount")) + payment_amount, 0.0), 2
+		)
+		item["payment_amount"] += payment_amount
+		item["paid_amount_after"] += round(paid_after, 2)
+		item["unpaid_amount_after"] += round(max(flt((row or {}).get("unpaid_amount")), 0.0), 2)
+
+	for _, v in sorted(agg.items(), key=lambda kv: (kv[0][0], kv[0][1])):
 		doc.append(
 			"rows",
 			{
-				"salary_entry": parent_name,
-				"employee": str((row or {}).get("employee") or "").strip(),
-				"employee_name": str((row or {}).get("name1") or "").strip(),
-				"salary_row": row_name,
-				"net_salary": round(max(net_salary, 0.0), 2),
-				"paid_amount_before": round(paid_before, 2),
-				"unpaid_amount_before": round(
-					max(flt((row or {}).get("unpaid_amount")) + payment_amount, 0.0), 2
-				),
-				"payment_amount": payment_amount,
-				"paid_amount_after": round(paid_after, 2),
-				"unpaid_amount_after": round(max(flt((row or {}).get("unpaid_amount")), 0.0), 2),
+				"salary_entry": v["salary_entry"],
+				"employee": v["employee"],
+				"employee_name": v["employee_name"],
+				"salary_row": v["salary_row"],
+				"net_salary": round(flt(v["net_salary"]), 2),
+				"paid_amount_before": round(flt(v["paid_amount_before"]), 2),
+				"unpaid_amount_before": round(flt(v["unpaid_amount_before"]), 2),
+				"payment_amount": round(flt(v["payment_amount"]), 2),
+				"paid_amount_after": round(flt(v["paid_amount_after"]), 2),
+				"unpaid_amount_after": round(flt(v["unpaid_amount_after"]), 2),
 			},
 		)
-		total_payment += payment_amount
 
 	if not doc.rows:
 		return ""
 
+	total_payment = sum(flt(r.get("payment_amount")) for r in (doc.get("rows") or []))
 	doc.total_payment_amount = round(total_payment, 2)
 	doc.insert(ignore_permissions=True)
 	return str(doc.name)
@@ -1734,6 +1885,7 @@ def get_per_piece_salary_report(**kwargs):
 	names: list[str] = []
 	names.extend(_parse_entry_names(kwargs.get("entry_nos")))
 	names.extend(_parse_entry_names(kwargs.get("entry_no")))
+	cleanup_cancelled_jv_links(entry_nos=names)
 	_normalize_entry_booked_amounts(names)
 	return _run_legacy_api_script(GET_REPORT_SERVER_SCRIPT, kwargs)
 
@@ -1743,6 +1895,7 @@ def get_payment_entry_basis(entry_no: str):
 	entry = str(entry_no or "").strip()
 	if not entry:
 		return {"entry_no": "", "rows": [], "totals": {}}
+	cleanup_cancelled_jv_links(entry_no=entry)
 
 	summary_rows = []
 	if frappe.db.exists("DocType", "Per Piece Salary Summary Row"):
@@ -1891,6 +2044,7 @@ def create_per_piece_salary_jv(**kwargs):
 	recalculate_per_piece_child_financials(names)
 	recalculate_per_piece_salary_totals(names)
 	rebuild_salary_summary_rows(names)
+	_ensure_auto_salary_batch_for_entries(names)
 	rebuild_batches_for_entries(names)
 	return out
 
@@ -2072,3 +2226,348 @@ def cancel_per_piece_salary_payment_jv(**kwargs):
 	rebuild_salary_summary_rows(names)
 	rebuild_batches_for_entries(names)
 	return out
+
+
+def _as_bool(value) -> bool:
+	if isinstance(value, bool):
+		return value
+	text = str(value or "").strip().lower()
+	return text in {"1", "true", "yes", "y", "on"}
+
+
+@frappe.whitelist()
+def cleanup_cancelled_jv_links(entry_nos=None, entry_no=None) -> dict:
+	names: list[str] = []
+	names.extend(_parse_entry_names(entry_nos))
+	names.extend(_parse_entry_names(entry_no))
+	child_filters: dict[str, object] = {
+		"parenttype": "Per Piece Salary",
+		"parentfield": "perpiece",
+	}
+	if names:
+		child_filters["parent"] = ["in", names]
+
+	rows = frappe.get_all(
+		"Per Piece",
+		filters=child_filters,
+		fields=["name", "jv_entry_no", "payment_jv_no", "payment_refs", "payment_line_remark"],
+		limit_page_length=200000,
+	)
+	jv_names = sorted(
+		{
+			str((r or {}).get("jv_entry_no") or "").strip()
+			for r in (rows or [])
+			if str((r or {}).get("jv_entry_no") or "").strip()
+		}
+		| {
+			str((r or {}).get("payment_jv_no") or "").strip()
+			for r in (rows or [])
+			if str((r or {}).get("payment_jv_no") or "").strip()
+		}
+	)
+	jv_state: dict[str, int] = {}
+	if jv_names:
+		for je in frappe.get_all(
+			"Journal Entry",
+			filters={"name": ["in", jv_names]},
+			fields=["name", "docstatus"],
+			limit_page_length=5000,
+		):
+			jv_state[str((je or {}).get("name") or "").strip()] = int((je or {}).get("docstatus") or 0)
+
+	updated_rows = 0
+	for row in rows or []:
+		row_name = str((row or {}).get("name") or "").strip()
+		if not row_name:
+			continue
+		cur_jv = str((row or {}).get("jv_entry_no") or "").strip()
+		cur_pay_jv = str((row or {}).get("payment_jv_no") or "").strip()
+		cur_refs = str((row or {}).get("payment_refs") or "")
+		cur_remark = str((row or {}).get("payment_line_remark") or "")
+		update_data = {}
+		if cur_jv and jv_state.get(cur_jv, 0) != 1:
+			update_data["jv_entry_no"] = ""
+			update_data["jv_status"] = "Pending"
+		if cur_pay_jv and jv_state.get(cur_pay_jv, 0) != 1:
+			update_data["payment_jv_no"] = ""
+			update_data["payment_status"] = "Unpaid"
+			update_data["payment_refs"] = ""
+			update_data["payment_line_remark"] = ""
+		if update_data:
+			frappe.db.set_value("Per Piece", row_name, update_data, update_modified=False)
+			updated_rows += 1
+		elif not cur_pay_jv and (cur_refs or cur_remark):
+			frappe.db.set_value(
+				"Per Piece",
+				row_name,
+				{"payment_refs": "", "payment_line_remark": ""},
+				update_modified=False,
+			)
+			updated_rows += 1
+
+	payment_entries = frappe.get_all(
+		"Per Piece Payment Entry",
+		fields=["name", "journal_entry"],
+		limit_page_length=50000,
+	)
+	updated_payment_entries = 0
+	for d in payment_entries or []:
+		name = str((d or {}).get("name") or "").strip()
+		je = str((d or {}).get("journal_entry") or "").strip()
+		if not name or not je:
+			continue
+		if jv_state.get(je, 0) != 1:
+			frappe.db.set_value("Per Piece Payment Entry", name, "journal_entry", "", update_modified=False)
+			updated_payment_entries += 1
+
+	if names:
+		recalculate_per_piece_child_financials(names)
+		recalculate_per_piece_salary_totals(names)
+		rebuild_salary_summary_rows(names)
+		rebuild_batches_for_entries(names)
+
+	frappe.db.commit()
+	return {
+		"ok": True,
+		"rows_checked": len(rows or []),
+		"rows_updated": updated_rows,
+		"payment_entries_updated": updated_payment_entries,
+	}
+
+
+def _cancel_and_delete_journal_entry(jv_name: str) -> None:
+	name = str(jv_name or "").strip()
+	if not name or not frappe.db.exists("Journal Entry", name):
+		return
+	je = frappe.get_doc("Journal Entry", name)
+	if int(je.docstatus or 0) == 1:
+		je.cancel()
+	frappe.delete_doc("Journal Entry", name, ignore_permissions=True, force=True)
+
+
+def _collect_salary_bundle_links(entry_name: str) -> dict:
+	entry = str(entry_name or "").strip()
+	if not entry:
+		return {"entry": "", "exists": False}
+	if not frappe.db.exists("Per Piece Salary", entry):
+		return {"entry": entry, "exists": False}
+
+	child_rows = frappe.get_all(
+		"Per Piece",
+		filters={"parent": entry, "parenttype": "Per Piece Salary", "parentfield": "perpiece"},
+		fields=["name", "jv_entry_no", "payment_jv_no"],
+		limit_page_length=200000,
+	)
+	salary_jvs = sorted(
+		{
+			str((r or {}).get("jv_entry_no") or "").strip()
+			for r in (child_rows or [])
+			if str((r or {}).get("jv_entry_no") or "").strip()
+		}
+	)
+	payment_jvs = sorted(
+		{
+			str((r or {}).get("payment_jv_no") or "").strip()
+			for r in (child_rows or [])
+			if str((r or {}).get("payment_jv_no") or "").strip()
+		}
+	)
+	payment_entry_rows = frappe.get_all(
+		"Per Piece Payment Entry Row",
+		filters={"salary_entry": entry},
+		fields=["name", "parent"],
+		limit_page_length=50000,
+	)
+	payment_entries = sorted(
+		{
+			str((r or {}).get("parent") or "").strip()
+			for r in (payment_entry_rows or [])
+			if str((r or {}).get("parent") or "").strip()
+		}
+	)
+	batch_entry_rows = frappe.get_all(
+		"Per Piece Salary Batch Entry",
+		filters={"salary_entry": entry},
+		fields=["name", "parent"],
+		limit_page_length=50000,
+	)
+	batches = sorted(
+		{
+			str((r or {}).get("parent") or "").strip()
+			for r in (batch_entry_rows or [])
+			if str((r or {}).get("parent") or "").strip()
+		}
+	)
+	return {
+		"entry": entry,
+		"exists": True,
+		"child_rows": len(child_rows or []),
+		"salary_jvs": salary_jvs,
+		"payment_jvs": payment_jvs,
+		"payment_entries": payment_entries,
+		"payment_entry_rows": len(payment_entry_rows or []),
+		"salary_batches": batches,
+		"salary_batch_rows": len(batch_entry_rows or []),
+	}
+
+
+@frappe.whitelist()
+def preview_delete_per_piece_salary_bundle(entry_no: str):
+	entry = str(entry_no or "").strip()
+	if not entry:
+		frappe.throw("Entry number is required.")
+	if not frappe.has_permission("Per Piece Salary", "delete"):
+		frappe.throw("You do not have Delete permission on Per Piece Salary.")
+	links = _collect_salary_bundle_links(entry)
+	if not links.get("exists"):
+		return {"ok": False, "entry": entry, "message": "Entry not found."}
+	blockers = []
+	if links.get("salary_jvs"):
+		blockers.append("Salary JV")
+	if links.get("payment_jvs"):
+		blockers.append("Payment JV")
+	if links.get("payment_entries"):
+		blockers.append("Per Piece Payment Entry")
+	if links.get("salary_batches"):
+		blockers.append("Per Piece Salary Batch")
+	return {
+		"ok": True,
+		"entry": entry,
+		"delete_linked_required": bool(blockers),
+		"blockers": blockers,
+		"links": links,
+	}
+
+
+@frappe.whitelist()
+def delete_per_piece_salary_bundle(entry_no: str, delete_linked=0):
+	entry = str(entry_no or "").strip()
+	if not entry:
+		frappe.throw("Entry number is required.")
+	if not frappe.has_permission("Per Piece Salary", "delete"):
+		frappe.throw("You do not have Delete permission on Per Piece Salary.")
+
+	links = _collect_salary_bundle_links(entry)
+	if not links.get("exists"):
+		return {"ok": False, "entry": entry, "message": "Entry not found."}
+
+	delete_linked_flag = _as_bool(delete_linked)
+	has_links = bool(
+		links.get("salary_jvs")
+		or links.get("payment_jvs")
+		or links.get("payment_entries")
+		or links.get("salary_batches")
+	)
+	if has_links and not delete_linked_flag:
+		return {
+			"ok": False,
+			"entry": entry,
+			"message": "Linked records exist. Set delete_linked = 1 to delete with links.",
+			"links": links,
+		}
+
+	deleted_payment_entries: list[str] = []
+	updated_payment_entries: list[str] = []
+	deleted_batches: list[str] = []
+	updated_batches: list[str] = []
+	deleted_jvs: list[str] = []
+
+	if delete_linked_flag:
+		for pe_name in links.get("payment_entries") or []:
+			if not frappe.db.exists("Per Piece Payment Entry", pe_name):
+				continue
+			pe_doc = frappe.get_doc("Per Piece Payment Entry", pe_name)
+			kept_rows = [r for r in (pe_doc.get("rows") or []) if str(r.salary_entry or "").strip() != entry]
+			if len(kept_rows) == len(pe_doc.get("rows") or []):
+				continue
+			if not kept_rows:
+				if int(pe_doc.docstatus or 0) == 1:
+					pe_doc.cancel()
+				frappe.delete_doc("Per Piece Payment Entry", pe_name, ignore_permissions=True, force=True)
+				deleted_payment_entries.append(pe_name)
+				continue
+			pe_doc.set("rows", [])
+			total_payment = 0.0
+			for row in kept_rows:
+				pe_doc.append(
+					"rows",
+					{
+						"salary_entry": row.salary_entry,
+						"employee": row.employee,
+						"employee_name": row.employee_name,
+						"salary_row": row.salary_row,
+						"net_salary": row.net_salary,
+						"paid_amount_before": row.paid_amount_before,
+						"unpaid_amount_before": row.unpaid_amount_before,
+						"payment_amount": row.payment_amount,
+						"paid_amount_after": row.paid_amount_after,
+						"unpaid_amount_after": row.unpaid_amount_after,
+					},
+				)
+				total_payment += flt(row.payment_amount)
+			remaining_entries = sorted(
+				{
+					str(r.salary_entry or "").strip()
+					for r in (pe_doc.get("rows") or [])
+					if str(r.salary_entry or "").strip()
+				}
+			)
+			pe_doc.salary_entries_json = json.dumps(remaining_entries, separators=(",", ":"))
+			pe_doc.total_payment_amount = round(total_payment, 2)
+			pe_doc.save(ignore_permissions=True)
+			updated_payment_entries.append(pe_name)
+
+		for batch_name in links.get("salary_batches") or []:
+			if not frappe.db.exists("Per Piece Salary Batch", batch_name):
+				continue
+			batch_doc = frappe.get_doc("Per Piece Salary Batch", batch_name)
+			kept = [r for r in (batch_doc.get("entries") or []) if str(r.salary_entry or "").strip() != entry]
+			if not kept:
+				frappe.delete_doc("Per Piece Salary Batch", batch_name, ignore_permissions=True, force=True)
+				deleted_batches.append(batch_name)
+			else:
+				batch_doc.set("entries", [])
+				for row in kept:
+					batch_doc.append(
+						"entries",
+						{
+							"salary_entry": row.salary_entry,
+							"po_number": row.po_number,
+							"delivery_note": row.delivery_note,
+							"total_salary": row.total_salary,
+							"allowance": row.allowance,
+							"advance_deduction": row.advance_deduction,
+							"other_deduction": row.other_deduction,
+							"net_salary": row.net_salary,
+							"paid_amount": row.paid_amount,
+							"unpaid_amount": row.unpaid_amount,
+						},
+					)
+				batch_doc.save(ignore_permissions=True)
+				rebuild_salary_batch(batch_name)
+				updated_batches.append(batch_name)
+
+		for jv_name in sorted(set((links.get("salary_jvs") or []) + (links.get("payment_jvs") or []))):
+			_cancel_and_delete_journal_entry(jv_name)
+			deleted_jvs.append(jv_name)
+
+	if frappe.db.exists("Per Piece Salary", entry):
+		doc = frappe.get_doc("Per Piece Salary", entry)
+		if int(doc.docstatus or 0) == 1:
+			doc.cancel()
+		frappe.delete_doc("Per Piece Salary", entry, ignore_permissions=True, force=True)
+
+	frappe.db.commit()
+	return {
+		"ok": True,
+		"entry": entry,
+		"delete_linked": delete_linked_flag,
+		"deleted": {
+			"per_piece_salary": entry,
+			"journal_entries": deleted_jvs,
+			"payment_entries_deleted": deleted_payment_entries,
+			"payment_entries_updated": updated_payment_entries,
+			"salary_batches_deleted": deleted_batches,
+			"salary_batches_updated": updated_batches,
+		},
+	}
