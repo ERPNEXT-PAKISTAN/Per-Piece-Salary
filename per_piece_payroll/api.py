@@ -372,15 +372,26 @@ def _ensure_auto_salary_batch_for_entries(entry_names: list[str] | None = None) 
 		key = _auto_batch_key(company)
 		if key in batch_cache:
 			return batch_cache[key]
-		existing = frappe.db.get_value("Per Piece Salary Batch", {"batch_name": key}, "name")
+		# Do not rely on custom/non-standard columns; use universally available fields.
+		existing = frappe.get_all(
+			"Per Piece Salary Batch",
+			filters={
+				"company": company,
+				"posting_date": frappe.utils.nowdate(),
+				"remarks": ["like", f"%{key}%"],
+			},
+			fields=["name"],
+			order_by="creation desc",
+			limit_page_length=1,
+		)
 		if existing:
-			batch_cache[key] = str(existing)
-			return batch_cache[key]
+			batch_cache[key] = str((existing[0] or {}).get("name") or "")
+			if batch_cache[key]:
+				return batch_cache[key]
 		doc = frappe.new_doc("Per Piece Salary Batch")
-		doc.batch_name = key
 		doc.company = company
 		doc.posting_date = frappe.utils.nowdate()
-		doc.remarks = "Auto-created from Salary Creation booking"
+		doc.remarks = "Auto-created from Salary Creation booking [" + key + "]"
 		doc.insert(ignore_permissions=True)
 		batch_cache[key] = str(doc.name)
 		return batch_cache[key]
