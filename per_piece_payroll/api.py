@@ -343,12 +343,6 @@ def rebuild_batches_for_entries(entry_names: list[str] | None = None) -> dict:
 	return {"ok": True, "batches": len(batch_names)}
 
 
-def _auto_batch_key(company: str) -> str:
-	day = frappe.utils.nowdate()  # YYYY-MM-DD
-	abbr = (str(company or "").strip() or "ALL").replace(" ", "-").replace("/", "-")
-	return f"AUTO-{day}-{abbr}"
-
-
 def _ensure_auto_salary_batch_for_entries(entry_names: list[str] | None = None) -> dict:
 	names = [str(x or "").strip() for x in (entry_names or []) if str(x or "").strip()]
 	if not names or not frappe.db.exists("DocType", "Per Piece Salary Batch"):
@@ -363,47 +357,30 @@ def _ensure_auto_salary_batch_for_entries(entry_names: list[str] | None = None) 
 	if not rows:
 		return {"ok": True, "batches": 0, "entries_linked": 0}
 
-	batch_cache: dict[str, str] = {}
 	touched_batches: set[str] = set()
 	entries_linked = 0
-
-	def get_or_create_batch(company_name: str) -> str:
-		company = str(company_name or "").strip()
-		key = _auto_batch_key(company)
-		if key in batch_cache:
-			return batch_cache[key]
-		# Do not rely on custom/non-standard columns; use universally available fields.
-		existing = frappe.get_all(
-			"Per Piece Salary Batch",
-			filters={
-				"company": company,
-				"posting_date": frappe.utils.nowdate(),
-				"remarks": ["like", f"%{key}%"],
-			},
-			fields=["name"],
-			order_by="creation desc",
-			limit_page_length=1,
-		)
-		if existing:
-			batch_cache[key] = str((existing[0] or {}).get("name") or "")
-			if batch_cache[key]:
-				return batch_cache[key]
+	new_batch_name = ""
+	unbatched_rows = [r for r in rows if not str((r or {}).get("salary_batch") or "").strip()]
+	if unbatched_rows:
+		company = ""
+		for r in unbatched_rows:
+			c = str((r or {}).get("company") or "").strip()
+			if c:
+				company = c
+				break
 		doc = frappe.new_doc("Per Piece Salary Batch")
 		doc.company = company
 		doc.posting_date = frappe.utils.nowdate()
-		doc.remarks = "Auto-created from Salary Creation booking [" + key + "]"
+		doc.remarks = "Auto-created from Salary Creation booking"
 		doc.insert(ignore_permissions=True)
-		batch_cache[key] = str(doc.name)
-		return batch_cache[key]
+		new_batch_name = str(doc.name)
 
 	for r in rows:
 		entry = str((r or {}).get("name") or "").strip()
 		if not entry:
 			continue
 		current_batch = str((r or {}).get("salary_batch") or "").strip()
-		target_batch = (
-			current_batch if current_batch else get_or_create_batch(str((r or {}).get("company") or ""))
-		)
+		target_batch = current_batch or new_batch_name
 		if not target_batch:
 			continue
 		if not current_batch:
@@ -478,6 +455,91 @@ def backfill_auto_salary_batches(entry_nos=None, entry_no=None) -> dict:
 		"batches": int((result or {}).get("batches") or 0),
 		"entries_linked": int((result or {}).get("entries_linked") or 0),
 	}
+
+
+@frappe.whitelist()
+def repair_salary_creation_no_allowance(entry_nos=None, entry_no=None) -> dict:
+	names: list[str] = []
+	names.extend(_parse_entry_names(entry_nos))
+	names.extend(_parse_entry_names(entry_no))
+	filters: dict[str, object] = {"parenttype": "Per Piece Salary", "parentfield": "perpiece"}
+	if names:
+		filters["parent"] = ["in", names]
+	rows = frappe.get_all(
+		"Per Piece",
+		filters=filters,
+		fields=[
+			"name",
+			"parent",
+			"amount",
+			"allowance",
+			"advance_deduction",
+			"other_deduction",
+			"net_amount",
+			"booked_amount",
+			"paid_amount",
+			"unpaid_amount",
+			"payment_status",
+			"jv_entry_no",
+			"jv_status",
+		],
+		limit_page_length=200000,
+	)
+	jv_entries: dict[str, set[str]] = {}
+	for r in rows or []:
+		jv = str((r or {}).get("jv_entry_no") or "").strip()
+		parent = str((r or {}).get("parent") or "").strip()
+		if jv and parent and str((r or {}).get("jv_status") or "").strip() in ("Posted", "Accounted"):
+			jv_entries.setdefault(jv, set()).add(parent)
+
+	updated = 0
+	for r in rows or []:
+		jv = str((r or {}).get("jv_entry_no") or "").strip()
+		if not jv or len(jv_entries.get(jv) or set()) <= 1:
+			continue
+		amount = max(flt((r or {}).get("amount")), 0.0)
+		adv = max(flt((r or {}).get("advance_deduction")), 0.0)
+		other = max(flt((r or {}).get("other_deduction")), 0.0)
+		net = max(amount - adv - other, 0.0)
+		paid = max(flt((r or {}).get("paid_amount")), 0.0)
+		if paid > net:
+			paid = net
+		unpaid = max(net - paid, 0.0)
+		status = "Paid" if unpaid <= 0.005 else ("Partly Paid" if paid > 0.005 else "Unpaid")
+		new_vals = {
+			"allowance": 0.0,
+			"net_amount": round(net, 2),
+			"booked_amount": round(net, 2),
+			"paid_amount": round(paid, 2),
+			"unpaid_amount": round(unpaid, 2),
+			"payment_status": status,
+		}
+		cur_vals = {
+			"allowance": round(flt((r or {}).get("allowance")), 2),
+			"net_amount": round(flt((r or {}).get("net_amount")), 2),
+			"booked_amount": round(flt((r or {}).get("booked_amount")), 2),
+			"paid_amount": round(flt((r or {}).get("paid_amount")), 2),
+			"unpaid_amount": round(flt((r or {}).get("unpaid_amount")), 2),
+			"payment_status": str((r or {}).get("payment_status") or ""),
+		}
+		if cur_vals != new_vals:
+			frappe.db.set_value(
+				"Per Piece", str((r or {}).get("name") or "").strip(), new_vals, update_modified=False
+			)
+			updated += 1
+
+	entry_names = sorted(
+		{
+			str((r or {}).get("parent") or "").strip()
+			for r in (rows or [])
+			if str((r or {}).get("parent") or "").strip()
+		}
+	)
+	recalculate_per_piece_salary_totals(entry_names)
+	rebuild_salary_summary_rows(entry_names)
+	rebuild_batches_for_entries(entry_names)
+	frappe.db.commit()
+	return {"ok": True, "rows_checked": len(rows or []), "rows_updated": updated, "entries": len(entry_names)}
 
 
 @frappe.whitelist()
@@ -941,6 +1003,58 @@ def get_per_piece_report_page_payload() -> dict:
 
 
 @frappe.whitelist()
+def get_salary_batch_links(entry_names=None) -> dict:
+	names = _parse_entry_names(entry_names)
+	if not names:
+		return {"ok": True, "data": {}}
+
+	out: dict[str, dict] = {}
+	for n in names:
+		out[n] = {"salary_batch": "", "delivery_note": "", "po_number": ""}
+
+	# Primary source: direct link on Per Piece Salary
+	rows = frappe.get_all(
+		"Per Piece Salary",
+		filters={"name": ["in", names]},
+		fields=["name", "salary_batch", "delivery_note", "po_number"],
+		limit_page_length=5000,
+	)
+	for r in rows or []:
+		key = str((r or {}).get("name") or "").strip()
+		if not key:
+			continue
+		out[key] = {
+			"salary_batch": str((r or {}).get("salary_batch") or "").strip(),
+			"delivery_note": str((r or {}).get("delivery_note") or "").strip(),
+			"po_number": str((r or {}).get("po_number") or "").strip(),
+		}
+
+	# Fallback source: batch child rows (for old records missing parent salary_batch field)
+	missing = [k for k, v in out.items() if not str((v or {}).get("salary_batch") or "").strip()]
+	if missing and frappe.db.exists("DocType", "Per Piece Salary Batch Entry"):
+		links = frappe.get_all(
+			"Per Piece Salary Batch Entry",
+			filters={"salary_entry": ["in", missing]},
+			fields=["salary_entry", "parent", "po_number", "delivery_note"],
+			order_by="modified desc, creation desc",
+			limit_page_length=5000,
+		)
+		for r in links or []:
+			entry = str((r or {}).get("salary_entry") or "").strip()
+			if not entry or entry not in out:
+				continue
+			if str((out[entry] or {}).get("salary_batch") or "").strip():
+				continue
+			out[entry]["salary_batch"] = str((r or {}).get("parent") or "").strip()
+			if not str((out[entry] or {}).get("po_number") or "").strip():
+				out[entry]["po_number"] = str((r or {}).get("po_number") or "").strip()
+			if not str((out[entry] or {}).get("delivery_note") or "").strip():
+				out[entry]["delivery_note"] = str((r or {}).get("delivery_note") or "").strip()
+
+	return {"ok": True, "data": out}
+
+
+@frappe.whitelist()
 def search_delivery_notes(txt: str | None = None, limit: int | str | None = None) -> list[dict]:
 	search_txt = (txt or "").strip()
 	try:
@@ -1125,6 +1239,52 @@ def get_salary_entry_financials(entry_names: str | list[str] | None = None) -> d
 	if not entries:
 		return {"data": {}}
 
+	# Batch-first mode:
+	# If salary entry is linked to a batch and batch-entry row exists,
+	# use that as authoritative financial source for history/report cells.
+	by_entry: dict[str, dict] = {}
+	if frappe.db.exists("DocType", "Per Piece Salary Batch Entry"):
+		batch_links = frappe.get_all(
+			"Per Piece Salary",
+			filters={"name": ["in", entries]},
+			fields=["name", "salary_batch"],
+			limit_page_length=5000,
+		)
+		entry_to_batch = {
+			str((r or {}).get("name") or "").strip(): str((r or {}).get("salary_batch") or "").strip()
+			for r in (batch_links or [])
+			if str((r or {}).get("name") or "").strip()
+		}
+		batch_names = sorted({b for b in entry_to_batch.values() if b})
+		batch_entry_rows = []
+		if batch_names:
+			batch_entry_rows = frappe.get_all(
+				"Per Piece Salary Batch Entry",
+				filters={"parent": ["in", batch_names], "salary_entry": ["in", entries]},
+				fields=[
+					"parent",
+					"salary_entry",
+					"total_salary",
+					"allowance",
+					"advance_deduction",
+					"other_deduction",
+					"net_salary",
+				],
+				limit_page_length=10000,
+			)
+		for row in batch_entry_rows or []:
+			entry = str((row or {}).get("salary_entry") or "").strip()
+			if not entry:
+				continue
+			by_entry[entry] = {
+				"salary_amount": flt((row or {}).get("total_salary")),
+				"allowance_amount": flt((row or {}).get("allowance")),
+				"advance_deduction_amount": flt((row or {}).get("advance_deduction")),
+				"other_deduction_amount": flt((row or {}).get("other_deduction")),
+				"net_salary": flt((row or {}).get("net_salary")),
+				"by_employee": {},
+			}
+
 	per_piece_rows = frappe.get_all(
 		"Per Piece",
 		filters={"parent": ["in", entries], "parenttype": "Per Piece Salary"},
@@ -1142,10 +1302,12 @@ def get_salary_entry_financials(entry_names: str | list[str] | None = None) -> d
 		ignore_permissions=True,
 	)
 
-	by_entry: dict[str, dict] = {}
 	for row in per_piece_rows:
 		entry = str(row.get("parent") or "").strip()
 		if not entry:
+			continue
+		# If batch row already owns this entry's financials, don't override from child rows.
+		if entry in by_entry:
 			continue
 		emp = str(row.get("employee") or "").strip()
 		amount = flt(row.get("amount"))
@@ -1154,9 +1316,13 @@ def get_salary_entry_financials(entry_names: str | list[str] | None = None) -> d
 		advance_deduction = flt(row.get("advance_deduction"))
 		other_deduction = flt(row.get("other_deduction"))
 		net_amount = flt(row.get("net_amount"))
+		formula_net = max(amount + allowance - advance_deduction - other_deduction, 0.0)
 		no_splits = (
 			abs(allowance) <= 0.005 and abs(advance_deduction) <= 0.005 and abs(other_deduction) <= 0.005
 		)
+		if not no_splits:
+			# If salary splits were explicitly set, formula is the source-of-truth.
+			net_amount = formula_net
 		# Legacy correction path: if no deductions/allowances were saved for this row,
 		# financial values should match Data Entry base amount.
 		if no_splits and amount > 0:
@@ -1167,7 +1333,7 @@ def get_salary_entry_financials(entry_names: str | list[str] | None = None) -> d
 		if booked > 0 and net_amount <= 0:
 			net_amount = booked
 		if net_amount <= 0:
-			net_amount = max(amount + allowance - advance_deduction - other_deduction, 0)
+			net_amount = formula_net
 		if entry not in by_entry:
 			by_entry[entry] = {
 				"salary_amount": 0.0,
@@ -1216,6 +1382,179 @@ def get_salary_entry_financials(entry_names: str | list[str] | None = None) -> d
 			emp_row["net_amount"] = net
 
 	return {"data": by_entry}
+
+
+@frappe.whitelist()
+def get_salary_creation_detail(
+	entry_no: str | None = None, entry_nos=None, batch_entry: str | None = None
+) -> dict:
+	entries = _parse_entry_names(entry_nos)
+	single = str(entry_no or "").strip()
+	if single and single not in entries:
+		entries.insert(0, single)
+	if not entries:
+		return {"ok": False, "message": "Entry number is required."}
+	existing = [e for e in entries if frappe.db.exists("Per Piece Salary", e)]
+	if not existing:
+		return {"ok": False, "message": "Selected Per Piece Salary entry not found."}
+	entries = existing
+
+	parent = frappe.get_doc("Per Piece Salary", entries[0])
+	batch = str(batch_entry or "").strip() or str(getattr(parent, "salary_batch", "") or "").strip()
+
+	# Qty/rate base from Per Piece child rows (grouped by employee).
+	base_rows = frappe.get_all(
+		"Per Piece",
+		filters={"parent": ["in", entries], "parenttype": "Per Piece Salary", "parentfield": "perpiece"},
+		fields=["employee", "name1", "qty", "amount"],
+		order_by="idx asc",
+		limit_page_length=200000,
+	)
+	base_by_emp: dict[str, dict] = {}
+	for r in base_rows or []:
+		emp = str((r or {}).get("employee") or "").strip()
+		if not emp:
+			continue
+		if emp not in base_by_emp:
+			base_by_emp[emp] = {
+				"employee": emp,
+				"name1": str((r or {}).get("name1") or "").strip() or emp,
+				"qty": 0.0,
+				"amount": 0.0,
+			}
+		base_by_emp[emp]["qty"] += flt((r or {}).get("qty"))
+		base_by_emp[emp]["amount"] += flt((r or {}).get("amount"))
+
+	# Financial source priority:
+	# 1) Batch summary rows (master)
+	# 2) Salary summary rows
+	# 3) Base rows + formula fallback
+	fin_by_emp: dict[str, dict] = {}
+	if batch and frappe.db.exists("DocType", "Per Piece Salary Batch Summary Row"):
+		for r in frappe.get_all(
+			"Per Piece Salary Batch Summary Row",
+			filters={"parent": batch, "parenttype": "Per Piece Salary Batch", "parentfield": "summary_rows"},
+			fields=[
+				"employee",
+				"employee_name",
+				"salary_amount",
+				"allowance",
+				"advance_deduction",
+				"other_deduction",
+				"net_salary",
+			],
+			limit_page_length=200000,
+			order_by="idx asc",
+		):
+			emp = str((r or {}).get("employee") or "").strip()
+			if not emp:
+				continue
+			fin_by_emp[emp] = {
+				"name1": str((r or {}).get("employee_name") or "").strip() or emp,
+				"salary_amount": flt((r or {}).get("salary_amount")),
+				"allowance": flt((r or {}).get("allowance")),
+				"advance_deduction": flt((r or {}).get("advance_deduction")),
+				"other_deduction": flt((r or {}).get("other_deduction")),
+				"net_amount": flt((r or {}).get("net_salary")),
+			}
+
+	if not fin_by_emp and frappe.db.exists("DocType", "Per Piece Salary Summary Row"):
+		for r in frappe.get_all(
+			"Per Piece Salary Summary Row",
+			filters={
+				"parent": ["in", entries],
+				"parenttype": "Per Piece Salary",
+				"parentfield": "salary_summary_rows",
+			},
+			fields=[
+				"employee",
+				"employee_name",
+				"salary_amount",
+				"allowance",
+				"advance_deduction",
+				"other_deduction",
+				"net_salary",
+			],
+			limit_page_length=200000,
+			order_by="idx asc",
+		):
+			emp = str((r or {}).get("employee") or "").strip()
+			if not emp:
+				continue
+			if emp not in fin_by_emp:
+				fin_by_emp[emp] = {
+					"name1": str((r or {}).get("employee_name") or "").strip() or emp,
+					"salary_amount": 0.0,
+					"allowance": 0.0,
+					"advance_deduction": 0.0,
+					"other_deduction": 0.0,
+					"net_amount": 0.0,
+				}
+			fin_by_emp[emp]["salary_amount"] += flt((r or {}).get("salary_amount"))
+			fin_by_emp[emp]["allowance"] += flt((r or {}).get("allowance"))
+			fin_by_emp[emp]["advance_deduction"] += flt((r or {}).get("advance_deduction"))
+			fin_by_emp[emp]["other_deduction"] += flt((r or {}).get("other_deduction"))
+			fin_by_emp[emp]["net_amount"] += flt((r or {}).get("net_salary"))
+
+	rows = []
+	totals = {
+		"qty": 0.0,
+		"rate": 0.0,
+		"salary_amount": 0.0,
+		"allowance": 0.0,
+		"advance_deduction": 0.0,
+		"other_deduction": 0.0,
+		"net_amount": 0.0,
+	}
+	employees = sorted(set(base_by_emp.keys()) | set(fin_by_emp.keys()))
+	for emp in employees:
+		base = base_by_emp.get(emp) or {"employee": emp, "name1": emp, "qty": 0.0, "amount": 0.0}
+		fin = fin_by_emp.get(emp) or {}
+		salary_amount = flt(fin.get("salary_amount")) if fin else flt(base.get("amount"))
+		allowance = flt(fin.get("allowance")) if fin else 0.0
+		advance = max(flt(fin.get("advance_deduction")) if fin else 0.0, 0.0)
+		other = max(flt(fin.get("other_deduction")) if fin else 0.0, 0.0)
+		net = flt(fin.get("net_amount")) if fin else 0.0
+		if net <= 0:
+			net = max(salary_amount + allowance - advance - other, 0.0)
+		qty = flt(base.get("qty"))
+		rate = round((salary_amount / qty), 6) if qty > 0 else 0.0
+		item = {
+			"employee": emp,
+			"name1": str(fin.get("name1") or base.get("name1") or emp),
+			"qty": round(qty, 2),
+			"rate": rate,
+			"salary_amount": round(salary_amount, 2),
+			"allowance": round(allowance, 2),
+			"advance_deduction": round(advance, 2),
+			"other_deduction": round(other, 2),
+			"net_amount": round(net, 2),
+		}
+		rows.append(item)
+		totals["qty"] += item["qty"]
+		totals["rate"] += item["rate"]
+		totals["salary_amount"] += item["salary_amount"]
+		totals["allowance"] += item["allowance"]
+		totals["advance_deduction"] += item["advance_deduction"]
+		totals["other_deduction"] += item["other_deduction"]
+		totals["net_amount"] += item["net_amount"]
+
+	totals = {k: round(v, 2) for k, v in totals.items()}
+	return {
+		"ok": True,
+		"entry_no": entries[0],
+		"entry_nos": entries,
+		"batch_entry": batch,
+		"company": str(getattr(parent, "company", "") or ""),
+		"po_number": str(getattr(parent, "po_number", "") or ""),
+		"delivery_note": str(getattr(parent, "delivery_note", "") or ""),
+		"from_date": str(getattr(parent, "from_date", "") or ""),
+		"to_date": str(getattr(parent, "to_date", "") or ""),
+		"rows": rows,
+		"totals": totals,
+		"gross": round(totals["salary_amount"] + totals["allowance"], 2),
+		"net_payable": round(totals["net_amount"], 2),
+	}
 
 
 def _run_legacy_api_script(script_text: str, kwargs: dict | None = None):
@@ -1349,6 +1688,46 @@ def _extract_jv_name_from_context(kwargs: dict | None = None, out: dict | None =
 		if name and name.startswith("ACC-JV-"):
 			return name
 	return ""
+
+
+def _append_batch_in_jv_remarks(jv_name: str, entry_names: list[str] | None = None) -> None:
+	jv = str(jv_name or "").strip()
+	if not jv or not frappe.db.exists("Journal Entry", jv):
+		return
+	names = [str(x or "").strip() for x in (entry_names or []) if str(x or "").strip()]
+	if not names:
+		return
+	salary_rows = frappe.get_all(
+		"Per Piece Salary",
+		filters={"name": ["in", names]},
+		fields=["name", "salary_batch"],
+		limit_page_length=5000,
+	)
+	batches = sorted(
+		{
+			str((r or {}).get("salary_batch") or "").strip()
+			for r in (salary_rows or [])
+			if str((r or {}).get("salary_batch") or "").strip()
+		}
+	)
+	if not batches:
+		return
+	batch_text = "Batch Entry " + ", ".join(batches)
+	accounts = frappe.get_all(
+		"Journal Entry Account",
+		filters={"parent": jv},
+		fields=["name", "user_remark"],
+		limit_page_length=5000,
+	)
+	for a in accounts or []:
+		name = str((a or {}).get("name") or "").strip()
+		if not name:
+			continue
+		remark = str((a or {}).get("user_remark") or "").strip()
+		if batch_text in remark:
+			continue
+		new_remark = (remark + " | " + batch_text) if remark else batch_text
+		frappe.db.set_value("Journal Entry Account", name, "user_remark", new_remark, update_modified=False)
 
 
 def _append_payment_ref_text(existing: str, jv_name: str, amount: float) -> str:
@@ -1572,6 +1951,7 @@ def recalculate_per_piece_child_financials(
 	# Rebuild employee financial splits from posted salary JV remarks when available.
 	rows_by_entry_emp: dict[tuple[str, str], list[dict]] = {}
 	jv_names: set[str] = set()
+	jv_entries: dict[str, set[str]] = {}
 	for r in rows or []:
 		entry = str((r or {}).get("parent") or "").strip()
 		emp = str((r or {}).get("employee") or "").strip()
@@ -1581,6 +1961,8 @@ def recalculate_per_piece_child_financials(
 		jv_status = str((r or {}).get("jv_status") or "").strip()
 		if jv and jv_status in ("Posted", "Accounted"):
 			jv_names.add(jv)
+			if entry:
+				jv_entries.setdefault(jv, set()).add(entry)
 
 	jv_emp_fin: dict[str, dict[str, dict[str, float]]] = {}
 	if jv_names:
@@ -1641,6 +2023,10 @@ def recalculate_per_piece_child_financials(
 		jv_name = str((emp_rows[0] or {}).get("jv_entry_no") or "").strip()
 		if not jv_name or jv_name not in jv_emp_fin:
 			continue
+		# Critical guard: when one JV is shared by multiple salary entries, do not
+		# re-derive row splits from JV totals (it duplicates values per entry).
+		if len(jv_entries.get(jv_name) or set()) > 1:
+			continue
 		fin = (jv_emp_fin.get(jv_name) or {}).get(emp) or {}
 		emp_amount = sum(flt((x or {}).get("amount")) for x in emp_rows)
 		adv_total = max(flt(fin.get("advance_deduction")), 0.0)
@@ -1699,8 +2085,6 @@ def recalculate_per_piece_child_financials(
 		if net <= 0:
 			if booked > 0:
 				net = booked
-				if allowance <= 0 and advance <= 0 and other <= 0:
-					allowance = max(net - amount, 0)
 			else:
 				net = max(amount + allowance - advance - other, 0)
 
@@ -1907,28 +2291,95 @@ def get_payment_entry_basis(entry_no: str):
 	if not entry:
 		return {"entry_no": "", "rows": [], "totals": {}}
 	cleanup_cancelled_jv_links(entry_no=entry)
+	# IMPORTANT: keep this API read-only.
+	# Do not recalculate/rebuild financial splits during Payment tab load.
 
 	summary_rows = []
-	if frappe.db.exists("DocType", "Per Piece Salary Summary Row"):
-		summary_rows = frappe.get_all(
-			"Per Piece Salary Summary Row",
-			filters={"parent": entry, "parenttype": "Per Piece Salary", "parentfield": "salary_summary_rows"},
-			fields=[
-				"employee",
-				"employee_name",
-				"salary_amount",
-				"allowance",
-				"advance_deduction",
-				"other_deduction",
-				"net_salary",
-				"booked_amount",
-				"paid_amount",
-				"unpaid_amount",
-				"payment_status",
-			],
-			order_by="idx asc",
-			limit_page_length=5000,
+	# Batch-first read path:
+	# If this entry belongs to a batch that contains only this entry,
+	# payment basis should come from batch summary rows (master totals).
+	batch_name = ""
+	if frappe.db.has_column("Per Piece Salary", "salary_batch"):
+		batch_name = str(
+			frappe.db.get_value("Per Piece Salary", {"name": entry}, "salary_batch") or ""
+		).strip()
+	if batch_name and frappe.db.exists("DocType", "Per Piece Salary Batch Entry"):
+		entry_count = frappe.db.count(
+			"Per Piece Salary Batch Entry",
+			{"parent": batch_name, "parenttype": "Per Piece Salary Batch", "parentfield": "entries"},
 		)
+		if entry_count == 1 and frappe.db.exists("DocType", "Per Piece Salary Batch Summary Row"):
+			batch_summary_rows = frappe.get_all(
+				"Per Piece Salary Batch Summary Row",
+				filters={
+					"parent": batch_name,
+					"parenttype": "Per Piece Salary Batch",
+					"parentfield": "summary_rows",
+				},
+				fields=[
+					"employee",
+					"employee_name",
+					"salary_amount",
+					"allowance",
+					"advance_deduction",
+					"other_deduction",
+					"net_salary",
+					"paid_amount",
+					"unpaid_amount",
+				],
+				order_by="idx asc",
+				limit_page_length=5000,
+			)
+			if batch_summary_rows:
+				summary_rows = []
+				for r in batch_summary_rows:
+					paid_amount = round(max(flt((r or {}).get("paid_amount")), 0.0), 2)
+					unpaid_amount = round(max(flt((r or {}).get("unpaid_amount")), 0.0), 2)
+					status = (
+						"Paid"
+						if unpaid_amount <= 0.005
+						else ("Partly Paid" if paid_amount > 0.005 else "Unpaid")
+					)
+					summary_rows.append(
+						{
+							"employee": r.get("employee"),
+							"employee_name": r.get("employee_name"),
+							"salary_amount": r.get("salary_amount"),
+							"allowance": r.get("allowance"),
+							"advance_deduction": r.get("advance_deduction"),
+							"other_deduction": r.get("other_deduction"),
+							"net_salary": r.get("net_salary"),
+							"booked_amount": r.get("net_salary"),
+							"paid_amount": paid_amount,
+							"unpaid_amount": unpaid_amount,
+							"payment_status": status,
+						}
+					)
+	if frappe.db.exists("DocType", "Per Piece Salary Summary Row"):
+		if not summary_rows:
+			summary_rows = frappe.get_all(
+				"Per Piece Salary Summary Row",
+				filters={
+					"parent": entry,
+					"parenttype": "Per Piece Salary",
+					"parentfield": "salary_summary_rows",
+				},
+				fields=[
+					"employee",
+					"employee_name",
+					"salary_amount",
+					"allowance",
+					"advance_deduction",
+					"other_deduction",
+					"net_salary",
+					"booked_amount",
+					"paid_amount",
+					"unpaid_amount",
+					"payment_status",
+				],
+				order_by="idx asc",
+				limit_page_length=5000,
+			)
 	rows = []
 	if summary_rows:
 		for r in summary_rows:
@@ -1937,6 +2388,9 @@ def get_payment_entry_basis(entry_no: str):
 					"employee": r.get("employee"),
 					"name1": r.get("employee_name"),
 					"amount": r.get("salary_amount"),
+					"allowance": r.get("allowance"),
+					"advance_deduction": r.get("advance_deduction"),
+					"other_deduction": r.get("other_deduction"),
 					"net_amount": r.get("net_salary"),
 					"booked_amount": r.get("booked_amount"),
 					"paid_amount": r.get("paid_amount"),
@@ -1956,6 +2410,9 @@ def get_payment_entry_basis(entry_no: str):
 				"employee",
 				"name1",
 				"amount",
+				"allowance",
+				"advance_deduction",
+				"other_deduction",
 				"booked_amount",
 				"net_amount",
 				"paid_amount",
@@ -1984,7 +2441,15 @@ def get_payment_entry_basis(entry_no: str):
 		net = flt((r or {}).get("net_amount"))
 		booked = flt((r or {}).get("booked_amount"))
 		amount = flt((r or {}).get("amount"))
-		row_booked = net if net > 0 else (booked if booked > 0 else amount)
+		allowance = flt((r or {}).get("allowance"))
+		advance_deduction = flt((r or {}).get("advance_deduction"))
+		other_deduction = flt((r or {}).get("other_deduction"))
+		formula_net = max(amount + allowance - advance_deduction - other_deduction, 0.0)
+		# Priority: when splits are present, formula is source-of-truth.
+		if abs(allowance) > 0.005 or abs(advance_deduction) > 0.005 or abs(other_deduction) > 0.005:
+			row_booked = formula_net
+		else:
+			row_booked = net if net > 0 else (booked if booked > 0 else amount)
 		row_paid = max(flt((r or {}).get("paid_amount")), 0.0)
 		if row_paid > row_booked:
 			row_paid = row_booked
@@ -2052,10 +2517,11 @@ def create_per_piece_salary_entry(**kwargs):
 def create_per_piece_salary_jv(**kwargs):
 	out = _run_legacy_api_script(CREATE_JV_SERVER_SCRIPT, kwargs)
 	names = _collect_entry_names_from_context(kwargs, out, jv_payment=False)
-	recalculate_per_piece_child_financials(names)
+	jv_name = _extract_jv_name_from_context(kwargs, out)
 	recalculate_per_piece_salary_totals(names)
 	rebuild_salary_summary_rows(names)
 	_ensure_auto_salary_batch_for_entries(names)
+	_append_batch_in_jv_remarks(jv_name, names)
 	rebuild_batches_for_entries(names)
 	return out
 
@@ -2065,7 +2531,6 @@ def cancel_per_piece_salary_jv(**kwargs):
 	jv = kwargs.get("journal_entry")
 	names = _get_entries_for_jv(jv, payment=False)
 	out = _run_legacy_api_script(CANCEL_JV_SERVER_SCRIPT, kwargs)
-	recalculate_per_piece_child_financials(names)
 	recalculate_per_piece_salary_totals(names)
 	rebuild_salary_summary_rows(names)
 	rebuild_batches_for_entries(names)
@@ -2100,10 +2565,10 @@ def create_per_piece_salary_payment_jv(**kwargs):
 	except Exception:
 		# Never block existing posting flow on snapshot write errors.
 		frappe.log_error(frappe.get_traceback(), "Per Piece Payment Entry Snapshot Failed")
-	recalculate_per_piece_child_financials(names)
 	recalculate_per_piece_salary_totals(names)
 	rebuild_salary_summary_rows(names)
 	rebuild_batches_for_entries(names)
+	_append_batch_in_jv_remarks(jv_name, names)
 	return out
 
 
@@ -2232,7 +2697,6 @@ def cancel_per_piece_salary_payment_jv(**kwargs):
 	jv = kwargs.get("journal_entry")
 	names = _get_entries_for_jv(jv, payment=True)
 	out = _run_legacy_api_script(CANCEL_PAYMENT_JV_SERVER_SCRIPT, kwargs)
-	recalculate_per_piece_child_financials(names)
 	recalculate_per_piece_salary_totals(names)
 	rebuild_salary_summary_rows(names)
 	rebuild_batches_for_entries(names)
@@ -2332,7 +2796,6 @@ def cleanup_cancelled_jv_links(entry_nos=None, entry_no=None) -> dict:
 			updated_payment_entries += 1
 
 	if names:
-		recalculate_per_piece_child_financials(names)
 		recalculate_per_piece_salary_totals(names)
 		rebuild_salary_summary_rows(names)
 		rebuild_batches_for_entries(names)

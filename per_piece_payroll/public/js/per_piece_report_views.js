@@ -404,28 +404,28 @@
 				"<tr class='pp-year-total'>" +
 				"<td></td>" +
 				"<td>Total</td>" +
-				"<td class='num'>" +
+				"<td class='num' id='pp-salary-total-qty'>" +
 				esc(fmt(tQty)) +
 				"</td>" +
-				"<td class='num'>" +
+				"<td class='num' id='pp-salary-total-rate'>" +
 				esc(fmt(tRate)) +
 				"</td>" +
-				"<td class='num pp-amt-col'>" +
+				"<td class='num pp-amt-col' id='pp-salary-total-amount'>" +
 				esc(fmt(tAmount)) +
 				"</td>" +
-				"<td class='num pp-amt-col'>" +
+				"<td class='num pp-amt-col' id='pp-salary-total-advance-balance'>" +
 				esc(fmt(tAdvanceBal)) +
 				"</td>" +
-				"<td class='num pp-amt-col'>" +
+				"<td class='num pp-amt-col' id='pp-salary-total-advance-deduction'>" +
 				esc(fmt(tAdvanceDed)) +
 				"</td>" +
-				"<td class='num pp-amt-col'>" +
+				"<td class='num pp-amt-col' id='pp-salary-total-allowance'>" +
 				esc(fmt(tAllowance)) +
 				"</td>" +
-				"<td class='num pp-amt-col'>" +
+				"<td class='num pp-amt-col' id='pp-salary-total-other-deduction'>" +
 				esc(fmt(tOtherDed)) +
 				"</td>" +
-				"<td class='num pp-amt-col'>" +
+				"<td class='num pp-amt-col' id='pp-salary-total-net'>" +
 				esc(fmt(tNet)) +
 				"</td>" +
 				"</tr>";
@@ -448,6 +448,41 @@
 			});
 
 			wrap.querySelectorAll(".pp-adj-input").forEach(function (input) {
+				function refreshSalaryFooterTotals() {
+					var totals = {
+						qty: 0,
+						rate: 0,
+						amount: 0,
+						advance_balance: 0,
+						advance_deduction: 0,
+						allowance: 0,
+						other_deduction: 0,
+						net_amount: 0,
+					};
+					getAdjustedEmployeeRows().forEach(function (r) {
+						totals.qty += num(r.qty);
+						totals.rate += num(r.rate);
+						totals.amount += num(r.amount);
+						totals.advance_balance += num(r.advance_balance);
+						totals.advance_deduction += num(r.advance_deduction);
+						totals.allowance += num(r.allowance);
+						totals.other_deduction += num(r.other_deduction);
+						totals.net_amount += num(r.net_amount);
+					});
+					var setText = function (id, value) {
+						var node = el(id);
+						if (node) node.textContent = fmt(value);
+					};
+					setText("pp-salary-total-qty", totals.qty);
+					setText("pp-salary-total-rate", totals.rate);
+					setText("pp-salary-total-amount", totals.amount);
+					setText("pp-salary-total-advance-balance", totals.advance_balance);
+					setText("pp-salary-total-advance-deduction", totals.advance_deduction);
+					setText("pp-salary-total-allowance", totals.allowance);
+					setText("pp-salary-total-other-deduction", totals.other_deduction);
+					setText("pp-salary-total-net", totals.net_amount);
+				}
+
 				function onAdjustInput() {
 					var emp = input.getAttribute("data-employee") || "";
 					var field = input.getAttribute("data-field") || "";
@@ -470,6 +505,7 @@
 							cell.textContent = fmt(updated ? updated.net_amount : 0);
 						}
 					});
+					refreshSalaryFooterTotals();
 					var t = getAdjustedTotals();
 					el("pp-totals").innerHTML =
 						"<span>Gross: " +

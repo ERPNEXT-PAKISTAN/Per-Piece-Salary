@@ -1861,7 +1861,17 @@
 		}
 		wrap.querySelectorAll(".pp-view-jv").forEach(function (btn) {
 			btn.addEventListener("click", function () {
-				var jv = btn.getAttribute("data-jv") || "";
+				var jvRaw = String(btn.getAttribute("data-jv") || "").trim();
+				var jv = jvRaw;
+				if (jvRaw.indexOf(",") >= 0) {
+					jv = String(jvRaw.split(",")[0] || "").trim();
+					showResult(
+						el("pp-jv-result"),
+						"info",
+						"Multiple JV Found",
+						"Showing first JV from list: " + esc(jv)
+					);
+				}
 				if (!jv) return;
 				showJournalEntrySummary(jv);
 			});
@@ -1876,25 +1886,46 @@
 		wrap.querySelectorAll(".pp-view-salary-create").forEach(function (btn) {
 			btn.addEventListener("click", function () {
 				var docName = btn.getAttribute("data-entry") || "";
+				var entriesCsv = btn.getAttribute("data-entries") || "";
+				var batchEntry = btn.getAttribute("data-batch") || "";
 				if (!docName) return;
-				showSalaryCreationEntrySummary(docName, false);
+				showSalaryCreationEntrySummary(docName, false, {
+					entries_csv: entriesCsv,
+					batch_entry: batchEntry,
+				});
 			});
 		});
 		wrap.querySelectorAll(".pp-print-salary-create").forEach(function (btn) {
 			btn.addEventListener("click", function () {
 				var docName = btn.getAttribute("data-entry") || "";
+				var entriesCsv = btn.getAttribute("data-entries") || "";
+				var batchEntry = btn.getAttribute("data-batch") || "";
 				if (!docName) return;
-				showSalaryCreationEntrySummary(docName, true);
+				showSalaryCreationEntrySummary(docName, true, {
+					entries_csv: entriesCsv,
+					batch_entry: batchEntry,
+				});
 			});
 		});
 		wrap.querySelectorAll(".pp-go-pay-salary-entry").forEach(function (btn) {
 			btn.addEventListener("click", function () {
-				var entry = String(btn.getAttribute("data-entry") || "").trim();
-				if (!entry) return;
-				state.forcedEntryNo = entry;
-				if (el("pp-entry-no")) el("pp-entry-no").value = entry;
-				if (el("pp-pay-entry-filter")) el("pp-pay-entry-filter").value = entry;
-				if (el("pp-pay-entry-multi")) el("pp-pay-entry-multi").value = entry;
+				var entriesCsv = String(btn.getAttribute("data-entries") || "").trim();
+				var selected = entriesCsv
+					.split(",")
+					.map(function (x) {
+						return String(x || "").trim();
+					})
+					.filter(Boolean);
+				if (!selected.length) {
+					var entry = String(btn.getAttribute("data-entry") || "").trim();
+					if (entry) selected = [entry];
+				}
+				if (!selected.length) return;
+				state.forcedEntryNo = selected.length === 1 ? selected[0] : "";
+				if (el("pp-entry-no")) el("pp-entry-no").value = state.forcedEntryNo;
+				if (el("pp-pay-entry-filter"))
+					el("pp-pay-entry-filter").value = state.forcedEntryNo;
+				if (el("pp-pay-entry-multi")) el("pp-pay-entry-multi").value = selected.join(", ");
 				setWorkflowHistoryRange("payment_manage", "", "");
 				setWorkflowStatusFilter("payment_manage", "", "");
 				document.querySelectorAll(".pp-tab").forEach(function (x) {
@@ -1997,12 +2028,22 @@
 		});
 		wrap.querySelectorAll(".pp-salary-history-book").forEach(function (btn) {
 			btn.addEventListener("click", function () {
-				var entry = String(btn.getAttribute("data-entry") || "").trim();
-				if (!entry) return;
-				state.forcedEntryNo = entry;
-				if (el("pp-entry-no")) el("pp-entry-no").value = entry;
-				if (el("pp-jv-entry-filter")) el("pp-jv-entry-filter").value = entry;
-				if (el("pp-jv-entry-multi")) el("pp-jv-entry-multi").value = entry;
+				var entriesCsv = String(btn.getAttribute("data-entries") || "").trim();
+				var selected = entriesCsv
+					.split(",")
+					.map(function (x) {
+						return String(x || "").trim();
+					})
+					.filter(Boolean);
+				if (!selected.length) {
+					var entry = String(btn.getAttribute("data-entry") || "").trim();
+					if (entry) selected = [entry];
+				}
+				if (!selected.length) return;
+				state.forcedEntryNo = selected.length === 1 ? selected[0] : "";
+				if (el("pp-entry-no")) el("pp-entry-no").value = state.forcedEntryNo;
+				if (el("pp-jv-entry-filter")) el("pp-jv-entry-filter").value = state.forcedEntryNo;
+				if (el("pp-jv-entry-multi")) el("pp-jv-entry-multi").value = selected.join(", ");
 				setWorkflowHistoryRange("salary_creation", "", "");
 				switchWorkspaceMode("entry", true);
 				state.currentTab = "salary_creation";
@@ -2022,9 +2063,19 @@
 			box.addEventListener("change", function () {
 				state.entryMeta.selected_salary_history =
 					state.entryMeta.selected_salary_history || {};
-				var name = String(box.getAttribute("data-entry") || "").trim();
-				if (!name) return;
-				state.entryMeta.selected_salary_history[name] = !!box.checked;
+				var entriesCsv = String(box.getAttribute("data-entries") || "").trim();
+				var names = entriesCsv
+					? entriesCsv
+							.split(",")
+							.map(function (x) {
+								return String(x || "").trim();
+							})
+							.filter(Boolean)
+					: [String(box.getAttribute("data-entry") || "").trim()].filter(Boolean);
+				if (!names.length) return;
+				names.forEach(function (name) {
+					state.entryMeta.selected_salary_history[name] = !!box.checked;
+				});
 				var countEl = el("pp-salary-history-selected-count");
 				if (countEl) {
 					var count = Object.keys(state.entryMeta.selected_salary_history).filter(
@@ -2041,10 +2092,20 @@
 				state.entryMeta.selected_salary_history =
 					state.entryMeta.selected_salary_history || {};
 				wrap.querySelectorAll(".pp-salary-history-select").forEach(function (box) {
-					var name = String(box.getAttribute("data-entry") || "").trim();
-					if (!name) return;
+					var entriesCsv = String(box.getAttribute("data-entries") || "").trim();
+					var names = entriesCsv
+						? entriesCsv
+								.split(",")
+								.map(function (x) {
+									return String(x || "").trim();
+								})
+								.filter(Boolean)
+						: [String(box.getAttribute("data-entry") || "").trim()].filter(Boolean);
+					if (!names.length) return;
 					box.checked = true;
-					state.entryMeta.selected_salary_history[name] = true;
+					names.forEach(function (name) {
+						state.entryMeta.selected_salary_history[name] = true;
+					});
 				});
 				var countEl = el("pp-salary-history-selected-count");
 				if (countEl) {
@@ -2393,6 +2454,52 @@
 		return state.entryMeta.salaryFinancialByEntry;
 	}
 
+	function getSalaryBatchCache() {
+		if (!state.entryMeta) state.entryMeta = {};
+		if (!state.entryMeta.salaryBatchByEntry) state.entryMeta.salaryBatchByEntry = {};
+		if (!state.entryMeta.salaryBatchPending) state.entryMeta.salaryBatchPending = {};
+		return state.entryMeta.salaryBatchByEntry;
+	}
+
+	function ensureSalaryBatchLinks(entryNames) {
+		var names = (entryNames || [])
+			.map(function (n) {
+				return String(n || "").trim();
+			})
+			.filter(function (n) {
+				return !!n;
+			});
+		if (!names.length) return Promise.resolve(false);
+		var cache = getSalaryBatchCache();
+		var missing = names.filter(function (entry) {
+			return typeof cache[entry] === "undefined";
+		});
+		if (!missing.length) return Promise.resolve(false);
+		return callApi("per_piece_payroll.api.get_salary_batch_links", {
+			entry_names: missing,
+		})
+			.then(function (rows) {
+				var data = (rows && rows.data) || {};
+				Object.keys(data || {}).forEach(function (key0) {
+					var key = String(key0 || "").trim();
+					if (!key) return;
+					var r = data[key] || {};
+					cache[key] = {
+						salary_batch: String((r && r.salary_batch) || "").trim(),
+						delivery_note: String((r && r.delivery_note) || "").trim(),
+						po_number: String((r && r.po_number) || "").trim(),
+					};
+				});
+				missing.forEach(function (m) {
+					if (typeof cache[m] === "undefined") cache[m] = {};
+				});
+				return true;
+			})
+			.catch(function () {
+				return false;
+			});
+	}
+
 	function computeSalaryEntryFinancial(entryName) {
 		var entry = String(entryName || "").trim();
 		if (!entry) return Promise.resolve(null);
@@ -2497,7 +2604,10 @@
 		}
 		var names = Object.keys(entryMap);
 		if (!names.length) return;
-		ensureSalaryFinancials(names).then(function (updated) {
+		Promise.all([ensureSalaryFinancials(names), ensureSalaryBatchLinks(names)]).then(function (
+			out
+		) {
+			var updated = !!((out && out[0]) || (out && out[1]));
 			if (!updated) return;
 			if (state.currentTab !== current) return;
 			normalizePaymentAdjustments();
@@ -2508,14 +2618,19 @@
 	function uniqueCreatedSalaryDocs() {
 		var map = {};
 		var salaryFinancial = getSalaryFinancialCache();
-		(state.rows || []).forEach(function (r) {
+		var salaryBatchCache = getSalaryBatchCache();
+		var sourceRows = (state.entryMeta && state.entryMeta.recentRows) || state.rows || [];
+		(sourceRows || []).forEach(function (r) {
 			var docName = String((r && r.per_piece_salary) || "").trim();
-			if (!docName || !String((r && r.jv_entry_no) || "").trim()) return;
+			if (!docName) return;
 			if (!map[docName]) {
+				var cachedMeta = salaryBatchCache[docName] || {};
 				map[docName] = {
 					name: docName,
 					po_number: String((r && r.po_number) || "").trim(),
-					jv_entry_no: String((r && r.jv_entry_no) || "").trim(),
+					salary_batch: String((cachedMeta && cachedMeta.salary_batch) || "").trim(),
+					jv_entry_no: "",
+					payment_jv_no: "",
 					from_date: String((r && r.from_date) || "").trim(),
 					to_date: String((r && r.to_date) || "").trim(),
 					amount: 0,
@@ -2528,7 +2643,28 @@
 					_booked_count: 0,
 					_paid_count: 0,
 					_partly_paid_count: 0,
+					_salary_jvs: {},
+					_payment_jvs: {},
 				};
+			}
+			var rowSalaryJv = String((r && r.jv_entry_no) || "").trim();
+			if (rowSalaryJv) {
+				rowSalaryJv
+					.split(",")
+					.map(function (x) {
+						return String(x || "").trim();
+					})
+					.filter(Boolean)
+					.forEach(function (jv) {
+						map[docName]._salary_jvs[jv] = 1;
+					});
+			}
+			if (!map[docName].salary_batch) {
+				var rowBatch = String((r && r.salary_batch) || "").trim();
+				var cacheBatch = String(
+					(salaryBatchCache[docName] || {}).salary_batch || ""
+				).trim();
+				map[docName].salary_batch = rowBatch || cacheBatch || "";
 			}
 			var rf = String((r && r.from_date) || "").trim();
 			var rt = String((r && r.to_date) || "").trim();
@@ -2539,6 +2675,18 @@
 			map[docName].amount += num(r.amount);
 			map[docName].booked_amount += getNetBookedAmountForRow(r);
 			map[docName].rows += 1;
+			var payJv = String((r && r.payment_jv_no) || "").trim();
+			if (payJv) {
+				payJv
+					.split(",")
+					.map(function (x) {
+						return String(x || "").trim();
+					})
+					.filter(Boolean)
+					.forEach(function (jv) {
+						map[docName]._payment_jvs[jv] = 1;
+					});
+			}
 			if (String(r.booking_status || "") === "Booked") map[docName]._booked_count += 1;
 			var payStatus = String(r.payment_status || "");
 			if (payStatus === "Paid") map[docName]._paid_count += 1;
@@ -2571,6 +2719,8 @@
 			else if (it._paid_count > 0 || it._partly_paid_count > 0)
 				it.payment_status = "Partly Paid";
 			else it.payment_status = "Unpaid";
+			it.jv_entry_no = Object.keys(it._salary_jvs || {}).join(", ");
+			it.payment_jv_no = Object.keys(it._payment_jvs || {}).join(", ");
 		});
 		return Object.keys(map)
 			.sort()
@@ -2578,6 +2728,89 @@
 			.map(function (k) {
 				return map[k];
 			});
+	}
+
+	function uniqueCreatedSalaryBatchDocs() {
+		var docs = uniqueCreatedSalaryDocs();
+		var grouped = {};
+		docs.forEach(function (d) {
+			var batch = String((d && d.salary_batch) || "").trim();
+			var key = batch || "__NO_BATCH__";
+			if (!grouped[key]) {
+				grouped[key] = {
+					batch_entry: batch,
+					salary_entries: [],
+					po_numbers: {},
+					delivery_notes: {},
+					jv_entries: {},
+					payment_jvs: {},
+					amount: 0,
+					allowance_amount: 0,
+					advance_deduction_amount: 0,
+					other_deduction_amount: 0,
+					net_salary: 0,
+					booking_status: "UnBooked",
+					payment_status: "Unpaid",
+				};
+			}
+			var g = grouped[key];
+			g.salary_entries.push(String(d.name || "").trim());
+			if (d.po_number) g.po_numbers[String(d.po_number)] = 1;
+			if (d.delivery_note) g.delivery_notes[String(d.delivery_note)] = 1;
+			if (d.jv_entry_no) g.jv_entries[String(d.jv_entry_no)] = 1;
+			if (d.payment_jv_no) g.payment_jvs[String(d.payment_jv_no)] = 1;
+			g.amount += num(d.amount);
+			g.allowance_amount += num(d.allowance_amount);
+			g.advance_deduction_amount += num(d.advance_deduction_amount);
+			g.other_deduction_amount += num(d.other_deduction_amount);
+			g.net_salary += num(d.net_salary);
+			if (String(d.booking_status || "") === "Booked") g.booking_status = "Booked";
+			if (String(d.payment_status || "") === "Partly Paid") g.payment_status = "Partly Paid";
+			if (String(d.payment_status || "") === "Paid" && g.payment_status !== "Partly Paid")
+				g.payment_status = "Paid";
+		});
+		return Object.keys(grouped)
+			.map(function (k) {
+				var g = grouped[k];
+				g.salary_entries = (g.salary_entries || [])
+					.filter(Boolean)
+					.sort(compareEntryNoDesc);
+				g.salary_entry =
+					g.salary_entries.length === 1
+						? g.salary_entries[0]
+						: g.salary_entries.length + " entries";
+				g.po_number = Object.keys(g.po_numbers || {}).join(", ");
+				g.delivery_note = Object.keys(g.delivery_notes || {}).join(", ");
+				g.jv_entry_no = Object.keys(g.jv_entries || {}).join(", ");
+				g.payment_jv_no = Object.keys(g.payment_jvs || {}).join(", ");
+				g.name = g.salary_entries[0] || "";
+				g._entries_csv = (g.salary_entries || []).join(",");
+				return g;
+			})
+			.sort(function (a, b) {
+				return compareEntryNoDesc((a && a.name) || "", (b && b.name) || "");
+			});
+	}
+
+	function renderJvLinks(jvCsv) {
+		var list = String(jvCsv || "")
+			.split(",")
+			.map(function (x) {
+				return String(x || "").trim();
+			})
+			.filter(Boolean);
+		if (!list.length) return "";
+		return list
+			.map(function (jv) {
+				return (
+					"<a target='_blank' href='/app/journal-entry/" +
+					encodeURIComponent(jv) +
+					"'>" +
+					esc(jv) +
+					"</a>"
+				);
+			})
+			.join("<br>");
 	}
 
 	function setSalaryHistoryCell(entryName, col, value) {
@@ -2909,31 +3142,36 @@
 		});
 	}
 
-	function showSalaryCreationEntrySummary(entryName, printNow) {
-		var sourceRows = state.entryMeta.recentRows || state.rows || [];
-		var rows = getSalaryCreationEntryRows(entryName, sourceRows);
-		if (!rows.length) {
-			setSummaryModal(
-				"Salary Creation Detail",
-				entryName || "",
-				"<div style='color:#b91c1c;'>No salary rows available for this entry under selected filters.</div>"
-			);
-			return;
-		}
-		var first =
-			(sourceRows || []).filter(function (r) {
-				return String(r.per_piece_salary || "").trim() === String(entryName || "").trim();
-			})[0] || {};
+	function showSalaryCreationEntrySummary(entryName, printNow, opts) {
+		var targetEntry = String(entryName || "").trim();
+		if (!targetEntry) return;
+		var entriesCsv = String((opts && opts.entries_csv) || "").trim();
+		var batchEntry = String((opts && opts.batch_entry) || "").trim();
 		setSummaryModal(
 			"Salary Creation Detail",
-			entryName || "",
+			targetEntry,
 			"<div style='color:#334155;'>Loading salary creation detail...</div>"
 		);
-		ensureSalaryFinancials([entryName])
-			.then(function () {
-				var finCache = getSalaryFinancialCache();
-				var fin = finCache[String(entryName || "").trim()] || null;
-				var byEmpFin = (fin && fin.by_employee) || {};
+		callApi("per_piece_payroll.api.get_salary_creation_detail", {
+			entry_no: targetEntry,
+			entry_nos: entriesCsv,
+			batch_entry: batchEntry,
+		})
+			.then(function (detail) {
+				if (!detail || detail.ok === false) {
+					throw new Error(
+						(detail && detail.message) || "Failed to load salary creation detail"
+					);
+				}
+				var rows = detail.rows || [];
+				if (!rows.length) {
+					setSummaryModal(
+						"Salary Creation Detail",
+						targetEntry,
+						"<div style='color:#b91c1c;'>No salary rows available for this entry.</div>"
+					);
+					return;
+				}
 				var totalQty = 0;
 				var totalRate = 0;
 				var totalAmount = 0;
@@ -2943,20 +3181,20 @@
 				var totalOtherDed = 0;
 				var totalNet = 0;
 				var gross = 0;
-				var html = summaryHeaderHtml("Salary Creation Detail", entryName || "");
+				var html = summaryHeaderHtml("Salary Creation Detail", targetEntry);
 				html +=
 					"<div class='pp-summary-chips'>" +
 					"<span class='pp-summary-chip'>PO Number: " +
-					esc(first.po_number || "-") +
+					esc((detail && detail.po_number) || "-") +
 					"</span>" +
 					"<span class='pp-summary-chip'>Delivery Note: " +
-					esc(first.delivery_note || "-") +
+					esc((detail && detail.delivery_note) || "-") +
 					"</span>" +
 					"<span class='pp-summary-chip'>From: " +
-					esc(first.from_date || "-") +
+					esc((detail && detail.from_date) || "-") +
 					"</span>" +
 					"<span class='pp-summary-chip'>To: " +
-					esc(first.to_date || "-") +
+					esc((detail && detail.to_date) || "-") +
 					"</span>" +
 					"<span class='pp-summary-chip'>Rows: " +
 					esc(rows.length) +
@@ -2965,44 +3203,24 @@
 				html +=
 					"<table class='pp-table'><thead><tr><th>Employee</th><th>Qty</th><th>Rate</th><th>Salary Amount</th><th>Advance Balance</th><th>Advance Deduction</th><th>Allowance</th><th>Other Deduction</th><th>Net Amount</th></tr></thead><tbody>";
 				rows.forEach(function (r) {
-					var empKey = String(r.employee || "").trim();
-					var empFin = byEmpFin[empKey] || {};
-					var advanceDeduction = num(
-						empFin.advance_deduction_amount != null
-							? empFin.advance_deduction_amount
-							: empFin.advance_deduction
-					);
-					var otherDeduction = num(
-						empFin.other_deduction_amount != null
-							? empFin.other_deduction_amount
-							: empFin.other_deduction
-					);
-					var netAmount = num(
-						empFin.net_amount != null ? empFin.net_amount : empFin.net_salary
-					);
-					if (netAmount <= 0) {
-						netAmount = Math.max(num(r.amount) - advanceDeduction - otherDeduction, 0);
-					}
-					var allowance = num(empFin.allowance_amount);
-					if (allowance <= 0) {
-						allowance = Math.max(
-							netAmount - num(r.amount) + advanceDeduction + otherDeduction,
-							0
-						);
-					}
+					var advanceDeduction = num(r.advance_deduction);
+					var otherDeduction = num(r.other_deduction);
+					var allowance = num(r.allowance);
+					var salaryAmount = num(r.salary_amount);
+					var netAmount = num(r.net_amount);
 					var advanceBalance = Math.max(
 						num((state.advanceBalances || {})[r.employee]) + advanceDeduction,
 						0
 					);
 					totalQty += num(r.qty);
 					totalRate += num(r.rate);
-					totalAmount += num(r.amount);
+					totalAmount += salaryAmount;
 					totalAdvanceBal += advanceBalance;
 					totalAdvanceDed += advanceDeduction;
 					totalAllowance += allowance;
 					totalOtherDed += otherDeduction;
 					totalNet += netAmount;
-					gross += num(r.amount) + allowance;
+					gross += salaryAmount + allowance;
 					html +=
 						"<tr>" +
 						"<td>" +
@@ -3015,7 +3233,7 @@
 						esc(fmt(r.rate)) +
 						"</td>" +
 						"<td class='num pp-amt-col'>" +
-						esc(fmt(r.amount)) +
+						esc(fmt(salaryAmount)) +
 						"</td>" +
 						"<td class='num pp-amt-col'>" +
 						esc(fmt(advanceBalance)) +
@@ -3078,7 +3296,7 @@
 					esc(fmt(totalNet)) +
 					"</span>" +
 					"</div>";
-				setSummaryModal("Salary Creation Detail", entryName || "", html);
+				setSummaryModal("Salary Creation Detail", targetEntry, html);
 				if (printNow) {
 					setTimeout(function () {
 						printSummaryModal();
@@ -3337,7 +3555,7 @@
 			setWorkflowStatusFilter("salary_creation", salaryBooking, salaryPayment);
 			var salaryDocs = filterDocsByStatus(
 				filterRowsByDateRange(
-					uniqueCreatedSalaryDocs(),
+					uniqueCreatedSalaryBatchDocs(),
 					salaryHistoryFrom,
 					salaryHistoryTo
 				),
@@ -3400,46 +3618,72 @@
 					"<button type='button' class='btn btn-default btn-xs' id='pp-salary-history-clear-selected'>Clear Selected</button>" +
 					"<button type='button' class='btn btn-success btn-xs' id='pp-salary-history-pay-selected'>Pay Selected Entry</button>" +
 					"<button type='button' class='btn btn-warning btn-xs' id='pp-salary-history-backfill-batch'>Backfill Old Salary to Batch</button>" +
-					"<input type='text' id='pp-salary-history-batch-name' class='input-xs' placeholder='Batch name (optional)' style='min-width:180px;height:28px;' />" +
-					"<button type='button' class='btn btn-primary btn-xs' id='pp-salary-history-create-batch'>Create Batch</button>" +
-					"<button type='button' class='btn btn-default btn-xs' id='pp-salary-history-open-batch'>Open Batch</button>" +
-					"<button type='button' class='btn btn-warning btn-xs' id='pp-salary-history-pay-batch'>Pay Batch</button>" +
 					"<span style='color:#334155;font-size:12px;'>Selected Entries: <strong id='pp-salary-history-selected-count'>" +
 					esc(selectedCount) +
 					"</strong></span>" +
 					"</div>";
 				html +=
-					"<table class='pp-table' style='margin-top:6px;'><thead><tr><th>Select</th><th>Salary Entry</th><th>PO Number</th><th>Delivery Note</th><th>JV Entry</th><th>Total Salary</th><th>Allowance</th><th>Adv Deduction</th><th>Oth Deduction</th><th>Net Salary</th><th>Book</th><th>Pay</th><th>Delete</th><th>Salary View</th><th>JV View</th></tr></thead><tbody>";
+					"<table class='pp-table' style='margin-top:6px;'><thead><tr><th>Select</th><th>Batch Entry</th><th>DE No</th><th>PO No</th><th>Delivery No</th><th>JV Salary</th><th>JV Payment</th><th>Total Salary</th><th>Allowance</th><th>Advance Deduction</th><th>Other Deduction</th><th>Net Salary</th><th>Book</th><th>Pay</th><th>Delete</th><th>Salary View</th><th>JV View</th></tr></thead><tbody>";
 				(salaryPage.rows || []).forEach(function (r) {
 					tSalary += num(r.amount);
 					tAllow += num(r.allowance_amount);
 					tAdv += num(r.advance_deduction_amount);
 					tOther += num(r.other_deduction_amount);
 					tNet += num(r.net_salary);
-					var checked = selectedHistory[r.name] ? " checked" : "";
+					var entriesCsv = String(r._entries_csv || r.name || "").trim();
+					var entryKeys = entriesCsv
+						.split(",")
+						.map(function (x) {
+							return String(x || "").trim();
+						})
+						.filter(Boolean);
+					var checked = entryKeys.some(function (k) {
+						return !!selectedHistory[k];
+					});
 					var bookedDone =
 						String(r.booking_status || "") === "Booked"
 							? "<span style='color:#64748b;'>Done</span>"
 							: "<button type='button' class='btn btn-xs btn-primary pp-salary-history-book' data-entry='" +
-							  esc(r.name) +
+							  esc(entryKeys[0] || "") +
+							  "' data-entries='" +
+							  esc(entriesCsv) +
 							  "'>Book</button>";
 					var payAction =
 						String(r.payment_status || "") === "Paid"
 							? "<span style='color:#64748b;'>Done</span>"
 							: "<button type='button' class='btn btn-xs btn-success pp-go-pay-salary-entry' data-entry='" +
-							  esc(r.name) +
+							  esc(entryKeys[0] || "") +
+							  "' data-entries='" +
+							  esc(entriesCsv) +
 							  "'>Pay</button>";
+					var deleteAction =
+						entryKeys.length === 1
+							? "<button type='button' class='btn btn-xs btn-danger pp-salary-history-delete' data-entry='" +
+							  esc(entryKeys[0]) +
+							  "'>Delete</button>"
+							: "<span style='color:#94a3b8;'>Batch</span>";
 					html +=
 						"<tr>" +
 						"<td><input type='checkbox' class='pp-salary-history-select' data-entry='" +
-						esc(r.name) +
+						esc(entryKeys[0] || "") +
+						"' data-entries='" +
+						esc(entriesCsv) +
 						"'" +
-						checked +
+						(checked ? " checked" : "") +
 						"></td>" +
+						"<td>" +
+						(r.batch_entry
+							? "<a target='_blank' href='/app/per-piece-salary-batch/" +
+							  encodeURIComponent(r.batch_entry) +
+							  "'>" +
+							  esc(r.batch_entry) +
+							  "</a>"
+							: "") +
+						"</td>" +
 						"<td><a target='_blank' href='/app/per-piece-salary/" +
-						encodeURIComponent(r.name) +
+						encodeURIComponent(entryKeys[0] || "") +
 						"'>" +
-						esc(r.name) +
+						esc((entryKeys || []).join(", ")) +
 						"</a></td>" +
 						"<td>" +
 						esc(r.po_number || "") +
@@ -3448,13 +3692,10 @@
 						esc(r.delivery_note || "") +
 						"</td>" +
 						"<td>" +
-						(r.jv_entry_no
-							? "<a target='_blank' href='/app/journal-entry/" +
-							  encodeURIComponent(r.jv_entry_no) +
-							  "'>" +
-							  esc(r.jv_entry_no) +
-							  "</a>"
-							: "") +
+						renderJvLinks(r.jv_entry_no || "") +
+						"</td>" +
+						"<td>" +
+						renderJvLinks(r.payment_jv_no || "") +
 						"</td>" +
 						"<td class='num pp-amt-col pp-salary-history-cell' data-entry='" +
 						esc(r.name) +
@@ -3487,11 +3728,15 @@
 						"<td>" +
 						payAction +
 						"</td>" +
-						"<td><button type='button' class='btn btn-xs btn-danger pp-salary-history-delete' data-entry='" +
-						esc(r.name) +
-						"'>Delete</button></td>" +
+						"<td>" +
+						deleteAction +
+						"</td>" +
 						"<td><button type='button' class='btn btn-xs btn-info pp-view-salary-create' data-entry='" +
-						esc(r.name) +
+						esc(entryKeys[0] || "") +
+						"' data-entries='" +
+						esc(entriesCsv) +
+						"' data-batch='" +
+						esc(r.batch_entry || "") +
 						"'>View</button></td>" +
 						"<td>" +
 						(r.jv_entry_no
@@ -3503,7 +3748,7 @@
 						"</tr>";
 				});
 				html +=
-					"<tr class='pp-year-total'><td></td><td>Total</td><td></td><td></td><td></td><td id='pp-salary-history-total-salary' class='num pp-amt-col'>" +
+					"<tr class='pp-year-total'><td></td><td>Total</td><td></td><td></td><td></td><td></td><td></td><td id='pp-salary-history-total-salary' class='num pp-amt-col'>" +
 					esc(fmt(tSalary)) +
 					"</td><td id='pp-salary-history-total-allowance' class='num pp-amt-col'>" +
 					esc(fmt(tAllow)) +
