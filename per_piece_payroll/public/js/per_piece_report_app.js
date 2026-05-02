@@ -3917,6 +3917,48 @@
 			tab === "data_entry" || tab === "salary_creation" || tab === "payment_manage";
 		if (isEntryScreen) wrap.classList.add("pp-entry-screen");
 		else wrap.classList.remove("pp-entry-screen");
+
+		var liveWrap = el("pp-live-section-wrap");
+		var historyWrap = el("pp-history-section-wrap");
+		var liveHead = el("pp-live-section-head");
+		var historyHead = el("pp-history-section-head");
+		var salarySection1Head = el("pp-salary-section1-head");
+		var paymentSection1Head = el("pp-payment-section1-head");
+		var paymentSection2Head = el("pp-payment-section2-head");
+		if (liveWrap && historyWrap) {
+			if (isEntryScreen) {
+				liveWrap.style.display = "";
+				historyWrap.style.display = "";
+			} else {
+				liveWrap.style.display = "none";
+				historyWrap.style.display = "none";
+			}
+		}
+		if (liveHead && historyHead) {
+			if (tab === "salary_creation") {
+				liveHead.style.display = "";
+				if (salarySection1Head) {
+					salarySection1Head.textContent =
+						"Section 1: Salary Creation Filters & Actions";
+				}
+				liveHead.textContent = "Section 2: Salary Creation Entry";
+				historyHead.textContent = "Section 3: Salary Creation History";
+			} else if (tab === "payment_manage") {
+				if (paymentSection1Head) {
+					paymentSection1Head.textContent = "Section 1: Payment Entry Filters";
+				}
+				if (paymentSection2Head) {
+					paymentSection2Head.textContent = "Section 2: Payment Entry";
+				}
+				liveHead.style.display = "none";
+				liveHead.textContent = "";
+				historyHead.textContent = "Section 3: Payment Entry History";
+			} else {
+				liveHead.style.display = "";
+				liveHead.textContent = "Section 2: Entry";
+				historyHead.textContent = "Section 3: History";
+			}
+		}
 	}
 
 	function toggleEmployeeSummaryDetailControl() {
@@ -3929,13 +3971,44 @@
 
 	function ensureWorkflowCardsPosition() {
 		var tableWrap = el("pp-table-wrap");
+		var liveWrap = el("pp-live-section-wrap");
+		var historyWrap = el("pp-history-section-wrap");
 		var salaryCard = el("pp-salary-jv-card");
 		var paymentCard = el("pp-payment-jv-card");
-		if (!tableWrap || !salaryCard || !paymentCard) return;
-		var parent = tableWrap.parentNode;
-		if (!parent) return;
-		parent.insertBefore(salaryCard, tableWrap);
-		parent.insertBefore(paymentCard, tableWrap);
+		var msgWrap = el("pp-msg");
+		var root = document.querySelector(".pp-wrap");
+		if (
+			!tableWrap ||
+			!salaryCard ||
+			!paymentCard ||
+			!liveWrap ||
+			!historyWrap ||
+			!root ||
+			!msgWrap
+		)
+			return;
+		// Keep fixed visual order:
+		// [salary/payment card] -> [section 2 live] -> [section 3 history]
+		// Place cards directly after pp-msg so Section 1 always stays on top.
+		if (salaryCard.parentNode !== root || salaryCard.previousElementSibling !== msgWrap) {
+			root.insertBefore(salaryCard, msgWrap.nextSibling);
+		}
+		if (paymentCard.parentNode !== root || paymentCard.previousElementSibling !== msgWrap) {
+			root.insertBefore(paymentCard, msgWrap.nextSibling);
+		}
+		var activeCard =
+			String(state.currentTab || "") === "payment_manage" ? paymentCard : salaryCard;
+		if (activeCard.previousElementSibling !== msgWrap) {
+			root.insertBefore(activeCard, msgWrap.nextSibling);
+		}
+		if (liveWrap.parentNode !== root) root.appendChild(liveWrap);
+		if (historyWrap.parentNode !== root) root.appendChild(historyWrap);
+		if (liveWrap.previousElementSibling !== activeCard) {
+			root.insertBefore(liveWrap, activeCard.nextSibling);
+		}
+		if (liveWrap.nextElementSibling !== historyWrap) {
+			root.insertBefore(historyWrap, liveWrap.nextSibling);
+		}
 	}
 
 	function renderCurrentTab() {

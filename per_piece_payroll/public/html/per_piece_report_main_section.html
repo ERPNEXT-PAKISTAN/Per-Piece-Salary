@@ -207,12 +207,16 @@
 	</div>
 
 	<div id="pp-msg" class="pp-msg"></div>
-	<div id="pp-table-wrap" class="pp-table-wrap"></div>
-	<div id="pp-totals" class="pp-totals"></div>
-	<div id="pp-pagination" class="pp-pagination"></div>
+	<div id="pp-live-section-wrap" class="pp-entry-section" style="display: none">
+		<div id="pp-live-section-head" class="pp-entry-section-head">Section 2: Entry</div>
+		<div id="pp-table-wrap" class="pp-table-wrap"></div>
+		<div id="pp-totals" class="pp-totals"></div>
+		<div id="pp-pagination" class="pp-pagination"></div>
+	</div>
 
 	<div class="pp-jv-card" id="pp-salary-jv-card" style="display: none">
 		<h4>Salary Creation Tab (Book Salary To Payable)</h4>
+		<div id="pp-salary-section1-head" class="pp-entry-section-head">Section 1: Salary Creation Filters & Actions</div>
 		<div class="pp-jv-grid">
 			<label
 				>Entry Filter (Unbooked)
@@ -301,6 +305,7 @@
 
 	<div class="pp-jv-card" id="pp-payment-jv-card" style="display: none">
 		<h4>Payment Entry Create for Employees (Pay Booked Salary)</h4>
+		<div id="pp-payment-section1-head" class="pp-entry-section-head">Section 1: Payment Entry Filters</div>
 		<div class="pp-jv-grid">
 			<label
 				>Entry Filter (Unpaid)
@@ -342,37 +347,43 @@
 			/></label>
 			<label>Total Unpaid <input type="text" id="pp-pay-unpaid-amount" readonly /></label>
 		</div>
-		<div class="pp-jv-actions">
-			<button id="pp-pay-entry-clear" class="btn btn-default" type="button">
-				Clear Entry Filter
-			</button>
-			<button id="pp-pay-entry-add" class="btn btn-default" type="button">
-				Add Filter Entry
-			</button>
-			<button id="pp-pay-entry-remove" class="btn btn-default" type="button">
-				Remove Filter Entry
-			</button>
-			<button id="pp-pay-entry-refresh" class="btn btn-default" type="button">
-				Refresh Entries
-			</button>
-			<button id="pp-pay-preview-btn" class="btn btn-default" type="button">
-				Quick Preview Payment JV
-			</button>
-			<button id="pp-pay-create-btn" class="btn btn-primary" type="button">
-				Post Payment JV
-			</button>
-			<select id="pp-pay-existing">
-				<option value="">Select Payment JV</option>
-			</select>
-			<button id="pp-pay-cancel-btn" class="btn btn-danger" type="button">
-				Cancel Payment JV
-			</button>
+		<div id="pp-payment-section2-wrap" class="pp-entry-section">
+			<div id="pp-payment-section2-head" class="pp-entry-section-head">Section 2: Payment Entry</div>
+			<div class="pp-jv-actions">
+				<button id="pp-pay-entry-clear" class="btn btn-default" type="button">
+					Clear Entry Filter
+				</button>
+				<button id="pp-pay-entry-add" class="btn btn-default" type="button">
+					Add Filter Entry
+				</button>
+				<button id="pp-pay-entry-remove" class="btn btn-default" type="button">
+					Remove Filter Entry
+				</button>
+				<button id="pp-pay-entry-refresh" class="btn btn-default" type="button">
+					Refresh Entries
+				</button>
+				<button id="pp-pay-preview-btn" class="btn btn-default" type="button">
+					Quick Preview Payment JV
+				</button>
+				<button id="pp-pay-create-btn" class="btn btn-primary" type="button">
+					Post Payment JV
+				</button>
+				<select id="pp-pay-existing">
+					<option value="">Select Payment JV</option>
+				</select>
+				<button id="pp-pay-cancel-btn" class="btn btn-danger" type="button">
+					Cancel Payment JV
+				</button>
+			</div>
+			<div id="pp-pay-entry-meta" class="pp-msg" style="margin-top: 6px"></div>
+			<div id="pp-pay-result" class="pp-jv-result"></div>
 		</div>
-		<div id="pp-pay-entry-meta" class="pp-msg" style="margin-top: 6px"></div>
-		<div id="pp-pay-result" class="pp-jv-result"></div>
 	</div>
 
-	<div id="pp-created-list-wrap" class="pp-entry-list"></div>
+	<div id="pp-history-section-wrap" class="pp-entry-section" style="display: none">
+		<div id="pp-history-section-head" class="pp-entry-section-head">Section 3: History</div>
+		<div id="pp-created-list-wrap" class="pp-entry-list"></div>
+	</div>
 
 	<div id="pp-summary-modal" class="pp-modal" style="display: none">
 		<div class="pp-modal-card">
@@ -427,7 +438,7 @@
 	</div>
 </div>
 
-<link rel="stylesheet" href="/assets/per_piece_payroll/css/per_piece_report.css?v=20260502_02" />
+<link rel="stylesheet" href="/assets/per_piece_payroll/css/per_piece_report.css?v=20260503_14" />
 <script src="/assets/per_piece_payroll/js/per_piece_report_core.js?v=20260502_02"></script>
 <script src="/assets/per_piece_payroll/js/per_piece_report_utils.js?v=20260502_02"></script>
 <script src="/assets/per_piece_payroll/js/per_piece_report_data_entry_helpers.js?v=20260502_02"></script>
@@ -438,4 +449,4 @@
 <script src="/assets/per_piece_payroll/js/per_piece_report_views.js?v=20260502_03"></script>
 <script src="/assets/per_piece_payroll/js/per_piece_report_salary_slip.js?v=20260502_02"></script>
 <script src="/assets/per_piece_payroll/js/per_piece_report_entry_ui.js?v=20260502_02"></script>
-<script src="/assets/per_piece_payroll/js/per_piece_report_app.js?v=20260503_03"></script>
+<script src="/assets/per_piece_payroll/js/per_piece_report_app.js?v=20260503_13"></script>

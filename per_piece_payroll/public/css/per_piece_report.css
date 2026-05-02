@@ -46,6 +46,11 @@
   #pp-salary-jv-card h4 { color: #92400e; }
   #pp-payment-jv-card { background: linear-gradient(180deg, #ecfdf5 0%, #fff 40%); border-color: #6ee7b7; }
   #pp-payment-jv-card h4 { color: #065f46; }
+  #pp-payment-section2-wrap {
+    margin-top: 12px;
+    border-color: #86efac;
+    background: #f8fffb;
+  }
   .pp-entry-card { margin-top: 10px; background: #f8fafc; border: 1px dashed #93c5fd; border-radius: 12px; padding: 14px; }
   .pp-entry-title { color: #0f172a; font-size: 16px; }
   .pp-entry-subtitle { margin-top: 6px; color: #475569; font-size: 12px; }
