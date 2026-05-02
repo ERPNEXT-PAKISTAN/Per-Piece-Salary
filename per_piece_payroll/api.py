@@ -681,11 +681,31 @@ def _create_payment_entry_snapshot(
 			limit_page_length=5000,
 		)
 	}
-	doc = frappe.new_doc("Per Piece Payment Entry")
-	doc.posting_date = frappe.utils.nowdate()
-	doc.salary_entries_json = json.dumps(entry_list, separators=(",", ":"))
-	doc.journal_entry = str(jv_name or "").strip()
-	doc.remarks = str(remarks or "").strip()
+	json_entries = json.dumps(entry_list, separators=(",", ":"))
+	existing_name = frappe.db.get_value(
+		"Per Piece Payment Entry",
+		{
+			"salary_entries_json": json_entries,
+			"journal_entry": ["in", ["", None]],
+		},
+		"name",
+		order_by="creation desc",
+	)
+	if existing_name:
+		doc = frappe.get_doc("Per Piece Payment Entry", existing_name)
+		doc.posting_date = frappe.utils.nowdate()
+		doc.salary_entries_json = json_entries
+		doc.journal_entry = str(jv_name or "").strip()
+		doc.jv_status = "Posted" if str(jv_name or "").strip() else "Draft"
+		doc.remarks = str(remarks or "").strip()
+		doc.set("rows", [])
+	else:
+		doc = frappe.new_doc("Per Piece Payment Entry")
+		doc.posting_date = frappe.utils.nowdate()
+		doc.salary_entries_json = json_entries
+		doc.journal_entry = str(jv_name or "").strip()
+		doc.jv_status = "Posted" if str(jv_name or "").strip() else "Draft"
+		doc.remarks = str(remarks or "").strip()
 
 	agg: dict[tuple[str, str], dict] = {}
 	for row in after_rows:
@@ -750,7 +770,10 @@ def _create_payment_entry_snapshot(
 
 	total_payment = sum(flt(r.get("payment_amount")) for r in (doc.get("rows") or []))
 	doc.total_payment_amount = round(total_payment, 2)
-	doc.insert(ignore_permissions=True)
+	if existing_name:
+		doc.save(ignore_permissions=True)
+	else:
+		doc.insert(ignore_permissions=True)
 	return str(doc.name)
 
 
@@ -1730,6 +1753,142 @@ def _append_batch_in_jv_remarks(jv_name: str, entry_names: list[str] | None = No
 		frappe.db.set_value("Journal Entry Account", name, "user_remark", new_remark, update_modified=False)
 
 
+def _first_ref_jv_amount(refs_text: str, jv_name: str) -> float:
+	jv = str(jv_name or "").strip()
+	for chunk in str(refs_text or "").split(";;"):
+		p = str(chunk or "").strip()
+		if not p or "::" not in p:
+			continue
+		ref_jv, ref_amt = p.split("::", 1)
+		if str(ref_jv or "").strip() != jv:
+			continue
+		return max(flt(ref_amt), 0.0)
+	return 0.0
+
+
+def _apply_compact_jv_remarks(jv_name: str, entry_names: list[str] | None = None, *, payment: bool) -> None:
+	jv = str(jv_name or "").strip()
+	if not jv or not frappe.db.exists("Journal Entry", jv):
+		return
+	names = [str(x or "").strip() for x in (entry_names or []) if str(x or "").strip()]
+	if not names:
+		return
+
+	salary_rows = frappe.get_all(
+		"Per Piece Salary",
+		filters={"name": ["in", names]},
+		fields=["name", "salary_batch"],
+		limit_page_length=10000,
+	)
+	batches = sorted(
+		{
+			str((r or {}).get("salary_batch") or "").strip()
+			for r in (salary_rows or [])
+			if str((r or {}).get("salary_batch") or "").strip()
+		}
+	)
+	payment_entry_name = ""
+	if payment:
+		payment_entry_name = str(
+			frappe.db.get_value("Per Piece Payment Entry", {"journal_entry": jv}, "name") or ""
+		).strip()
+
+	main_parts = []
+	main_parts.append("DE No: " + ", ".join(names))
+	if batches:
+		main_parts.append("Batch No: " + ", ".join(batches))
+	if payment and payment_entry_name:
+		main_parts.append("PE No: " + payment_entry_name)
+	main_remark = " | ".join(main_parts)
+
+	# Keep JE-level remark concise and deterministic.
+	if frappe.db.has_column("Journal Entry", "user_remark"):
+		frappe.db.set_value("Journal Entry", jv, "user_remark", main_remark, update_modified=False)
+	if frappe.db.has_column("Journal Entry", "remark"):
+		frappe.db.set_value("Journal Entry", jv, "remark", main_remark, update_modified=False)
+
+	per_piece_rows = frappe.get_all(
+		"Per Piece",
+		filters={
+			"parent": ["in", names],
+			"parenttype": "Per Piece Salary",
+			"parentfield": "perpiece",
+		},
+		fields=["name", "parent", "employee", "name1", "net_amount", "payment_refs", "paid_amount"],
+		limit_page_length=200000,
+	)
+	emp_rows: dict[str, list[dict]] = {}
+	for r in per_piece_rows or []:
+		emp = str((r or {}).get("employee") or "").strip()
+		if not emp:
+			continue
+		emp_rows.setdefault(emp, []).append(r)
+
+	# Update child row remark fields to concise text.
+	for emp, rows in (emp_rows or {}).items():
+		total_amount = 0.0
+		for r in rows:
+			if payment:
+				total_amount += _first_ref_jv_amount((r or {}).get("payment_refs"), jv)
+			else:
+				total_amount += max(flt((r or {}).get("net_amount")), 0.0)
+		emp_name = str((rows[0] or {}).get("name1") or emp).strip()
+		entry_no = str((rows[0] or {}).get("parent") or "").strip()
+		label = "Salary Paid" if payment else "Net Salary"
+		compact = f"DE No: {entry_no} | Employee: {emp_name} | {label}: {round(total_amount, 2)}"
+		for r in rows:
+			row_name = str((r or {}).get("name") or "").strip()
+			if not row_name:
+				continue
+			if payment:
+				frappe.db.set_value(
+					"Per Piece",
+					row_name,
+					"payment_line_remark",
+					compact,
+					update_modified=False,
+				)
+			else:
+				frappe.db.set_value(
+					"Per Piece",
+					row_name,
+					"jv_line_remark",
+					compact,
+					update_modified=False,
+				)
+
+	# Update JE account row remarks (only employee-party lines).
+	accounts = frappe.get_all(
+		"Journal Entry Account",
+		filters={"parent": jv},
+		fields=["name", "party_type", "party", "debit_in_account_currency", "credit_in_account_currency"],
+		limit_page_length=10000,
+	)
+	for a in accounts or []:
+		if str((a or {}).get("party_type") or "").strip() != "Employee":
+			continue
+		emp = str((a or {}).get("party") or "").strip()
+		if not emp:
+			continue
+		rows = emp_rows.get(emp) or []
+		if not rows:
+			continue
+		emp_name = str((rows[0] or {}).get("name1") or emp).strip()
+		entry_no = str((rows[0] or {}).get("parent") or "").strip()
+		amount = max(
+			flt((a or {}).get("credit_in_account_currency")), flt((a or {}).get("debit_in_account_currency"))
+		)
+		label = "Salary Paid" if payment else "Net Salary"
+		compact = f"DE No: {entry_no} | Employee: {emp_name} | {label}: {round(amount, 2)}"
+		frappe.db.set_value(
+			"Journal Entry Account",
+			str((a or {}).get("name") or "").strip(),
+			"user_remark",
+			compact,
+			update_modified=False,
+		)
+
+
 def _append_payment_ref_text(existing: str, jv_name: str, amount: float) -> str:
 	jv = str(jv_name or "").strip()
 	if not jv:
@@ -2521,7 +2680,7 @@ def create_per_piece_salary_jv(**kwargs):
 	recalculate_per_piece_salary_totals(names)
 	rebuild_salary_summary_rows(names)
 	_ensure_auto_salary_batch_for_entries(names)
-	_append_batch_in_jv_remarks(jv_name, names)
+	_apply_compact_jv_remarks(jv_name, names, payment=False)
 	rebuild_batches_for_entries(names)
 	return out
 
@@ -2568,7 +2727,17 @@ def create_per_piece_salary_payment_jv(**kwargs):
 	recalculate_per_piece_salary_totals(names)
 	rebuild_salary_summary_rows(names)
 	rebuild_batches_for_entries(names)
-	_append_batch_in_jv_remarks(jv_name, names)
+	_apply_compact_jv_remarks(jv_name, names, payment=True)
+	# Ensure payment entry docs linked to this JV show Posted status.
+	if jv_name and frappe.db.has_column("Per Piece Payment Entry", "jv_status"):
+		frappe.db.sql(
+			"""
+			UPDATE `tabPer Piece Payment Entry`
+			SET jv_status='Posted'
+			WHERE journal_entry=%s
+			""",
+			(jv_name,),
+		)
 	return out
 
 
@@ -2586,12 +2755,15 @@ def get_per_piece_payment_entries(entry_no: str | None = None, limit: int = 50):
 			"posting_date",
 			"company",
 			"journal_entry",
+			"jv_status",
 			"total_payment_amount",
 			"salary_entries_json",
 		],
 		order_by="posting_date desc, creation desc",
 		limit_page_length=limit_n,
 	)
+	all_jv_names: list[str] = []
+	all_entry_names: set[str] = set()
 	for d in docs:
 		try:
 			entries = json.loads(str(d.get("salary_entries_json") or "[]"))
@@ -2602,6 +2774,43 @@ def get_per_piece_payment_entries(entry_no: str | None = None, limit: int = 50):
 		entries = [str(x or "").strip() for x in entries if str(x or "").strip()]
 		d["salary_entries"] = entries
 		d["rows"] = frappe.db.count("Per Piece Payment Entry Row", {"parent": d.get("name")})
+		all_entry_names.update(entries)
+		jv = str(d.get("journal_entry") or "").strip()
+		if jv:
+			all_jv_names.append(jv)
+
+	jv_status_map: dict[str, int] = {}
+	if all_jv_names:
+		for je in frappe.get_all(
+			"Journal Entry",
+			filters={"name": ["in", sorted(set(all_jv_names))]},
+			fields=["name", "docstatus"],
+			limit_page_length=5000,
+		):
+			jv_status_map[str((je or {}).get("name") or "").strip()] = int((je or {}).get("docstatus") or 0)
+
+	batch_link_map: dict[str, dict] = {}
+	if all_entry_names:
+		batch_link_map = (get_salary_batch_links(",".join(sorted(all_entry_names))) or {}).get("data") or {}
+
+	for d in docs:
+		jv = str(d.get("journal_entry") or "").strip()
+		if not jv:
+			stored = str(d.get("jv_status") or "").strip()
+			d["jv_status"] = stored if stored in {"Draft", "Posted", "Cancelled"} else ""
+			if flt(d.get("total_payment_amount")) > 0:
+				d["jv_status"] = "Cancelled"
+			elif not d["jv_status"] or d["jv_status"] == "Posted":
+				d["jv_status"] = "Draft"
+		else:
+			ds = int(jv_status_map.get(jv, 0))
+			d["jv_status"] = "Posted" if ds == 1 else ("Cancelled" if ds == 2 else "Draft")
+		batches: list[str] = []
+		for e in d.get("salary_entries") or []:
+			b = str((batch_link_map.get(str(e) or {}) or {}).get("salary_batch") or "").strip()
+			if b and b not in batches:
+				batches.append(b)
+		d["salary_batch_entries"] = batches
 	return docs
 
 
@@ -2647,6 +2856,7 @@ def get_per_piece_payment_entry_detail(payment_entry: str):
 	return {
 		"name": name,
 		"journal_entry": str(doc.get("journal_entry") or "").strip(),
+		"jv_status": str(doc.get("jv_status") or ""),
 		"posting_date": str(doc.get("posting_date") or "").strip(),
 		"company": str(doc.get("company") or "").strip(),
 		"rows": out_rows,
@@ -2697,6 +2907,17 @@ def cancel_per_piece_salary_payment_jv(**kwargs):
 	jv = kwargs.get("journal_entry")
 	names = _get_entries_for_jv(jv, payment=True)
 	out = _run_legacy_api_script(CANCEL_PAYMENT_JV_SERVER_SCRIPT, kwargs)
+	jv_name = str(jv or "").strip()
+	if jv_name and frappe.db.exists("DocType", "Per Piece Payment Entry"):
+		update_data = {"journal_entry": ""}
+		if frappe.db.has_column("Per Piece Payment Entry", "jv_status"):
+			update_data["jv_status"] = "Cancelled"
+		frappe.db.set_value(
+			"Per Piece Payment Entry",
+			{"journal_entry": jv_name},
+			update_data,
+			update_modified=False,
+		)
 	recalculate_per_piece_salary_totals(names)
 	rebuild_salary_summary_rows(names)
 	rebuild_batches_for_entries(names)
@@ -2792,7 +3013,10 @@ def cleanup_cancelled_jv_links(entry_nos=None, entry_no=None) -> dict:
 		if not name or not je:
 			continue
 		if jv_state.get(je, 0) != 1:
-			frappe.db.set_value("Per Piece Payment Entry", name, "journal_entry", "", update_modified=False)
+			update_data = {"journal_entry": ""}
+			if frappe.db.has_column("Per Piece Payment Entry", "jv_status"):
+				update_data["jv_status"] = "Cancelled"
+			frappe.db.set_value("Per Piece Payment Entry", name, update_data, update_modified=False)
 			updated_payment_entries += 1
 
 	if names:

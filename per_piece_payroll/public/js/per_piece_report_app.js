@@ -1947,85 +1947,6 @@
 				loadReport();
 			});
 		});
-		wrap.querySelectorAll(".pp-salary-history-delete").forEach(function (btn) {
-			btn.addEventListener("click", function () {
-				var entry = String(btn.getAttribute("data-entry") || "").trim();
-				if (!entry) return;
-				showResult(
-					el("pp-jv-result"),
-					"info",
-					"Checking Links",
-					"Checking linked records for " + esc(entry) + "..."
-				);
-				callApi("per_piece_payroll.api.preview_delete_per_piece_salary_bundle", {
-					entry_no: entry,
-				})
-					.then(function (resp) {
-						if (!resp || resp.ok === false) {
-							throw new Error((resp && resp.message) || "Entry not found.");
-						}
-						var links = resp.links || {};
-						var hasLinks = !!resp.delete_linked_required;
-						var linkedText =
-							"Rows: " +
-							esc(String(links.child_rows || 0)) +
-							" | Salary JVs: " +
-							esc(String((links.salary_jvs || []).length)) +
-							" | Payment JVs: " +
-							esc(String((links.payment_jvs || []).length)) +
-							" | Payment Entries: " +
-							esc(String((links.payment_entries || []).length)) +
-							" | Salary Batches: " +
-							esc(String((links.salary_batches || []).length));
-						if (!hasLinks) {
-							if (!confirm("Delete salary entry " + entry + " ?")) return;
-							return callApi(
-								"per_piece_payroll.api.delete_per_piece_salary_bundle",
-								{
-									entry_no: entry,
-									delete_linked: 0,
-								}
-							);
-						}
-						var yes = confirm(
-							"Linked records found for " +
-								entry +
-								".\n\n" +
-								linkedText +
-								"\n\nPress OK to Delete WITH linked records.\nPress Cancel to keep data."
-						);
-						if (!yes) return null;
-						return callApi("per_piece_payroll.api.delete_per_piece_salary_bundle", {
-							entry_no: entry,
-							delete_linked: 1,
-						});
-					})
-					.then(function (resp) {
-						if (!resp) return;
-						if (resp.ok === false) {
-							throw new Error(resp.message || "Delete failed.");
-						}
-						showResult(
-							el("pp-jv-result"),
-							"success",
-							"Deleted",
-							"Deleted salary entry: <strong>" + esc(entry) + "</strong>"
-						);
-						if (state.entryMeta && state.entryMeta.selected_salary_history) {
-							delete state.entryMeta.selected_salary_history[entry];
-						}
-						loadReport();
-					})
-					.catch(function (e) {
-						showResult(
-							el("pp-jv-result"),
-							"error",
-							"Delete Failed",
-							prettyError(errText(e))
-						);
-					});
-			});
-		});
 		wrap.querySelectorAll(".pp-salary-history-book").forEach(function (btn) {
 			btn.addEventListener("click", function () {
 				var entriesCsv = String(btn.getAttribute("data-entries") || "").trim();
@@ -2139,52 +2060,6 @@
 					return;
 				}
 				goToPaymentForEntries(selected);
-			});
-		}
-		if (el("pp-salary-history-backfill-batch")) {
-			el("pp-salary-history-backfill-batch").addEventListener("click", function () {
-				var selected = getSelectedSalaryHistoryEntries();
-				var hasSelected = selected && selected.length;
-				var question = hasSelected
-					? "Backfill selected entries into Salary Batch?"
-					: "No selected entries. Backfill ALL old booked entries into Salary Batch?";
-				if (!confirm(question)) return;
-				showResult(
-					el("pp-jv-result"),
-					"info",
-					"Backfill Running",
-					hasSelected
-						? "Backfilling selected entries..."
-						: "Backfilling all old booked entries..."
-				);
-				callApi("per_piece_payroll.api.backfill_auto_salary_batches", {
-					entry_nos: hasSelected ? selected.join(",") : "",
-				})
-					.then(function (resp) {
-						if (!resp || resp.ok === false) {
-							throw new Error((resp && resp.message) || "Backfill failed.");
-						}
-						showResult(
-							el("pp-jv-result"),
-							"success",
-							"Backfill Completed",
-							"Entries: " +
-								esc(resp.entries || 0) +
-								" | Batches touched: " +
-								esc(resp.batches || 0) +
-								" | Links created: " +
-								esc(resp.entries_linked || 0)
-						);
-						loadReport();
-					})
-					.catch(function (e) {
-						showResult(
-							el("pp-jv-result"),
-							"error",
-							"Backfill Failed",
-							prettyError(errText(e))
-						);
-					});
 			});
 		}
 		if (el("pp-salary-history-create-batch")) {
@@ -3617,13 +3492,12 @@
 					"<button type='button' class='btn btn-default btn-xs' id='pp-salary-history-select-page'>Select Page</button>" +
 					"<button type='button' class='btn btn-default btn-xs' id='pp-salary-history-clear-selected'>Clear Selected</button>" +
 					"<button type='button' class='btn btn-success btn-xs' id='pp-salary-history-pay-selected'>Pay Selected Entry</button>" +
-					"<button type='button' class='btn btn-warning btn-xs' id='pp-salary-history-backfill-batch'>Backfill Old Salary to Batch</button>" +
 					"<span style='color:#334155;font-size:12px;'>Selected Entries: <strong id='pp-salary-history-selected-count'>" +
 					esc(selectedCount) +
 					"</strong></span>" +
 					"</div>";
 				html +=
-					"<table class='pp-table' style='margin-top:6px;'><thead><tr><th>Select</th><th>Batch Entry</th><th>DE No</th><th>PO No</th><th>Delivery No</th><th>JV Salary</th><th>JV Payment</th><th>Total Salary</th><th>Allowance</th><th>Advance Deduction</th><th>Other Deduction</th><th>Net Salary</th><th>Book</th><th>Pay</th><th>Delete</th><th>Salary View</th><th>JV View</th></tr></thead><tbody>";
+					"<table class='pp-table' style='margin-top:6px;'><thead><tr><th>Select</th><th>Batch Entry</th><th>DE No</th><th>PO No</th><th>Delivery No</th><th>JV Salary</th><th>JV Payment</th><th>Total Salary</th><th>Allowance</th><th>Advance Deduction</th><th>Other Deduction</th><th>Net Salary</th><th>Book</th><th>Pay</th><th>Salary View</th><th>JV View</th></tr></thead><tbody>";
 				(salaryPage.rows || []).forEach(function (r) {
 					tSalary += num(r.amount);
 					tAllow += num(r.allowance_amount);
@@ -3656,12 +3530,6 @@
 							  "' data-entries='" +
 							  esc(entriesCsv) +
 							  "'>Pay</button>";
-					var deleteAction =
-						entryKeys.length === 1
-							? "<button type='button' class='btn btn-xs btn-danger pp-salary-history-delete' data-entry='" +
-							  esc(entryKeys[0]) +
-							  "'>Delete</button>"
-							: "<span style='color:#94a3b8;'>Batch</span>";
 					html +=
 						"<tr>" +
 						"<td><input type='checkbox' class='pp-salary-history-select' data-entry='" +
@@ -3728,9 +3596,6 @@
 						"<td>" +
 						payAction +
 						"</td>" +
-						"<td>" +
-						deleteAction +
-						"</td>" +
 						"<td><button type='button' class='btn btn-xs btn-info pp-view-salary-create' data-entry='" +
 						esc(entryKeys[0] || "") +
 						"' data-entries='" +
@@ -3758,7 +3623,7 @@
 					esc(fmt(tOther)) +
 					"</td><td id='pp-salary-history-total-net' class='num pp-amt-col'>" +
 					esc(fmt(tNet)) +
-					"</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>";
+					"</td><td></td><td></td><td></td><td></td><td></td></tr>";
 				html += "</tbody></table>";
 				html += historyPagerHtml(salaryPage);
 			}
@@ -3845,16 +3710,39 @@
 						tRows = 0;
 					var phtml =
 						phtmlHeader +
-						"<table class='pp-table' style='margin-top:6px;'><thead><tr><th>Payment Entry</th><th>Salary Entries</th><th>Payment Amount</th><th>Rows</th><th>View</th><th>Print</th><th>Open</th></tr></thead><tbody>";
+						"<table class='pp-table' style='margin-top:6px;'><thead><tr><th>Payment Entry</th><th>Batch Entry</th><th>Salary Entries</th><th>JV Payment</th><th>Status</th><th>Payment Amount</th><th>Rows</th><th>View</th><th>Print</th><th>Open</th></tr></thead><tbody>";
 					(payPage.rows || []).forEach(function (r) {
 						tPayAmt += num(r.total_payment_amount);
 						tRows += num(r.rows || 0);
 						var jvName = String(r.journal_entry || "").trim();
+						var batchNames = (r.salary_batch_entries || []).filter(Boolean);
 						phtml +=
 							"<tr><td>" +
 							esc(r.name || "") +
 							"</td><td>" +
+							batchNames
+								.map(function (b) {
+									return (
+										"<a target='_blank' href='/app/per-piece-salary-batch/" +
+										encodeURIComponent(b) +
+										"'>" +
+										esc(b) +
+										"</a>"
+									);
+								})
+								.join(", ") +
+							"</td><td>" +
 							esc((r.salary_entries || []).join(", ")) +
+							"</td><td>" +
+							(jvName
+								? "<a target='_blank' href='/app/journal-entry/" +
+								  encodeURIComponent(jvName) +
+								  "'>" +
+								  esc(jvName) +
+								  "</a>"
+								: "") +
+							"</td><td>" +
+							esc(String(r.jv_status || "")) +
 							"</td><td class='num pp-amt-col'>" +
 							esc(fmt(r.total_payment_amount)) +
 							"</td><td class='num'>" +
@@ -3872,7 +3760,7 @@
 							"</td></tr>";
 					});
 					phtml +=
-						"<tr class='pp-year-total'><td>Total</td><td></td><td class='num pp-amt-col'>" +
+						"<tr class='pp-year-total'><td>Total</td><td></td><td></td><td></td><td></td><td class='num pp-amt-col'>" +
 						esc(fmt(tPayAmt)) +
 						"</td><td class='num'>" +
 						esc(fmt(tRows)) +
@@ -5291,7 +5179,9 @@
 		});
 	}
 	el("pp-jv-preview-btn").addEventListener("click", previewJV);
-	el("pp-jv-recalc-entry-btn").addEventListener("click", recalculateSelectedEntry);
+	if (el("pp-jv-recalc-entry-btn")) {
+		el("pp-jv-recalc-entry-btn").addEventListener("click", recalculateSelectedEntry);
+	}
 	el("pp-jv-create-btn").addEventListener("click", createJV);
 	el("pp-jv-cancel-btn").addEventListener("click", cancelJVEntry);
 	el("pp-pay-preview-btn").addEventListener("click", previewPaymentJV);

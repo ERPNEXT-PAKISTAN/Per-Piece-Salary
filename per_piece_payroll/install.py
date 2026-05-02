@@ -375,6 +375,17 @@ def ensure_payment_doctypes() -> None:
 		)
 		_upsert_field(
 			doc,
+			"jv_status",
+			{
+				"label": "JV Status",
+				"fieldtype": "Select",
+				"options": "Draft\nPosted\nCancelled",
+				"default": "Draft",
+				"read_only": 1,
+			},
+		)
+		_upsert_field(
+			doc,
 			"total_payment_amount",
 			{"label": "Total Payment Amount", "fieldtype": "Float", "precision": "2", "read_only": 1},
 		)
