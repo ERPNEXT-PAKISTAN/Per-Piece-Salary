@@ -3926,13 +3926,10 @@
 		var paymentSection1Head = el("pp-payment-section1-head");
 		var paymentSection2Head = el("pp-payment-section2-head");
 		if (liveWrap && historyWrap) {
-			if (isEntryScreen) {
-				liveWrap.style.display = "";
-				historyWrap.style.display = "";
-			} else {
-				liveWrap.style.display = "none";
-				historyWrap.style.display = "none";
-			}
+			// Always show liveWrap to display report/entry tables
+			liveWrap.style.display = "";
+			// Show historyWrap for entry screens only
+			historyWrap.style.display = isEntryScreen ? "" : "none";
 		}
 		if (liveHead && historyHead) {
 			if (tab === "salary_creation") {
