@@ -183,8 +183,6 @@ fixtures = [
 				[
 					"Per Piece Payment Entry Row",
 					"Per Piece Payment Entry",
-					"Per Piece Salary",
-					"Per Piece",
 					"Per Piece Salary Payment Row",
 					"Per Piece Salary Summary Row",
 					"Per Piece Salary Batch Summary Row",
