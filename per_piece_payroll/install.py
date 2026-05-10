@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import frappe
 
@@ -28,11 +29,52 @@ def after_install() -> None:
 	cleanup_legacy_ui_scripts()
 
 
+def before_migrate() -> None:
+	_sanitize_conflicting_custom_field_fixtures()
+
+
 def after_migrate() -> None:
 	ensure_payment_doctypes()
 	apply()
 	ensure_workspace()
 	cleanup_legacy_ui_scripts()
+
+
+def _sanitize_conflicting_custom_field_fixtures() -> None:
+	"""Prevent duplicate Custom Field fixture import for doctypes we now manage inline."""
+	fixtures_dir = Path(frappe.get_app_path("per_piece_payroll", "fixtures"))
+	if not fixtures_dir.exists():
+		return
+
+	target_doctypes = {"Per Piece", "Per Piece Salary"}
+	for fixture_path in fixtures_dir.glob("*.json"):
+		try:
+			raw = fixture_path.read_text(encoding="utf-8")
+			payload = json.loads(raw)
+		except Exception:
+			continue
+
+		if not isinstance(payload, list):
+			continue
+
+		cleaned = []
+		removed = 0
+		for row in payload:
+			if not isinstance(row, dict):
+				cleaned.append(row)
+				continue
+			if row.get("doctype") == "Custom Field" and row.get("dt") in target_doctypes:
+				removed += 1
+				continue
+			cleaned.append(row)
+
+		if removed:
+			fixture_path.write_text(json.dumps(cleaned, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+			frappe.logger().warning(
+				"Removed %s conflicting Custom Field fixture rows from %s",
+				removed,
+				str(fixture_path),
+			)
 
 
 def cleanup_legacy_ui_scripts() -> None:

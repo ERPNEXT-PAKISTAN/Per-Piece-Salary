@@ -170,6 +170,8 @@ doc_events = {
 
 # before_tests = "per_piece_payroll.install.before_tests"
 
+before_migrate = ["per_piece_payroll.install.before_migrate"]
+
 # run setup on every migrate to keep scripts/fields synced
 after_migrate = ["per_piece_payroll.install.after_migrate"]
 
