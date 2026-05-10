@@ -49,34 +49,40 @@ Optional safe re-apply:
 bench --site site1.local execute per_piece_payroll.api.apply_per_piece_payroll_setup
 ```
 
-### Update on Existing Client Server (Single Correct Command Set)
+### Update on Existing Client Server (Routine)
 
 If app is already installed, do not run `bench get-app` again.
-Use this exact sequence (works for benches where remote is either `origin` or `upstream`):
+Use this exact sequence:
 
 ```bash
 cd /home/frappe/frappe-bench || exit 1
 
 # 0) backup before update
-bench --site site1.local backup --with-files
+bench --site YOUR_SITE backup --with-files
 
 # 1) pull latest code
+git -C apps/per_piece_payroll status --short
+# only if status is not clean:
+git -C apps/per_piece_payroll stash push -u -m "temp before update"
+
 git -C apps/per_piece_payroll remote -v
 git -C apps/per_piece_payroll pull origin main || git -C apps/per_piece_payroll pull upstream main
 git -C apps/per_piece_payroll log -1 --oneline
 
 # 2) apply schema + fixtures + app setup
-bench --site site1.local migrate
+bench --site YOUR_SITE migrate
 
 # 3) force app setup once (ensures legacy UI scripts/web page are cleaned if present)
-bench --site site1.local execute per_piece_payroll.per_piece_setup.apply
+bench --site YOUR_SITE execute per_piece_payroll.per_piece_setup.apply
 
 # 4) cache/build/restart
-bench --site site1.local clear-cache
-bench --site site1.local clear-website-cache
+bench --site YOUR_SITE clear-cache
+bench --site YOUR_SITE clear-website-cache
 bench build --app per_piece_payroll
 bench restart
 ```
+
+Where `YOUR_SITE` is your actual site name (for example `ah.frappe.my`).
 
 If `bench restart` is not available on your hosting platform, restart processes from your hosting panel/container supervisor.
 
