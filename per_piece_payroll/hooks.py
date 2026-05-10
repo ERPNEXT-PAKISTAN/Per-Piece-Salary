@@ -223,10 +223,6 @@ fixtures = [
 		"filters": [["name", "in", ["Per Piece Print"]]],
 	},
 	{
-		"dt": "Page",
-		"filters": [["name", "in", ["per-piece-entry", "per-piece-reporting"]]],
-	},
-	{
 		"dt": "Custom HTML Block",
 		"filters": [["name", "in", ["Advances"]]],
 	},
