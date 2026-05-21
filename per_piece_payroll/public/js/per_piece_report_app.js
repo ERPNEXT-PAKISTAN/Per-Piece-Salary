@@ -2365,7 +2365,10 @@
 		if (!names.length) return Promise.resolve(false);
 		var cache = getSalaryBatchCache();
 		var missing = names.filter(function (entry) {
-			return typeof cache[entry] === "undefined";
+			if (typeof cache[entry] === "undefined") return true;
+			var row = cache[entry] || {};
+			var batch = String((row && row.salary_batch) || "").trim();
+			return !batch;
 		});
 		if (!missing.length) return Promise.resolve(false);
 		return callApi("per_piece_payroll.api.get_salary_batch_links", {
