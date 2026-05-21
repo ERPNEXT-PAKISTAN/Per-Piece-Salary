@@ -870,6 +870,7 @@
 		var selectedMap = {};
 		if (loadByItem && selectedItem) selectedMap[selectedItem] = true;
 		var hasSelected = Object.keys(selectedMap).length > 0;
+		var salaryBatchByEntry = getSalaryBatchCache();
 
 		(state.entryMeta.masterEmployeeOptions || []).forEach(function (opt) {
 			if (opt && opt.value) {
@@ -926,6 +927,23 @@
 			}
 			if (processType) processSet[processType] = true;
 			if (processSize) processSizeSet[processSize] = true;
+		});
+
+		// Keep entry->batch cache hydrated from currently available rows.
+		((state.rows || []).concat(state.entryMeta.recentRows || []) || []).forEach(function (r) {
+			var entryNo = String((r && r.per_piece_salary) || "").trim();
+			if (!entryNo) return;
+			if (typeof salaryBatchByEntry[entryNo] === "undefined")
+				salaryBatchByEntry[entryNo] = {};
+			var rowBatch = String((r && r.salary_batch) || "").trim();
+			if (
+				rowBatch &&
+				!String((salaryBatchByEntry[entryNo] || {}).salary_batch || "").trim()
+			) {
+				salaryBatchByEntry[entryNo] = Object.assign({}, salaryBatchByEntry[entryNo], {
+					salary_batch: rowBatch,
+				});
+			}
 		});
 
 		(state.filterOptions.employees || []).forEach(function (v) {
@@ -2423,6 +2441,56 @@
 		});
 	}
 
+	function loadSalarySlipBatchRowsFromCurrentRows() {
+		if (!state.entryMeta) state.entryMeta = {};
+		var entryMap = {};
+		(state.rows || []).forEach(function (r) {
+			var e = String((r && r.per_piece_salary) || "").trim();
+			if (e) entryMap[e] = 1;
+		});
+		var names = Object.keys(entryMap);
+		if (!names.length) {
+			state.entryMeta.salarySlipBatchRows = [];
+			return Promise.resolve([]);
+		}
+		return callApi("per_piece_payroll.api.get_salary_slip_batch_rows", {
+			entry_names: names,
+		})
+			.then(function (resp) {
+				state.entryMeta.salarySlipBatchRows = (resp && resp.data) || [];
+				return state.entryMeta.salarySlipBatchRows;
+			})
+			.catch(function () {
+				state.entryMeta.salarySlipBatchRows = [];
+				return [];
+			});
+	}
+
+	function loadSalaryStatusBatchRowsFromCurrentRows() {
+		if (!state.entryMeta) state.entryMeta = {};
+		var entryMap = {};
+		(state.rows || []).forEach(function (r) {
+			var e = String((r && r.per_piece_salary) || "").trim();
+			if (e) entryMap[e] = 1;
+		});
+		var names = Object.keys(entryMap);
+		if (!names.length) {
+			state.entryMeta.salaryStatusBatchRows = [];
+			return Promise.resolve([]);
+		}
+		return callApi("per_piece_payroll.api.get_salary_status_batch_rows", {
+			entry_names: names,
+		})
+			.then(function (resp) {
+				state.entryMeta.salaryStatusBatchRows = (resp && resp.data) || [];
+				return state.entryMeta.salaryStatusBatchRows;
+			})
+			.catch(function () {
+				state.entryMeta.salaryStatusBatchRows = [];
+				return [];
+			});
+	}
+
 	function ensureSalaryFinancials(entryNames) {
 		var names = (entryNames || [])
 			.map(function (n) {
@@ -2934,6 +3002,47 @@
 	}
 
 	function hydratePaymentHistoryAmounts(_rows) {}
+
+	function buildSalaryStatusRows(rows) {
+		var map = {};
+		(rows || []).forEach(function (r) {
+			var emp = String((r && r.employee) || "").trim();
+			if (!emp) return;
+			var entry = String((r && r.per_piece_salary) || "").trim();
+			var batch = String((r && r.salary_batch) || "").trim();
+			if (!batch && entry) {
+				var cache =
+					(((state || {}).entryMeta || {}).salaryBatchByEntry || {})[entry] || {};
+				batch = String((cache && cache.salary_batch) || "").trim();
+			}
+			var key = (batch || "(No Batch)") + "||" + emp;
+			if (!map[key]) {
+				map[key] = {
+					salary_batch: batch || "(No Batch)",
+					employee: emp,
+					name1: String((r && r.name1) || "").trim() || emp,
+					booked_amount: 0,
+					paid_amount: 0,
+					unpaid_amount: 0,
+					payment_status: "Unpaid",
+				};
+			}
+			map[key].booked_amount += Math.max(num((r && r.booked_amount) || (r && r.amount)), 0);
+			map[key].paid_amount += Math.max(num((r && r.paid_amount) || 0), 0);
+			map[key].unpaid_amount += Math.max(num((r && r.unpaid_amount) || 0), 0);
+		});
+		return Object.keys(map)
+			.sort()
+			.map(function (k) {
+				var row = map[k];
+				if (row.unpaid_amount <= 0.005 && row.booked_amount > 0)
+					row.payment_status = "Paid";
+				else if (row.paid_amount > 0 && row.unpaid_amount > 0.005)
+					row.payment_status = "Partly Paid";
+				else row.payment_status = "Unpaid";
+				return row;
+			});
+	}
 
 	function getSalaryCreationEntryRows(entryName, sourceRows) {
 		var target = String(entryName || "").trim();
@@ -4133,13 +4242,16 @@
 			return;
 		} else if (state.currentTab === "jv_created") {
 			cols = [
+				{ fieldname: "salary_batch", label: "Batch Entry" },
 				{ fieldname: "name1", label: "Employee" },
 				{ fieldname: "booked_amount", label: "Booked Amount", numeric: true },
 				{ fieldname: "paid_amount", label: "Paid Amount", numeric: true },
 				{ fieldname: "unpaid_amount", label: "Unpaid Amount", numeric: true },
 				{ fieldname: "payment_status", label: "Payment Status" },
 			];
-			outRows = buildPaymentEmployeeRows(getBookedRows());
+			outRows = ((state.entryMeta && state.entryMeta.salaryStatusBatchRows) || []).length
+				? state.entryMeta.salaryStatusBatchRows
+				: buildSalaryStatusRows(getBookedRows());
 		} else if (state.currentTab === "payment_manage") {
 			outRows = (getPaymentRows() || []).filter(function (r) {
 				var booked = num(r && r.booked_amount);
@@ -4262,7 +4374,9 @@
 			refreshPaymentAmounts();
 			return;
 		} else if (state.currentTab === "salary_slip") {
-			outRows = rows;
+			outRows = ((state.entryMeta && state.entryMeta.salarySlipBatchRows) || []).length
+				? state.entryMeta.salarySlipBatchRows
+				: rows;
 			paged = paginateRows(outRows);
 			renderSalarySlipTable(paged.rows);
 			state.lastTabRender = { mode: "dom", columns: [], rows: [] };
@@ -4316,10 +4430,6 @@
 				{ fieldname: "qty", label: "Qty", numeric: true },
 				{ fieldname: "rate", label: "Rate", numeric: true },
 				{ fieldname: "amount", label: "Amount", numeric: true },
-				{ fieldname: "booked_amount", label: "Booked", numeric: true },
-				{ fieldname: "unbooked_amount", label: "UnBooked", numeric: true },
-				{ fieldname: "paid_amount", label: "Paid", numeric: true },
-				{ fieldname: "unpaid_amount", label: "Unpaid", numeric: true },
 			];
 			outRows = buildEmployeeMonthYearRows(rows);
 		} else if (state.currentTab === "month_paid_unpaid") {
@@ -4672,29 +4782,25 @@
 						});
 				}
 				// Fast first paint: render current tab immediately with current dataset.
+				// For Salary Slip tabs, batch-link hydration is mandatory before first render.
 				return basisPromise.then(function () {
-					rebuildEntryMetaLookups();
-					refreshTopProductOptions();
-					normalizeExcludedEmployees();
-					normalizeAdjustmentsForEmployees();
-					normalizePaymentExcludedEmployees();
-					normalizePaymentAdjustments();
-					renderCurrentTab();
-					loadJVEntryOptions();
-					loadPaymentJVEntryOptions();
-
-					// Background hydrate for heavy datasets (recent docs + advances), then refresh.
-					return loadAllRowsForRecentDocs()
-						.then(function () {
-							return loadAdvancesFromGL();
-						})
-						.catch(function (e) {
-							console.error(e);
-							state.advanceBalances = (msg && msg.advance_balances) || {};
-							state.advanceRows = (msg && msg.advance_rows) || [];
-							state.advanceMonths = (msg && msg.advance_months) || [];
-						})
-						.then(function () {
+					var preloadPromise = Promise.resolve(false);
+					if (
+						state.currentTab === "salary_slip" ||
+						state.currentTab === "salary_slip_dc"
+					) {
+						var preloadEntries = {};
+						(state.rows || []).forEach(function (r) {
+							var e = String((r && r.per_piece_salary) || "").trim();
+							if (e) preloadEntries[e] = 1;
+						});
+						preloadPromise = ensureSalaryBatchLinks(Object.keys(preloadEntries));
+					}
+					return preloadPromise.then(function () {
+						return Promise.all([
+							loadSalarySlipBatchRowsFromCurrentRows(),
+							loadSalaryStatusBatchRowsFromCurrentRows(),
+						]).then(function () {
 							rebuildEntryMetaLookups();
 							refreshTopProductOptions();
 							normalizeExcludedEmployees();
@@ -4702,9 +4808,59 @@
 							normalizePaymentExcludedEmployees();
 							normalizePaymentAdjustments();
 							renderCurrentTab();
+							// Ensure salary batch links are loaded for reporting/print tabs
+							// where report rows may not carry salary_batch directly.
+							var entryNames = {};
+							(state.rows || []).forEach(function (r) {
+								var e = String((r && r.per_piece_salary) || "").trim();
+								if (e) entryNames[e] = 1;
+							});
+							ensureSalaryBatchLinks(Object.keys(entryNames)).then(function (
+								updated
+							) {
+								if (updated) {
+									rebuildEntryMetaLookups();
+									if (
+										state.currentTab === "salary_slip" ||
+										state.currentTab === "salary_slip_dc"
+									) {
+										renderCurrentTab();
+									}
+								}
+							});
 							loadJVEntryOptions();
 							loadPaymentJVEntryOptions();
+
+							// Background hydrate for heavy datasets (recent docs + advances), then refresh.
+							return loadAllRowsForRecentDocs()
+								.then(function () {
+									return loadAdvancesFromGL();
+								})
+								.catch(function (e) {
+									console.error(e);
+									state.advanceBalances = (msg && msg.advance_balances) || {};
+									state.advanceRows = (msg && msg.advance_rows) || [];
+									state.advanceMonths = (msg && msg.advance_months) || [];
+								})
+								.then(function () {
+									return Promise.all([
+										loadSalarySlipBatchRowsFromCurrentRows(),
+										loadSalaryStatusBatchRowsFromCurrentRows(),
+									]);
+								})
+								.then(function () {
+									rebuildEntryMetaLookups();
+									refreshTopProductOptions();
+									normalizeExcludedEmployees();
+									normalizeAdjustmentsForEmployees();
+									normalizePaymentExcludedEmployees();
+									normalizePaymentAdjustments();
+									renderCurrentTab();
+									loadJVEntryOptions();
+									loadPaymentJVEntryOptions();
+								});
 						});
+					});
 				});
 			})
 			.catch(function (e) {

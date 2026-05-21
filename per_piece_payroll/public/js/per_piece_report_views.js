@@ -821,41 +821,65 @@
 			}
 			var html =
 				"<table class='pp-table'><thead><tr>" +
-				"<th>Employee</th><th>Entries</th><th>Qty</th><th>Rate</th><th>Amount</th><th>Booked</th><th>Paid</th><th>Unpaid</th><th>Booking Status</th><th>Payment Status</th><th>Action</th>" +
+				"<th>Batch Entry</th><th>Employee</th><th>Entries</th><th>Qty</th><th>Rate</th><th>Booked</th><th>Allowance</th><th>Advance Deduction</th><th>Other Deduction</th><th>Net Salary</th><th>Booking Status</th><th>Payment Status</th><th>Action</th>" +
 				"</tr></thead><tbody>";
-			var totals = { entries: 0, qty: 0, rate: 0, amount: 0, booked: 0, paid: 0, unpaid: 0 };
+			var totals = {
+				entries: 0,
+				qty: 0,
+				rate: 0,
+				booked: 0,
+				allowance: 0,
+				advance_deduction: 0,
+				other_deduction: 0,
+				net_salary: 0,
+			};
 			groups.forEach(function (g) {
 				var gBooked = 0,
 					gPaid = 0,
 					gUnpaid = 0;
+				var hasBooked = false,
+					hasUnbooked = false;
 				(g.rows || []).forEach(function (r) {
 					gBooked += num(r.booked_amount);
 					gPaid += num(r.paid_amount);
 					gUnpaid += num(r.unpaid_amount);
+					var bs = String((r && r.booking_status) || "").trim();
+					if (bs === "Booked") hasBooked = true;
+					else hasUnbooked = true;
 				});
-				var gBookingStatus =
-					gBooked > 0
-						? gBooked + 0.0001 >= num(g.amount)
-							? "Booked"
-							: "Partly Booked"
-						: "UnBooked";
+				var gBookingStatus = hasBooked
+					? hasUnbooked
+						? "Partly Booked"
+						: "Booked"
+					: "UnBooked";
 				var gPaymentStatus =
 					gPaid > 0 ? (gUnpaid <= 0.0001 ? "Paid" : "Partly Paid") : "Unpaid";
 				var action =
 					"<button type='button' class='btn btn-primary btn-xs pp-salary-slip-print' data-mode='detail' data-employee='" +
 					encodeURIComponent(String(g.employee || "")) +
+					"' data-batch='" +
+					encodeURIComponent(String(g.salary_batch || "")) +
 					"'>Print Detail Slip</button> " +
 					"<button type='button' class='btn btn-primary btn-xs pp-salary-slip-print' data-mode='product' data-employee='" +
 					encodeURIComponent(String(g.employee || "")) +
+					"' data-batch='" +
+					encodeURIComponent(String(g.salary_batch || "")) +
 					"'>Print Product Slip</button> " +
 					"<button type='button' class='btn btn-primary btn-xs pp-salary-slip-print' data-mode='order' data-employee='" +
 					encodeURIComponent(String(g.employee || "")) +
+					"' data-batch='" +
+					encodeURIComponent(String(g.salary_batch || "")) +
 					"'>Salary Slip by Order</button> " +
 					"<button type='button' class='btn btn-primary btn-xs pp-salary-slip-entry-prints' data-employee='" +
 					encodeURIComponent(String(g.employee || "")) +
+					"' data-batch='" +
+					encodeURIComponent(String(g.salary_batch || "")) +
 					"'>Entry Wise Print</button>";
 				html +=
 					"<tr>" +
+					"<td>" +
+					esc(g.salary_batch || "-") +
+					"</td>" +
 					"<td>" +
 					esc(g.name1 || g.employee || "") +
 					"</td>" +
@@ -869,16 +893,19 @@
 					esc(fmt(g.rate)) +
 					"</td>" +
 					"<td class='num pp-amt-col'>" +
-					esc(fmt(g.amount)) +
-					"</td>" +
-					"<td class='num pp-amt-col'>" +
 					esc(fmt(gBooked)) +
 					"</td>" +
 					"<td class='num pp-amt-col'>" +
-					esc(fmt(gPaid)) +
+					esc(fmt(g.allowance)) +
 					"</td>" +
 					"<td class='num pp-amt-col'>" +
-					esc(fmt(gUnpaid)) +
+					esc(fmt(g.advance_deduction)) +
+					"</td>" +
+					"<td class='num pp-amt-col'>" +
+					esc(fmt(g.other_deduction)) +
+					"</td>" +
+					"<td class='num pp-amt-col'>" +
+					esc(fmt(g.net_salary)) +
 					"</td>" +
 					"<td>" +
 					statusBadgeHtml(gBookingStatus) +
@@ -893,27 +920,30 @@
 				totals.entries += num(g.source_count);
 				totals.qty += num(g.qty);
 				totals.rate += num(g.rate);
-				totals.amount += num(g.amount);
 				totals.booked += gBooked;
-				totals.paid += gPaid;
-				totals.unpaid += gUnpaid;
+				totals.allowance += num(g.allowance);
+				totals.advance_deduction += num(g.advance_deduction);
+				totals.other_deduction += num(g.other_deduction);
+				totals.net_salary += num(g.net_salary);
 			});
 			html +=
-				"<tr class='pp-year-total'><td>Total</td><td class='num'>" +
+				"<tr class='pp-year-total'><td></td><td>Total</td><td class='num'>" +
 				esc(fmt(totals.entries)) +
 				"</td><td class='num'>" +
 				esc(fmt(totals.qty)) +
 				"</td><td class='num'>" +
 				esc(fmt(totals.rate)) +
 				"</td><td class='num pp-amt-col'>" +
-				esc(fmt(totals.amount)) +
-				"</td><td class='num pp-amt-col'>" +
 				esc(fmt(totals.booked)) +
 				"</td><td class='num pp-amt-col'>" +
-				esc(fmt(totals.paid)) +
+				esc(fmt(totals.allowance)) +
 				"</td><td class='num pp-amt-col'>" +
-				esc(fmt(totals.unpaid)) +
-				"</td><td></td><td></td><td></td></tr>";
+				esc(fmt(totals.advance_deduction)) +
+				"</td><td class='num pp-amt-col'>" +
+				esc(fmt(totals.other_deduction)) +
+				"</td><td class='num pp-amt-col'>" +
+				esc(fmt(totals.net_salary)) +
+				"</td><td></td><td></td><td></td><td></td></tr>";
 			html += "</tbody></table>";
 			wrap.innerHTML = html;
 			wrap.querySelectorAll(".pp-doc-summary").forEach(function (btn) {
@@ -925,14 +955,16 @@
 			wrap.querySelectorAll(".pp-salary-slip-print").forEach(function (btn) {
 				btn.addEventListener("click", function () {
 					var employee = decodeURIComponent(btn.getAttribute("data-employee") || "");
+					var batch = decodeURIComponent(btn.getAttribute("data-batch") || "");
 					var mode = String(btn.getAttribute("data-mode") || "detail");
-					showSalarySlipPrint(employee, { mode: mode });
+					showSalarySlipPrint(employee, { mode: mode, batch: batch });
 				});
 			});
 			wrap.querySelectorAll(".pp-salary-slip-entry-prints").forEach(function (btn) {
 				btn.addEventListener("click", function () {
 					var employee = decodeURIComponent(btn.getAttribute("data-employee") || "");
-					showSalaryEntryWisePrints(employee);
+					var batch = decodeURIComponent(btn.getAttribute("data-batch") || "");
+					showSalaryEntryWisePrints(employee, { batch: batch });
 				});
 			});
 			wrap.querySelectorAll(".pp-go-book-entry").forEach(function (btn) {
@@ -1041,6 +1073,10 @@
 						employee_name: empName,
 						from_date: r.from_date || "",
 						to_date: r.to_date || "",
+						salary_amount: 0,
+						allowance: 0,
+						advance_deduction: 0,
+						other_deduction: 0,
 						net_salary: 0,
 						row_count: 0,
 					};
@@ -1057,6 +1093,10 @@
 				var other = num(r.other_deduction);
 				var net = num(r.net_amount);
 				if (!net) net = Math.max(amount - adv + allow - other, 0);
+				map[key].salary_amount += amount;
+				map[key].allowance += allow;
+				map[key].advance_deduction += adv;
+				map[key].other_deduction += other;
 				map[key].net_salary += net;
 				map[key].row_count += 1;
 			});
@@ -1082,10 +1122,18 @@
 			}
 			var html =
 				"<table class='pp-table'><thead><tr>" +
-				"<th>From Date</th><th>To Date</th><th>DC No.</th><th>Entry No</th><th>Employee</th><th>Net Salary</th><th>Print</th>" +
+				"<th>From Date</th><th>To Date</th><th>DC No.</th><th>Entry No</th><th>Employee</th><th>Salary Amount</th><th>Allowance</th><th>Advance Deduction</th><th>Other Deduction</th><th>Net Salary</th><th>Print</th>" +
 				"</tr></thead><tbody>";
-			var totalNet = 0;
+			var totalSalary = 0,
+				totalAllow = 0,
+				totalAdv = 0,
+				totalOther = 0,
+				totalNet = 0;
 			entries.forEach(function (r) {
+				totalSalary += num(r.salary_amount);
+				totalAllow += num(r.allowance);
+				totalAdv += num(r.advance_deduction);
+				totalOther += num(r.other_deduction);
 				totalNet += num(r.net_salary);
 				html +=
 					"<tr><td>" +
@@ -1099,6 +1147,14 @@
 					"</td><td>" +
 					esc(r.employee_name || r.employee || "") +
 					"</td><td class='num pp-amt-col'>" +
+					esc(fmt(r.salary_amount)) +
+					"</td><td class='num pp-amt-col'>" +
+					esc(fmt(r.allowance)) +
+					"</td><td class='num pp-amt-col'>" +
+					esc(fmt(r.advance_deduction)) +
+					"</td><td class='num pp-amt-col'>" +
+					esc(fmt(r.other_deduction)) +
+					"</td><td class='num pp-amt-col'>" +
 					esc(fmt(r.net_salary)) +
 					"</td><td><button type='button' class='btn btn-primary btn-xs pp-salary-slip-dc-print' data-entry='" +
 					encodeURIComponent(String(r.entry_no || "")) +
@@ -1110,6 +1166,14 @@
 			});
 			html +=
 				"<tr class='pp-year-total'><td colspan='5'>Total</td><td class='num pp-amt-col'>" +
+				esc(fmt(totalSalary)) +
+				"</td><td class='num pp-amt-col'>" +
+				esc(fmt(totalAllow)) +
+				"</td><td class='num pp-amt-col'>" +
+				esc(fmt(totalAdv)) +
+				"</td><td class='num pp-amt-col'>" +
+				esc(fmt(totalOther)) +
+				"</td><td class='num pp-amt-col'>" +
 				esc(fmt(totalNet)) +
 				"</td><td></td></tr>";
 			html += "</tbody></table>";

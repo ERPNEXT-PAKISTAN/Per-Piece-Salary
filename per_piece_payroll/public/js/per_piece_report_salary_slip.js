@@ -89,132 +89,89 @@
 			var paidAmount = 0;
 			var bookedAmount = 0;
 			var unbookedAmount = 0;
-			var postedAmount = 0;
+			var allowanceAmount = 0;
+			var advanceDeduction = 0;
+			var otherDeduction = 0;
+			var netAmount = 0;
 			((group && group.rows) || []).forEach(function (row) {
-				var status = String(row.jv_status || "");
-				var hasJV = !!String(row.jv_entry_no || "").trim();
-				if (hasJV && status === "Posted") {
-					bookedAmount += num(row.amount);
-					paidAmount += num(row.paid_amount);
-					postedAmount += num(row.amount);
-				} else {
-					unbookedAmount += num(row.amount);
-				}
+				var bookingStatus = String((row && row.booking_status) || "").trim();
+				if (bookingStatus === "Booked") bookedAmount += num(row.amount);
+				else unbookedAmount += num(row.amount);
+				paidAmount += num(row.paid_amount);
+				allowanceAmount += num(row.allowance);
+				advanceDeduction += num(row.advance_deduction);
+				otherDeduction += num(row.other_deduction);
+				netAmount += rowNetAmount(row);
 			});
 			var closingAdvance = num((state.advanceBalances || {})[employee]);
-			var jvMap = {};
-			((group && group.rows) || []).forEach(function (row) {
-				var jvName = String(row.jv_entry_no || "").trim();
-				if (!jvName) return;
-				if (String(row.jv_status || "") !== "Posted") return;
-				jvMap[jvName] = 1;
-			});
-			var jvNames = Object.keys(jvMap);
-			if (!jvNames.length) {
-				var openingNoJV = closingAdvance;
-				return Promise.resolve({
-					current_period_salary: amount,
-					booked_salary_amount: 0,
-					unbooked_salary_amount: unbookedAmount || amount,
-					opening_advance_balance: openingNoJV,
-					advance_deduction: 0,
-					allowance: 0,
-					other_deduction: 0,
-					gross_amount: 0,
-					net_amount: 0,
-					paid_amount: 0,
-					unpaid_amount: 0,
-					closing_advance_balance: openingNoJV,
-				});
-			}
-			return Promise.all(
-				jvNames.map(function (jvName) {
-					return getJournalEntryDoc(jvName);
-				})
-			).then(function (docs) {
-				var advanceDeduction = 0;
-				var otherDeduction = 0;
-				var netAmount = 0;
-				docs.forEach(function (doc) {
-					if (!doc || Number(doc.docstatus) !== 1) return;
-					((doc && doc.accounts) || []).forEach(function (acc) {
-						var party = String(acc.party || "").trim();
-						var credit = num(acc.credit_in_account_currency || acc.credit);
-						var remark = String(acc.user_remark || "");
-						if (credit <= 0) return;
-						var isAdvance = remark.indexOf("Advance Recovery - " + employee) === 0;
-						var isDeduction = remark.indexOf("Salary Deduction - " + employee) === 0;
-						var isNet = remark.indexOf("Net Salary - " + employee) === 0;
-						var matchesParty = party === employee;
-						if (
-							isAdvance ||
-							(matchesParty && remark.indexOf("Advance Recovery - ") === 0)
-						) {
-							advanceDeduction += credit;
-						} else if (
-							isDeduction ||
-							(matchesParty && remark.indexOf("Salary Deduction - ") === 0)
-						) {
-							otherDeduction += credit;
-						} else if (
-							isNet ||
-							(matchesParty && remark.indexOf("Net Salary - ") === 0)
-						) {
-							netAmount += credit;
-						}
-					});
-				});
-				advanceDeduction = Math.max(0, advanceDeduction);
-				otherDeduction = Math.max(0, otherDeduction);
-				var postedBaseAmount = Math.max(0, postedAmount);
-				if (netAmount <= 0) {
-					netAmount = Math.max(postedBaseAmount - advanceDeduction - otherDeduction, 0);
-				}
-				var postedAllowance = Math.max(
-					netAmount - postedBaseAmount + advanceDeduction + otherDeduction,
+			advanceDeduction = Math.max(0, advanceDeduction);
+			otherDeduction = Math.max(0, otherDeduction);
+			allowanceAmount = Math.max(0, allowanceAmount);
+			if (netAmount <= 0) {
+				netAmount = Math.max(
+					amount + allowanceAmount - advanceDeduction - otherDeduction,
 					0
 				);
-				var grossAmount = bookedAmount + postedAllowance;
-				var openingAdvance = closingAdvance + advanceDeduction;
-				var closingAdvanceProjected = openingAdvance - advanceDeduction;
-				var adjustedUnpaid = Math.max(netAmount - paidAmount, 0);
-				return {
-					current_period_salary: amount,
-					booked_salary_amount: bookedAmount,
-					unbooked_salary_amount: unbookedAmount,
-					opening_advance_balance: openingAdvance,
-					advance_deduction: advanceDeduction,
-					allowance: postedAllowance,
-					other_deduction: otherDeduction,
-					gross_amount: grossAmount,
-					net_amount: netAmount,
-					paid_amount: paidAmount,
-					unpaid_amount: adjustedUnpaid,
-					closing_advance_balance: closingAdvanceProjected,
-				};
+			}
+			var grossAmount = amount + allowanceAmount;
+			var openingAdvance = closingAdvance + advanceDeduction;
+			var closingAdvanceProjected = Math.max(openingAdvance - advanceDeduction, 0);
+			var adjustedUnpaid = Math.max(netAmount - paidAmount, 0);
+			return Promise.resolve({
+				current_period_salary: amount,
+				booked_salary_amount: bookedAmount,
+				unbooked_salary_amount: unbookedAmount,
+				opening_advance_balance: openingAdvance,
+				advance_deduction: advanceDeduction,
+				allowance: allowanceAmount,
+				other_deduction: otherDeduction,
+				gross_amount: grossAmount,
+				net_amount: netAmount,
+				paid_amount: paidAmount,
+				unpaid_amount: adjustedUnpaid,
+				closing_advance_balance: closingAdvanceProjected,
 			});
 		}
 
 		function buildSalarySlipGroups(rows) {
+			function rowBatchRef(r) {
+				var direct = String((r && r.salary_batch) || "").trim();
+				if (direct) return direct;
+				var entry = String((r && r.per_piece_salary) || "").trim();
+				var cache =
+					(((state || {}).entryMeta || {}).salaryBatchByEntry || {})[entry] || {};
+				return String((cache && cache.salary_batch) || "").trim();
+			}
 			var map = {};
 			(rows || []).forEach(function (r) {
 				var employee = String(r.employee || "").trim();
 				var name1 = String(r.name1 || "").trim() || employee || "(Blank)";
-				var key = employee + "||" + name1;
+				var salaryBatch = rowBatchRef(r);
+				var key = (salaryBatch || "NO-BATCH") + "||" + employee + "||" + name1;
 				if (!map[key]) {
 					map[key] = {
+						salary_batch: salaryBatch,
 						employee: employee,
 						name1: name1,
 						qty: 0,
 						amount: 0,
+						allowance: 0,
+						advance_deduction: 0,
+						other_deduction: 0,
+						net_salary: 0,
 						source_count: 0,
 						rows: [],
 					};
 				}
 				map[key].qty += num(r.qty);
 				map[key].amount += num(r.amount);
+				map[key].allowance += num(r.allowance);
+				map[key].advance_deduction += num(r.advance_deduction);
+				map[key].other_deduction += num(r.other_deduction);
+				map[key].net_salary += rowNetAmount(r);
 				map[key].source_count += 1;
 				map[key].rows.push({
+					salary_batch: salaryBatch,
 					per_piece_salary: r.per_piece_salary || "",
 					po_number: r.po_number || "",
 					delivery_note: r.delivery_note || "",
@@ -231,6 +188,10 @@
 					qty: num(r.qty),
 					rate: num(r.rate),
 					amount: num(r.amount),
+					allowance: num(r.allowance),
+					advance_deduction: num(r.advance_deduction),
+					other_deduction: num(r.other_deduction),
+					net_amount: num(r.net_amount),
 					booked_amount: num(r.booked_amount),
 					paid_amount: num(r.paid_amount),
 					unpaid_amount: num(r.unpaid_amount),
@@ -668,22 +629,27 @@
 			options = options || {};
 			var mode = String(options.mode || "detail");
 			var selectedEntry = String(options.entry || "").trim();
-			var groups = buildSalarySlipGroups(getRowsByHeaderFilters(state.rows || []));
-			var group = null;
-			groups.forEach(function (g) {
-				if (!group && String(g.employee || "") === String(employee || "")) group = g;
-			});
-			if (!group) {
-				setSummaryModal(
-					"Salary Slip Detail",
-					employee || "",
-					"<div style='color:#b91c1c;'>No salary detail found for current filters.</div>"
-				);
-				return;
-			}
-			var scopedRows = (group.rows || []).filter(function (r) {
-				if (!selectedEntry) return true;
-				return String(r.per_piece_salary || "") === selectedEntry;
+			var selectedBatch = String(options.batch || "").trim();
+			var sourceRows = (((state || {}).entryMeta || {}).salarySlipBatchRows || []).length
+				? ((state || {}).entryMeta || {}).salarySlipBatchRows
+				: state.rows || [];
+			var rows = getRowsByHeaderFilters(sourceRows);
+			var scopedRows = (rows || []).filter(function (r) {
+				var rowEntry = String((r && r.per_piece_salary) || "").trim();
+				var rowBatch = String((r && r.salary_batch) || "").trim();
+				if (!rowBatch && rowEntry) {
+					var cache =
+						(((state || {}).entryMeta || {}).salaryBatchByEntry || {})[rowEntry] || {};
+					rowBatch = String((cache && cache.salary_batch) || "").trim();
+				}
+				if (selectedBatch && rowBatch !== selectedBatch) return false;
+				if (selectedEntry && rowEntry !== selectedEntry) return false;
+				if (
+					employee &&
+					String((r && r.employee) || "").trim() !== String(employee || "").trim()
+				)
+					return false;
+				return true;
 			});
 			if (!scopedRows.length) {
 				setSummaryModal(
@@ -693,18 +659,38 @@
 				);
 				return;
 			}
+			var rawRows = getRowsByHeaderFilters(state.rows || []);
+			var detailRows = (rawRows || []).filter(function (r) {
+				var rowEntry = String((r && r.per_piece_salary) || "").trim();
+				var rowBatch = String((r && r.salary_batch) || "").trim();
+				if (!rowBatch && rowEntry) {
+					var cache =
+						(((state || {}).entryMeta || {}).salaryBatchByEntry || {})[rowEntry] || {};
+					rowBatch = String((cache && cache.salary_batch) || "").trim();
+				}
+				if (selectedBatch && rowBatch !== selectedBatch) return false;
+				if (selectedEntry && rowEntry !== selectedEntry) return false;
+				if (
+					employee &&
+					String((r && r.employee) || "").trim() !== String(employee || "").trim()
+				)
+					return false;
+				return true;
+			});
+			if (!detailRows.length) detailRows = scopedRows.slice();
 			var scopedQty = 0;
 			var scopedAmount = 0;
-			scopedRows.forEach(function (r) {
+			detailRows.forEach(function (r) {
 				scopedQty += num(r.qty);
 				scopedAmount += num(r.amount);
 			});
+			var employeeName = String((detailRows[0] && detailRows[0].name1) || "").trim();
 			var scopedGroup = {
-				employee: group.employee || "",
-				name1: group.name1 || "",
+				employee: employee || "",
+				name1: employeeName || employee || "",
 				qty: scopedQty,
 				amount: scopedAmount,
-				source_count: scopedRows.length,
+				source_count: detailRows.length,
 				rate: avgRate(scopedQty, scopedAmount),
 				rows: scopedRows,
 			};
@@ -713,10 +699,16 @@
 				employee || "",
 				"<div style='color:#334155;'>Loading salary slip...</div>"
 			);
-			var detail = buildSalarySlipGroupDetail(scopedGroup);
+			var detail = buildSalarySlipGroupDetail({
+				employee: scopedGroup.employee,
+				name1: scopedGroup.name1,
+				rows: detailRows,
+				qty: scopedQty,
+				amount: scopedAmount,
+			});
 			var slipFrom = "";
 			var slipTo = "";
-			scopedRows.forEach(function (r) {
+			detailRows.forEach(function (r) {
 				var rowFrom = String(r.from_date || "").trim();
 				var rowTo = String(r.to_date || "").trim();
 				if (rowFrom && (!slipFrom || rowFrom < slipFrom)) slipFrom = rowFrom;
@@ -726,9 +718,11 @@
 			if (slipFrom && slipTo) slipRange = slipFrom + " to " + slipTo;
 			else slipRange = slipFrom || slipTo || currentDateRangeLabel();
 			var employeeTitle = scopedGroup.name1 || scopedGroup.employee || "";
-			var subtitleText = employeeTitle + (selectedEntry ? " | Entry: " + selectedEntry : "");
+			var subtitleText = employeeTitle;
+			if (selectedBatch) subtitleText += " | Batch: " + selectedBatch;
+			if (selectedEntry) subtitleText += " | Entry: " + selectedEntry;
 			var dnMap = {};
-			scopedRows.forEach(function (r) {
+			detailRows.forEach(function (r) {
 				var dn = String(r.delivery_note || "").trim();
 				if (dn) dnMap[dn] = 1;
 			});
@@ -762,8 +756,11 @@
 					html += "</div>";
 					html +=
 						"<div class='pp-summary-chips'>" +
-						"<span class='pp-summary-chip'>Employee: " +
+						"<span class='pp-summary-chip'>Employee ID: " +
 						esc(scopedGroup.employee || "-") +
+						"</span>" +
+						"<span class='pp-summary-chip'>Employee Name: " +
+						esc(employeeTitle || "-") +
 						"</span>" +
 						"<span class='pp-summary-chip'>Entries: " +
 						esc(scopedGroup.source_count || 0) +
@@ -784,7 +781,7 @@
 
 					if (mode === "product") {
 						var productDetailMap = {};
-						scopedRows.forEach(function (r) {
+						detailRows.forEach(function (r) {
 							var k = [
 								String(r.po_number || ""),
 								String(r.product || ""),
@@ -885,7 +882,7 @@
 						html += "</tbody></table>";
 					} else if (mode === "order") {
 						var orderRowsMap = {};
-						scopedRows.forEach(function (r) {
+						detailRows.forEach(function (r) {
 							var orderKey =
 								String(r.sales_order || "").trim() || "(No Sales Order)";
 							if (!orderRowsMap[orderKey]) orderRowsMap[orderKey] = [];
@@ -981,7 +978,7 @@
 						html += "</tbody></table>";
 					} else {
 						var mergedMap = {};
-						scopedRows.forEach(function (r) {
+						detailRows.forEach(function (r) {
 							var item = String(r.product || "").trim() || "(Blank)";
 							var pkey =
 								String(r.po_number || "") +
@@ -1143,11 +1140,19 @@
 				});
 		}
 
-		function showSalaryEntryWisePrints(employee) {
-			var groups = buildSalarySlipGroups(getRowsByHeaderFilters(state.rows || []));
+		function showSalaryEntryWisePrints(employee, options) {
+			options = options || {};
+			var selectedBatch = String(options.batch || "").trim();
+			var sourceRows = (((state || {}).entryMeta || {}).salarySlipBatchRows || []).length
+				? ((state || {}).entryMeta || {}).salarySlipBatchRows
+				: state.rows || [];
+			var groups = buildSalarySlipGroups(getRowsByHeaderFilters(sourceRows || []));
 			var group = null;
 			groups.forEach(function (g) {
-				if (!group && String(g.employee || "") === String(employee || "")) group = g;
+				if (group) return;
+				if (String(g.employee || "") !== String(employee || "")) return;
+				if (selectedBatch && String(g.salary_batch || "") !== selectedBatch) return;
+				group = g;
 			});
 			if (!group) {
 				setSummaryModal(
@@ -1233,7 +1238,11 @@
 						var mode = String(btn.getAttribute("data-mode") || "detail");
 						var emp = String(btn.getAttribute("data-employee") || "");
 						var entry = String(btn.getAttribute("data-entry") || "");
-						showSalarySlipPrint(emp, { mode: mode, entry: entry });
+						showSalarySlipPrint(emp, {
+							mode: mode,
+							entry: entry,
+							batch: selectedBatch,
+						});
 					});
 				});
 			}, 0);

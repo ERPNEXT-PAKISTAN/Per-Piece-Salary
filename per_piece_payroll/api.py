@@ -1078,6 +1078,171 @@ def get_salary_batch_links(entry_names=None) -> dict:
 
 
 @frappe.whitelist()
+def get_salary_slip_batch_rows(entry_names=None) -> dict:
+	names = _parse_entry_names(entry_names)
+	if not names:
+		return {"ok": True, "data": []}
+
+	link_map = (get_salary_batch_links(names) or {}).get("data") or {}
+	batches = sorted(
+		{
+			str((link_map.get(n) or {}).get("salary_batch") or "").strip()
+			for n in names
+			if str((link_map.get(n) or {}).get("salary_batch") or "").strip()
+		}
+	)
+	if not batches:
+		return {"ok": True, "data": []}
+
+	qty_amount_map: dict[tuple[str, str], dict] = {}
+	perpiece_rows = frappe.get_all(
+		"Per Piece",
+		filters={"parent": ["in", names], "parenttype": "Per Piece Salary", "parentfield": "perpiece"},
+		fields=["parent", "employee", "name1", "qty", "amount"],
+		limit_page_length=200000,
+	)
+	for r in perpiece_rows or []:
+		entry = str((r or {}).get("parent") or "").strip()
+		emp = str((r or {}).get("employee") or "").strip()
+		if not entry or not emp:
+			continue
+		key = (entry, emp)
+		if key not in qty_amount_map:
+			qty_amount_map[key] = {
+				"qty": 0.0,
+				"amount": 0.0,
+				"name1": str((r or {}).get("name1") or "").strip(),
+			}
+		qty_amount_map[key]["qty"] += flt((r or {}).get("qty"))
+		qty_amount_map[key]["amount"] += flt((r or {}).get("amount"))
+
+	summary_rows = frappe.get_all(
+		"Per Piece Salary Summary Row",
+		filters={
+			"parent": ["in", names],
+			"parenttype": "Per Piece Salary",
+			"parentfield": "salary_summary_rows",
+		},
+		fields=[
+			"parent",
+			"employee",
+			"employee_name",
+			"salary_amount",
+			"allowance",
+			"advance_deduction",
+			"other_deduction",
+			"net_salary",
+			"booked_amount",
+			"paid_amount",
+			"unpaid_amount",
+			"payment_status",
+		],
+		limit_page_length=200000,
+	)
+
+	out = []
+	for r in summary_rows or []:
+		entry = str((r or {}).get("parent") or "").strip()
+		emp = str((r or {}).get("employee") or "").strip()
+		batch = str((link_map.get(entry) or {}).get("salary_batch") or "").strip()
+		if not entry or not emp or not batch:
+			continue
+		qa = qty_amount_map.get((entry, emp)) or {}
+		amount = flt(qa.get("amount"))
+		qty = flt(qa.get("qty"))
+		net = flt((r or {}).get("net_salary"))
+		booked = flt((r or {}).get("booked_amount")) or net
+		paid = flt((r or {}).get("paid_amount"))
+		unpaid = flt((r or {}).get("unpaid_amount"))
+		if unpaid <= 0 and booked > 0:
+			unpaid = max(booked - paid, 0)
+		status = str((r or {}).get("payment_status") or "").strip()
+		if not status:
+			status = "Paid" if unpaid <= 0.005 and booked > 0 else ("Partly Paid" if paid > 0 else "Unpaid")
+		out.append(
+			{
+				"salary_batch": batch,
+				"per_piece_salary": entry,
+				"employee": emp,
+				"name1": str((r or {}).get("employee_name") or qa.get("name1") or "").strip(),
+				"qty": round(qty, 2),
+				"amount": round(amount, 2),
+				"rate": round((amount / qty), 4) if qty else 0,
+				"allowance": round(flt((r or {}).get("allowance")), 2),
+				"advance_deduction": round(flt((r or {}).get("advance_deduction")), 2),
+				"other_deduction": round(flt((r or {}).get("other_deduction")), 2),
+				"net_amount": round(net, 2),
+				"booked_amount": round(booked, 2),
+				"paid_amount": round(max(paid, 0), 2),
+				"unpaid_amount": round(max(unpaid, 0), 2),
+				"booking_status": "Booked" if booked > 0 else "UnBooked",
+				"payment_status": status,
+			}
+		)
+	return {"ok": True, "data": out}
+
+
+@frappe.whitelist()
+def get_salary_status_batch_rows(entry_names=None) -> dict:
+	names = _parse_entry_names(entry_names)
+	if not names:
+		return {"ok": True, "data": []}
+
+	link_map = (get_salary_batch_links(names) or {}).get("data") or {}
+	batches = sorted(
+		{
+			str((link_map.get(n) or {}).get("salary_batch") or "").strip()
+			for n in names
+			if str((link_map.get(n) or {}).get("salary_batch") or "").strip()
+		}
+	)
+	if not batches:
+		return {"ok": True, "data": []}
+
+	rows = frappe.get_all(
+		"Per Piece Salary Batch Summary Row",
+		filters={
+			"parent": ["in", batches],
+			"parenttype": "Per Piece Salary Batch",
+			"parentfield": "summary_rows",
+		},
+		fields=[
+			"parent",
+			"employee",
+			"employee_name",
+			"net_salary",
+			"paid_amount",
+			"unpaid_amount",
+		],
+		order_by="parent desc, idx asc",
+		limit_page_length=200000,
+	)
+	out = []
+	for r in rows or []:
+		booked = flt((r or {}).get("net_salary"))
+		paid = max(flt((r or {}).get("paid_amount")), 0.0)
+		unpaid = max(flt((r or {}).get("unpaid_amount")), 0.0)
+		if unpaid <= 0.005 and booked > 0:
+			status = "Paid"
+		elif paid > 0.005 and unpaid > 0.005:
+			status = "Partly Paid"
+		else:
+			status = "Unpaid"
+		out.append(
+			{
+				"salary_batch": str((r or {}).get("parent") or "").strip(),
+				"employee": str((r or {}).get("employee") or "").strip(),
+				"name1": str((r or {}).get("employee_name") or "").strip(),
+				"booked_amount": round(booked, 2),
+				"paid_amount": round(paid, 2),
+				"unpaid_amount": round(unpaid, 2),
+				"payment_status": status,
+			}
+		)
+	return {"ok": True, "data": out}
+
+
+@frappe.whitelist()
 def search_delivery_notes(txt: str | None = None, limit: int | str | None = None) -> list[dict]:
 	search_txt = (txt or "").strip()
 	try:

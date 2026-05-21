@@ -76,12 +76,21 @@
 						paid_amount: 0,
 						unpaid_amount: 0,
 						payment_status: "Unpaid",
+						_batch_map: {},
 					};
 				}
 				var booked = Math.max(num(getBookedAmountForPaymentRow(r)), 0);
 				map[emp].booked_amount += booked;
 				var paid = Math.max(num(r.paid_amount), 0);
 				map[emp].paid_amount += paid;
+				var batch = String((r && r.salary_batch) || "").trim();
+				if (!batch) {
+					var entry = String((r && r.per_piece_salary) || "").trim();
+					var cache =
+						(((state || {}).entryMeta || {}).salaryBatchByEntry || {})[entry] || {};
+					batch = String((cache && cache.salary_batch) || "").trim();
+				}
+				if (batch) map[emp]._batch_map[batch] = 1;
 			});
 			return Object.keys(map)
 				.sort()
@@ -94,6 +103,9 @@
 					else if (row.paid_amount > 0 && row.unpaid_amount > 0)
 						row.payment_status = "Partly Paid";
 					else row.payment_status = "Unpaid";
+					var batches = Object.keys(row._batch_map || {}).sort();
+					row.salary_batch = batches.join(", ");
+					delete row._batch_map;
 					return row;
 				});
 		}
