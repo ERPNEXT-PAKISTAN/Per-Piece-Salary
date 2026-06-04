@@ -43,7 +43,10 @@ required_apps = ["erpnext", "hrms"]
 # page_js = {"page" : "public/js/file.js"}
 
 # include js in doctype views
-doctype_js = {"Per Piece Salary": "public/js/per_piece_salary_auto_load.js"}
+doctype_js = {
+	"Per Piece Salary": "public/js/per_piece_salary_auto_load.js",
+	"Salary Slip": "public/js/salary_slip.js",
+}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
@@ -183,6 +186,8 @@ fixtures = [
 				"name",
 				"in",
 				[
+					"Daily Overtime",
+					"Overtime",
 					"Per Piece Payment Entry Row",
 					"Per Piece Payment Entry",
 					"Per Piece Salary",
@@ -198,14 +203,35 @@ fixtures = [
 	{
 		"dt": "Custom Field",
 		"filters": [
-			["dt", "in", ["Item"]],
+			["dt", "in", ["Item", "Salary Slip"]],
 			[
 				"fieldname",
 				"in",
 				[
+					"custom_target_value",
+					"custom_working_hours",
+					"custom_overtime",
+					"custom_total_overtime_hours",
+					"custom_column_break_cca4z",
+					"custom_total_overtime_qty",
+					"custom_section_break_phw71",
+					"custom_overtime_report",
 					"custom_prd_process_and_sizes",
 				],
 			],
+		],
+	},
+	{
+		"dt": "Server Script",
+		"filters": [
+			[
+				"name",
+				"in",
+				[
+					"Get Overtime Report",
+					"Load Overtime Detail in Salary Slip (Child Table)",
+				],
+			]
 		],
 	},
 	{

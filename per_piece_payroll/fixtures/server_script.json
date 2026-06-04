@@ -1,0 +1,40 @@
+[
+  {
+    "allow_guest": 0,
+    "api_method": "get_overtime_report",
+    "cron_format": null,
+    "disabled": 0,
+    "docstatus": 0,
+    "doctype": "Server Script",
+    "doctype_event": "Before Insert",
+    "enable_rate_limit": 0,
+    "event_frequency": null,
+    "modified": "2026-04-24 00:46:49.782854",
+    "module": "Payroll",
+    "name": "Get Overtime Report",
+    "rate_limit_count": 0,
+    "rate_limit_seconds": 0,
+    "reference_doctype": null,
+    "script": "# Server Script: Get Overtime Report (API)\r\n# In Frappe: New Server Script > Script Type = \"API\"\r\n# Set \"API Method\" field to exactly:  get_overtime_report\r\n# Client calls: frappe.call({ method: \"get_overtime_report\", args: { employee, start_date, end_date } })\r\n#\r\n# Returns overtime rows from Daily Overtime only (for Salary Slip report view). No insert anywhere.\r\n\r\nemployee = frappe.form_dict.get(\"employee\")\r\nstart_date = frappe.form_dict.get(\"start_date\")\r\nend_date = frappe.form_dict.get(\"end_date\")\r\n\r\nif not employee or not start_date or not end_date:\r\n    frappe.response[\"message\"] = []\r\nelse:\r\n    rows = frappe.db.sql(\"\"\"\r\n        SELECT \r\n            ot.parent AS overtime_no,\r\n            ot.date,\r\n            ot.employee,\r\n            ot.hours,\r\n            ot.qty,\r\n            ot.product,\r\n            ot.overtime_type,\r\n            ot.hourly_rate,\r\n            ot.amount,\r\n            ot.remarks\r\n        FROM `tabOvertime` ot\r\n        WHERE ot.employee = %(employee)s\r\n          AND ot.date BETWEEN %(start_date)s AND %(end_date)s\r\n          AND ot.parenttype = 'Daily Overtime'\r\n        ORDER BY ot.date ASC, ot.parent ASC\r\n    \"\"\", {\"employee\": employee, \"start_date\": start_date, \"end_date\": end_date}, as_dict=True)\r\n    frappe.response[\"message\"] = rows or []\r\n",
+    "script_type": "API"
+  },
+  {
+    "allow_guest": 0,
+    "api_method": null,
+    "cron_format": null,
+    "disabled": 0,
+    "docstatus": 0,
+    "doctype": "Server Script",
+    "doctype_event": "Before Save",
+    "enable_rate_limit": 0,
+    "event_frequency": null,
+    "modified": "2026-04-24 00:46:49.846635",
+    "module": "Payroll",
+    "name": "Load Overtime Detail in Salary Slip (Child Table)",
+    "rate_limit_count": 0,
+    "rate_limit_seconds": 0,
+    "reference_doctype": "Salary Slip",
+    "script": "# Server Script: Load Overtime Detail in Salary Slip (Child Table)\r\n# Doctype: Salary Slip\r\n# Event: Before Save\r\n#\r\n# VIEW ONLY: Do NOT create any entries in tabOvertime. Only set totals on Salary Slip\r\n# from Daily Overtime data (for display). Overtime detail is shown as report on form (client-side).\r\n\r\n# Fetch from Daily Overtime only (no append = no new rows anywhere)\r\novertime_rows = frappe.db.sql(\"\"\"\r\n    SELECT ot.hours, ot.qty\r\n    FROM `tabOvertime` ot\r\n    WHERE ot.employee = %s\r\n      AND ot.date BETWEEN %s AND %s\r\n      AND ot.parenttype = 'Daily Overtime'\r\n    ORDER BY ot.date ASC\r\n\"\"\", (doc.employee, doc.start_date, doc.end_date), as_dict=True)\r\n\r\n# Set only the total fields on Salary Slip (no child table append)\r\ntotal_hours = sum(frappe.utils.flt(r.get(\"hours\")) for r in overtime_rows)\r\ntotal_qty = sum(frappe.utils.flt(r.get(\"qty\")) for r in overtime_rows)\r\ndoc.custom_total_overtime_hours = total_hours\r\ndoc.custom_total_overtime_qty = total_qty\r\n",
+    "script_type": "DocType Event"
+  }
+]
