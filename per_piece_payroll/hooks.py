@@ -146,6 +146,8 @@ doc_events = {
 		"before_update_after_submit": "per_piece_payroll.guards.protect_per_piece_salary_mutations",
 	},
 	"Per Piece Salary Batch": {
+		"after_insert": "per_piece_payroll.guards.sync_per_piece_salary_batch_links",
+		"on_update": "per_piece_payroll.guards.sync_per_piece_salary_batch_links",
 		"on_trash": "per_piece_payroll.guards.clear_per_piece_salary_batch_links",
 	},
 }

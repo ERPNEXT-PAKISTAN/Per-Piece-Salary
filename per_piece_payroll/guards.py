@@ -60,6 +60,63 @@ def clear_per_piece_salary_batch_links(doc, method=None) -> None:
 		)
 
 
+def sync_per_piece_salary_batch_links(doc, method=None) -> None:
+	"""Keep Per Piece Salary.salary_batch aligned with batch child rows.
+
+	This runs on batch save so removed rows are unlinked and retained rows stay linked.
+	"""
+	if getattr(doc, "doctype", None) != "Per Piece Salary Batch":
+		return
+	if getattr(frappe.flags, "in_per_piece_salary_batch_sync", False):
+		return
+
+	batch_name = _as_str(getattr(doc, "name", ""))
+	if not batch_name or not frappe.db.has_column("Per Piece Salary", "salary_batch"):
+		return
+
+	current_entries = {
+		_as_str(getattr(row, "salary_entry", "") if not isinstance(row, dict) else row.get("salary_entry"))
+		for row in (doc.get("entries") or [])
+	}
+	current_entries.discard("")
+
+	linked_entries = set(
+		frappe.get_all(
+			"Per Piece Salary",
+			filters={"salary_batch": batch_name},
+			pluck="name",
+			limit_page_length=5000,
+		)
+		or []
+	)
+
+	for entry_name in sorted(linked_entries - current_entries):
+		frappe.db.set_value(
+			"Per Piece Salary",
+			entry_name,
+			"salary_batch",
+			"",
+			update_modified=False,
+		)
+
+	for entry_name in sorted(current_entries):
+		frappe.db.set_value(
+			"Per Piece Salary",
+			entry_name,
+			"salary_batch",
+			batch_name,
+			update_modified=False,
+		)
+
+	from per_piece_payroll.api import rebuild_salary_batch
+
+	frappe.flags.in_per_piece_salary_batch_sync = True
+	try:
+		rebuild_salary_batch(batch_name)
+	finally:
+		frappe.flags.in_per_piece_salary_batch_sync = False
+
+
 def _has_booked_or_paid_rows(doc) -> bool:
 	for row in doc.get("perpiece") or []:
 		if _is_locked_row(row):
