@@ -24,12 +24,6 @@ def protect_per_piece_salary_mutations(doc, method=None) -> None:
 			)
 		return
 
-	if _has_booked_or_paid_rows(old_doc) and _has_material_change(old_doc, doc):
-		frappe.throw(
-			"This Per Piece Salary contains booked/paid rows and cannot be changed. "
-			"Create a new entry for new rates/qty."
-		)
-
 
 def clear_per_piece_salary_batch_links(doc, method=None) -> None:
 	"""Remove direct salary links before a batch is deleted.
@@ -115,27 +109,6 @@ def sync_per_piece_salary_batch_links(doc, method=None) -> None:
 		rebuild_salary_batch(batch_name)
 	finally:
 		frappe.flags.in_per_piece_salary_batch_sync = False
-
-
-def _has_booked_or_paid_rows(doc) -> bool:
-	for row in doc.get("perpiece") or []:
-		if _is_locked_row(row):
-			return True
-	return False
-
-
-def _is_locked_row(row) -> bool:
-	if (row.get("jv_entry_no") or "").strip():
-		return True
-	if flt(row.get("booked_amount")) > 0:
-		return True
-	if flt(row.get("paid_amount")) > 0:
-		return True
-	if (row.get("payment_refs") or "").strip():
-		return True
-	return False
-
-
 def _has_material_change(old_doc, new_doc) -> bool:
 	tracked_parent_fields = (
 		"from_date",
