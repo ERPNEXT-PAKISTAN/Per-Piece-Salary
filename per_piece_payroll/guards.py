@@ -31,6 +31,35 @@ def protect_per_piece_salary_mutations(doc, method=None) -> None:
 		)
 
 
+def clear_per_piece_salary_batch_links(doc, method=None) -> None:
+	"""Remove direct salary links before a batch is deleted.
+
+	Frappe checks static Link fields after on_trash runs. Clearing the
+	Per Piece Salary.salary_batch field here allows the batch delete to proceed.
+	"""
+	if getattr(doc, "doctype", None) != "Per Piece Salary Batch":
+		return
+
+	batch_name = _as_str(getattr(doc, "name", ""))
+	if not batch_name or not frappe.db.has_column("Per Piece Salary", "salary_batch"):
+		return
+
+	linked_entries = frappe.get_all(
+		"Per Piece Salary",
+		filters={"salary_batch": batch_name},
+		pluck="name",
+		limit_page_length=5000,
+	)
+	for entry_name in linked_entries or []:
+		frappe.db.set_value(
+			"Per Piece Salary",
+			entry_name,
+			"salary_batch",
+			"",
+			update_modified=False,
+		)
+
+
 def _has_booked_or_paid_rows(doc) -> bool:
 	for row in doc.get("perpiece") or []:
 		if _is_locked_row(row):

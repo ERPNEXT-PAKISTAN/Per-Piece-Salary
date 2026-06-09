@@ -144,7 +144,10 @@ doc_events = {
 	"Per Piece Salary": {
 		"validate": "per_piece_payroll.guards.protect_per_piece_salary_mutations",
 		"before_update_after_submit": "per_piece_payroll.guards.protect_per_piece_salary_mutations",
-	}
+	},
+	"Per Piece Salary Batch": {
+		"on_trash": "per_piece_payroll.guards.clear_per_piece_salary_batch_links",
+	},
 }
 
 # Scheduled Tasks
