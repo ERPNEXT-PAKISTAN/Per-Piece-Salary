@@ -448,6 +448,8 @@
 			});
 
 			wrap.querySelectorAll(".pp-adj-input").forEach(function (input) {
+				var totalRefreshTimer = null;
+
 				function refreshSalaryFooterTotals() {
 					var totals = {
 						qty: 0,
@@ -522,8 +524,37 @@
 						"</span>";
 					refreshJVAmountsFromAdjustments();
 				}
-				input.addEventListener("input", onAdjustInput);
+				function scheduleAdjustInput() {
+					if (totalRefreshTimer) window.clearTimeout(totalRefreshTimer);
+					totalRefreshTimer = window.setTimeout(function () {
+						totalRefreshTimer = null;
+						onAdjustInput();
+					}, 120);
+				}
+				input.addEventListener("input", scheduleAdjustInput);
 				input.addEventListener("change", onAdjustInput);
+				input.addEventListener("keydown", function (ev) {
+					if (ev.key !== "Tab" && ev.key !== "Enter") return;
+					var cells = Array.prototype.slice.call(wrap.querySelectorAll(".pp-adj-input"));
+					var currentIndex = cells.indexOf(input);
+					if (currentIndex < 0) return;
+					if (totalRefreshTimer) window.clearTimeout(totalRefreshTimer);
+					onAdjustInput();
+					var nextIndex = ev.shiftKey ? currentIndex - 1 : currentIndex + 1;
+					if (nextIndex < 0) nextIndex = 0;
+					if (nextIndex >= cells.length) nextIndex = cells.length - 1;
+					if (cells[nextIndex]) {
+						ev.preventDefault();
+						window.setTimeout(function () {
+							try {
+								cells[nextIndex].focus();
+								cells[nextIndex].select();
+							} catch (e) {
+								/* ignore focus errors */
+							}
+						}, 0);
+					}
+				});
 			});
 		}
 
