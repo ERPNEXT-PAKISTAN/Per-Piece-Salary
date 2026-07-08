@@ -42,7 +42,22 @@
 		var showPerPieceSummary = deps.showPerPieceSummary;
 		var showDataEntryEnteredRows = deps.showDataEntryEnteredRows;
 		var switchWorkspaceMode = deps.switchWorkspaceMode;
-		var userDefaultCompany = deps.userDefaultCompany;
+		var userDefaultCompany =
+			deps.userDefaultCompany ||
+			function () {
+				try {
+					if (
+						typeof frappe !== "undefined" &&
+						frappe.defaults &&
+						frappe.defaults.get_user_default
+					) {
+						return String(frappe.defaults.get_user_default("Company") || "").trim();
+					}
+				} catch (e) {
+					/* ignore default lookup errors */
+				}
+				return "";
+			};
 		var getCurrentGroupItems = deps.getCurrentGroupItems;
 		var getEntryProcessOptions = deps.getEntryProcessOptions;
 		var entryRowIsBlank = deps.entryRowIsBlank;
