@@ -195,6 +195,22 @@ def _upsert_field(doc, fieldname: str, spec: dict) -> None:
 	doc.append("fields", {"fieldname": fieldname, **spec})
 
 
+def _validate_field_options(doc, docname: str) -> None:
+	"""Guard against invalid Link/Table fields before DocType insert/save."""
+	invalid_rows = []
+	for idx, row in enumerate(doc.fields or [], start=1):
+		fieldtype = str(getattr(row, "fieldtype", "") or "").strip()
+		options = getattr(row, "options", None)
+		if fieldtype in {"Link", "Table", "Table MultiSelect"} and not str(options or "").strip():
+			invalid_rows.append(
+				f"row {idx}: {getattr(row, 'fieldname', '')} ({fieldtype}) missing options"
+			)
+	if invalid_rows:
+		frappe.throw(
+			"Invalid field options in {0}: {1}".format(docname, "; ".join(invalid_rows))
+		)
+
+
 def _delete_custom_field_if_exists(doctype: str, fieldname: str) -> None:
 	existing = frappe.db.get_value("Custom Field", {"dt": doctype, "fieldname": fieldname}, "name")
 	if existing:
@@ -252,6 +268,7 @@ def ensure_payment_doctypes() -> None:
 			doc, "unpaid_amount", {"label": "Unpaid Amount", "fieldtype": "Float", "precision": "2"}
 		)
 		_upsert_field(doc, "payment_status", {"label": "Payment Status", "fieldtype": "Data"})
+		_validate_field_options(doc, name)
 		if doc.is_new():
 			doc.insert(ignore_permissions=True)
 		else:
@@ -271,6 +288,7 @@ def ensure_payment_doctypes() -> None:
 				"options": "Per Piece Salary Summary Row",
 			},
 		)
+		_validate_field_options(doc, "Per Piece Salary")
 		doc.save(ignore_permissions=True)
 
 	def ensure_batch_child_entry() -> None:
@@ -307,6 +325,7 @@ def ensure_payment_doctypes() -> None:
 		_upsert_field(
 			doc, "unpaid_amount", {"label": "Unpaid Amount", "fieldtype": "Float", "precision": "2"}
 		)
+		_validate_field_options(doc, name)
 		if doc.is_new():
 			doc.insert(ignore_permissions=True)
 		else:
@@ -349,6 +368,7 @@ def ensure_payment_doctypes() -> None:
 		_upsert_field(
 			doc, "unpaid_amount", {"label": "Unpaid Amount", "fieldtype": "Float", "precision": "2"}
 		)
+		_validate_field_options(doc, name)
 		if doc.is_new():
 			doc.insert(ignore_permissions=True)
 		else:
