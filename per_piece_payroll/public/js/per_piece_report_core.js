@@ -363,6 +363,16 @@
 		var row = (state.rows || [])[0] || {};
 		return String(row.company || "");
 	}
+	function userDefaultCompany() {
+		try {
+			if (typeof frappe !== "undefined" && frappe.defaults && frappe.defaults.get_user_default) {
+				return String(frappe.defaults.get_user_default("Company") || "").trim();
+			}
+		} catch (e) {
+			/* ignore default lookup errors */
+		}
+		return "";
+	}
 	function currentDateRangeLabel() {
 		var from = (el("pp-from-date") && el("pp-from-date").value) || "";
 		var to = (el("pp-to-date") && el("pp-to-date").value) || "";
@@ -442,6 +452,7 @@
 		avgRate: avgRate,
 		employeeLabel: employeeLabel,
 		currentCompanyLabel: currentCompanyLabel,
+		userDefaultCompany: userDefaultCompany,
 		currentDateRangeLabel: currentDateRangeLabel,
 		getCurrentTabLabel: getCurrentTabLabel,
 		setSummaryHeading: setSummaryHeading,

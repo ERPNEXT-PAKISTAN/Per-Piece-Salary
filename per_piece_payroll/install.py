@@ -27,6 +27,8 @@ def after_install() -> None:
 	apply()
 	ensure_workspace()
 	cleanup_legacy_ui_scripts()
+	normalize_overtime_type_link_meta()
+	normalize_daily_overtime_client_scripts()
 
 
 def before_migrate() -> None:
@@ -38,6 +40,8 @@ def after_migrate() -> None:
 	apply()
 	ensure_workspace()
 	cleanup_legacy_ui_scripts()
+	normalize_overtime_type_link_meta()
+	normalize_daily_overtime_client_scripts()
 
 
 def _sanitize_conflicting_custom_field_fixtures() -> None:
@@ -103,6 +107,83 @@ def cleanup_legacy_ui_scripts() -> None:
 			{"names": tuple(LEGACY_CLIENT_SCRIPTS)},
 		)
 	frappe.db.commit()
+
+
+def normalize_overtime_type_link_meta() -> None:
+	"""Remove invalid Overtime Type link metadata that points Desk queries to `multiplier`."""
+	if not frappe.db.exists("DocType", "Overtime Type"):
+		return
+
+	invalid_field = "multiplier"
+	changed = False
+
+	property_setters = frappe.get_all(
+		"Property Setter",
+		filters={
+			"doc_type": "Overtime Type",
+			"property": ["in", ["title_field", "search_fields", "show_title_field_in_link"]],
+		},
+		fields=["name", "property", "value"],
+		limit_page_length=0,
+	)
+	for row in property_setters:
+		prop = (row.get("property") or "").strip()
+		value = str(row.get("value") or "").strip()
+		should_delete = (
+			(prop == "title_field" and value == invalid_field)
+			or (
+				prop == "search_fields"
+				and invalid_field in {part.strip() for part in value.split(",") if part.strip()}
+			)
+			or (prop == "show_title_field_in_link" and value == "1")
+		)
+		if should_delete:
+			frappe.delete_doc("Property Setter", row["name"], force=1, ignore_permissions=True)
+			changed = True
+
+	doctype = frappe.get_doc("DocType", "Overtime Type")
+	if (doctype.title_field or "").strip() == invalid_field:
+		doctype.title_field = None
+		changed = True
+
+	search_fields = {part.strip() for part in (doctype.search_fields or "").split(",") if part.strip()}
+	if invalid_field in search_fields:
+		search_fields.discard(invalid_field)
+		doctype.search_fields = ", ".join(sorted(search_fields)) or None
+		changed = True
+
+	if doctype.show_title_field_in_link:
+		doctype.show_title_field_in_link = 0
+		changed = True
+
+	if changed:
+		doctype.save(ignore_permissions=True)
+		frappe.clear_cache(doctype="Overtime Type")
+
+
+def normalize_daily_overtime_client_scripts() -> None:
+	"""Replace invalid Overtime Type client fetches from `multiplier` to `standard_multiplier`."""
+	targets = ("Daily Overtime Calculation", "Overtime Emp Load from Department")
+	changed = False
+
+	for name in targets:
+		if not frappe.db.exists("Client Script", name):
+			continue
+
+		doc = frappe.get_doc("Client Script", name)
+		script = doc.script or ""
+		updated = script.replace("fields: ['name', 'multiplier']", "fields: ['name', 'standard_multiplier']")
+		updated = updated.replace('fields: ["name", "multiplier"]', 'fields: ["name", "standard_multiplier"]')
+		updated = updated.replace("ot.multiplier", "ot.standard_multiplier")
+		updated = updated.replace("default_ot.multiplier", "default_ot.standard_multiplier")
+
+		if updated != script:
+			doc.script = updated
+			doc.save(ignore_permissions=True)
+			changed = True
+
+	if changed:
+		frappe.clear_cache()
 
 
 def _upsert_field(doc, fieldname: str, spec: dict) -> None:
@@ -298,7 +379,11 @@ def ensure_payment_doctypes() -> None:
 		_upsert_field(
 			doc, "posting_date", {"label": "Posting Date", "fieldtype": "Date", "default": "Today", "reqd": 1}
 		)
-		_upsert_field(doc, "company", {"label": "Company", "fieldtype": "Link", "options": "Company"})
+		_upsert_field(
+			doc,
+			"company",
+			{"label": "Company", "fieldtype": "Link", "options": "Company", "reqd": 1},
+		)
 		_upsert_field(doc, "remarks", {"label": "Remarks", "fieldtype": "Small Text"})
 		_upsert_field(
 			doc,
@@ -411,7 +496,11 @@ def ensure_payment_doctypes() -> None:
 			"posting_date",
 			{"label": "Posting Date", "fieldtype": "Date", "default": "Today", "reqd": 1},
 		)
-		_upsert_field(doc, "company", {"label": "Company", "fieldtype": "Link", "options": "Company"})
+		_upsert_field(
+			doc,
+			"company",
+			{"label": "Company", "fieldtype": "Link", "options": "Company", "reqd": 1},
+		)
 		_upsert_field(
 			doc,
 			"salary_entries_json",

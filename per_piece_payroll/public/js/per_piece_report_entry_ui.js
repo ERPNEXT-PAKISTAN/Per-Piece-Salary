@@ -42,6 +42,7 @@
 		var showPerPieceSummary = deps.showPerPieceSummary;
 		var showDataEntryEnteredRows = deps.showDataEntryEnteredRows;
 		var switchWorkspaceMode = deps.switchWorkspaceMode;
+		var userDefaultCompany = deps.userDefaultCompany;
 		var getCurrentGroupItems = deps.getCurrentGroupItems;
 		var getEntryProcessOptions = deps.getEntryProcessOptions;
 		var entryRowIsBlank = deps.entryRowIsBlank;
@@ -67,8 +68,12 @@
 			if (state.entryMeta.item === undefined) state.entryMeta.item = "";
 			if (state.entryMeta.delivery_note === undefined) state.entryMeta.delivery_note = "";
 			if (state.entryMeta.company === undefined) state.entryMeta.company = "";
-			if (!String(state.entryMeta.company || "").trim())
-				state.entryMeta.company = el("pp-company") ? el("pp-company").value || "" : "";
+			if (!String(state.entryMeta.company || "").trim()) {
+				state.entryMeta.company =
+					(el("pp-company") && el("pp-company").value) ||
+					userDefaultCompany() ||
+					"";
+			}
 			if (state.entryMeta.deliveryNoteOptions === undefined)
 				state.entryMeta.deliveryNoteOptions = [];
 			if (state.entryMeta.employee === undefined)
@@ -1061,6 +1066,14 @@
 				});
 			var companyInput = el("pp-entry-company");
 			if (companyInput) {
+				if (!String(companyInput.value || "").trim()) {
+					var defaultCompany = userDefaultCompany();
+					if (defaultCompany) {
+						companyInput.value = defaultCompany;
+						state.entryMeta.company = defaultCompany;
+						if (el("pp-company")) el("pp-company").value = defaultCompany;
+					}
+				}
 				companyInput.addEventListener("change", function () {
 					state.entryMeta.company = companyInput.value || "";
 					if (el("pp-company")) el("pp-company").value = state.entryMeta.company;
