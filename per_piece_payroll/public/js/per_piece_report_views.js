@@ -524,14 +524,6 @@
 						"</span>";
 					refreshJVAmountsFromAdjustments();
 				}
-				function scheduleAdjustInput() {
-					if (totalRefreshTimer) window.clearTimeout(totalRefreshTimer);
-					totalRefreshTimer = window.setTimeout(function () {
-						totalRefreshTimer = null;
-						onAdjustInput();
-					}, 120);
-				}
-				input.addEventListener("input", scheduleAdjustInput);
 				input.addEventListener("change", onAdjustInput);
 				input.addEventListener("keydown", function (ev) {
 					if (ev.key !== "Tab" && ev.key !== "Enter") return;
@@ -1321,7 +1313,6 @@
 						"</span>";
 					refreshPaymentAmounts();
 				}
-				input.addEventListener("input", onPayInput);
 				input.addEventListener("change", onPayInput);
 			});
 		}

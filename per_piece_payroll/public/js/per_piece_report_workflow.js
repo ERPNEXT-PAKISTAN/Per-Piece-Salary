@@ -115,15 +115,39 @@
 		function loadCompanies() {
 			return callGetList("Company", ["name"], {}).then(function (rows) {
 				rows = rows || [];
+				var currentJVCompany = (el("pp-jv-company") && el("pp-jv-company").value) || "";
+				var currentPayCompany = (el("pp-pay-company") && el("pp-pay-company").value) || "";
 				setOptions(el("pp-jv-company"), rows, "name", "name", "Select Company");
 				setOptions(el("pp-pay-company"), rows, "name", "name", "Select Company");
 				if (rows.length) {
-					el("pp-jv-company").value = rows[0].name;
-					el("pp-pay-company").value = rows[0].name;
+					el("pp-jv-company").value =
+						currentJVCompany &&
+						rows.some(function (r) {
+							return r.name === currentJVCompany;
+						})
+							? currentJVCompany
+							: rows[0].name;
+					el("pp-pay-company").value =
+						currentPayCompany &&
+						rows.some(function (r) {
+							return r.name === currentPayCompany;
+						})
+							? currentPayCompany
+							: el("pp-jv-company").value || rows[0].name;
 					loadAccountsForCompany();
 					loadPaymentAccountsForCompany();
 				}
 			});
+		}
+
+		function ensureCompanySelected(selectId, resultId, title) {
+			var select = el(selectId);
+			var value = String((select && select.value) || "").trim();
+			if (value) return true;
+			var result = el(resultId);
+			showResult(result, "error", title, "Select Company first.");
+			if (select && select.focus) select.focus();
+			return false;
 		}
 
 		function loadAccountsForCompany() {
@@ -481,6 +505,9 @@
 		}
 
 		function previewJV() {
+			if (!ensureCompanySelected("pp-jv-company", "pp-jv-result", "Company Required")) {
+				return;
+			}
 			var result = el("pp-jv-result");
 			result.style.color = "#334155";
 			result.textContent = "Generating preview...";
@@ -544,6 +571,9 @@
 		}
 
 		function previewPaymentJV() {
+			if (!ensureCompanySelected("pp-pay-company", "pp-pay-result", "Company Required")) {
+				return;
+			}
 			var result = el("pp-pay-result");
 			if (!getPaymentPostingRows().length) {
 				showResult(
@@ -613,6 +643,9 @@
 		}
 
 		function createPaymentJV() {
+			if (!ensureCompanySelected("pp-pay-company", "pp-pay-result", "Company Required")) {
+				return;
+			}
 			if (!getPaymentPostingRows().length) {
 				showResult(
 					el("pp-pay-result"),
@@ -723,6 +756,9 @@
 		}
 
 		function createJV() {
+			if (!ensureCompanySelected("pp-jv-company", "pp-jv-result", "Company Required")) {
+				return;
+			}
 			confirmActionModal(
 				"Post Salary JV",
 				"Post JV Entry for current unposted rows?",

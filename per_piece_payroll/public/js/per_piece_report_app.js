@@ -144,6 +144,10 @@
 	function advanceMonthField(key) {
 		return "adv_" + String(key || "").replace("-", "_");
 	}
+
+	var queuedRenderTimer = null;
+	var queuedCreatedPanelTimer = null;
+	var keyboardNavBound = false;
 	var utils =
 		(window.PerPieceReportUtils &&
 			window.PerPieceReportUtils.create({
@@ -195,6 +199,99 @@
 			return Promise.resolve([]);
 		};
 	var setOptions = utils.setOptions || function () {};
+
+	function scheduleRenderCurrentTab(options) {
+		var opts = options || {};
+		clearTimeout(queuedRenderTimer);
+		queuedRenderTimer = setTimeout(function () {
+			if (opts.resetPage !== false) setPageForCurrentTab(1);
+			renderCurrentTab();
+		}, opts.delay || 90);
+	}
+
+	function scheduleCreatedEntriesPanel(tabName, delay) {
+		clearTimeout(queuedCreatedPanelTimer);
+		queuedCreatedPanelTimer = setTimeout(function () {
+			renderCreatedEntriesPanel(tabName);
+		}, delay || 90);
+	}
+
+	function captureFocusedControl() {
+		var active = document.activeElement;
+		if (!active || active === document.body) return null;
+		if (!active.closest || !active.closest(".pp-wrap")) return null;
+		var snap = {
+			id: String(active.id || ""),
+			field: String(active.getAttribute("data-field") || ""),
+			employee: String(active.getAttribute("data-employee") || ""),
+			value: "value" in active ? String(active.value || "") : "",
+			start: typeof active.selectionStart === "number" ? active.selectionStart : null,
+			end: typeof active.selectionEnd === "number" ? active.selectionEnd : null,
+		};
+		return snap;
+	}
+
+	function restoreFocusedControl(snap) {
+		if (!snap) return;
+		var node = null;
+		if (snap.id) {
+			node = document.getElementById(snap.id);
+		}
+		if (!node && snap.field && snap.employee) {
+			var nodes = document.querySelectorAll("[data-field][data-employee]");
+			Array.prototype.some.call(nodes, function (candidate) {
+				if (
+					String(candidate.getAttribute("data-field") || "") === snap.field &&
+					String(candidate.getAttribute("data-employee") || "") === snap.employee
+				) {
+					node = candidate;
+					return true;
+				}
+				return false;
+			});
+		}
+		if (!node || !node.focus) return;
+		try {
+			node.focus({ preventScroll: true });
+		} catch (e) {
+			node.focus();
+		}
+		if (
+			typeof node.setSelectionRange === "function" &&
+			snap.start != null &&
+			snap.end != null
+		) {
+			try {
+				node.setSelectionRange(snap.start, snap.end);
+			} catch (e2) {
+				/* ignore selection restore failures */
+			}
+		}
+	}
+
+	function getKeyboardNavigationScope(node) {
+		if (!node || !node.closest) return document.querySelector(".pp-wrap");
+		return (
+			node.closest(".pp-entry-card") ||
+			node.closest(".pp-jv-card") ||
+			node.closest("#pp-live-section-wrap") ||
+			node.closest(".pp-filters") ||
+			document.querySelector(".pp-wrap")
+		);
+	}
+
+	function getKeyboardNavigationFields(scope) {
+		if (!scope || !scope.querySelectorAll) return [];
+		return Array.prototype.slice
+			.call(
+				scope.querySelectorAll(
+					"input:not([type='hidden']):not([type='checkbox']):not([type='radio']):not([readonly]):not([disabled]), select:not([disabled]), textarea:not([readonly]):not([disabled])"
+				)
+			)
+			.filter(function (node) {
+				return !!node && node.offsetParent !== null;
+			});
+	}
 
 	var salarySlip =
 		(window.PerPieceSalarySlip &&
@@ -784,12 +881,15 @@
 			state.advanceBalances = (m && m.advance_balances) || {};
 			state.advanceRows = (m && m.advance_rows) || [];
 			state.advanceMonths = (m && m.advance_months) || [];
-			setOptions(el("pp-company"), companies, "value", "label", "All");
+			setOptions(el("pp-company"), companies, "value", "label", "Select Company");
 			setOptions(el("pp-employee"), emps, "value", "label", "All");
 			setOptions(el("pp-item-group"), itemGroups, "value", "label", "All");
 			setOptions(el("pp-process-type"), ptypes, "value", "label", "All");
 			setOptions(el("pp-sales-order"), salesOrders, "value", "label", "All");
-			if (el("pp-company")) el("pp-company").value = currentCompany;
+			if (el("pp-company")) {
+				el("pp-company").value =
+					currentCompany || (companies[0] && companies[0].value) || "";
+			}
 			if (el("pp-employee")) el("pp-employee").value = currentEmployee;
 			if (el("pp-item-group")) el("pp-item-group").value = currentItemGroup;
 			if (el("pp-process-type")) el("pp-process-type").value = currentProcessType;
@@ -2198,7 +2298,7 @@
 					(el("pp-jv-history-to") && el("pp-jv-history-to").value) || ""
 				);
 				state.historyPageByTab.salary_creation_history = 1;
-				renderCreatedEntriesPanel("salary_creation");
+				scheduleCreatedEntriesPanel("salary_creation");
 			});
 		}
 		if (el("pp-jv-history-to")) {
@@ -2209,7 +2309,7 @@
 					el("pp-jv-history-to").value || ""
 				);
 				state.historyPageByTab.salary_creation_history = 1;
-				renderCreatedEntriesPanel("salary_creation");
+				scheduleCreatedEntriesPanel("salary_creation");
 			});
 		}
 		if (el("pp-jv-history-booking-status")) {
@@ -2222,7 +2322,7 @@
 						""
 				);
 				state.historyPageByTab.salary_creation_history = 1;
-				renderCreatedEntriesPanel("salary_creation");
+				scheduleCreatedEntriesPanel("salary_creation");
 			});
 		}
 		if (el("pp-jv-history-payment-status")) {
@@ -2235,7 +2335,7 @@
 					el("pp-jv-history-payment-status").value || ""
 				);
 				state.historyPageByTab.salary_creation_history = 1;
-				renderCreatedEntriesPanel("salary_creation");
+				scheduleCreatedEntriesPanel("salary_creation");
 			});
 		}
 		if (el("pp-pay-history-from")) {
@@ -2246,7 +2346,7 @@
 					(el("pp-pay-history-to") && el("pp-pay-history-to").value) || ""
 				);
 				state.historyPageByTab.payment_manage_history = 1;
-				renderCreatedEntriesPanel("payment_manage");
+				scheduleCreatedEntriesPanel("payment_manage");
 			});
 		}
 		if (el("pp-pay-history-to")) {
@@ -2257,7 +2357,7 @@
 					el("pp-pay-history-to").value || ""
 				);
 				state.historyPageByTab.payment_manage_history = 1;
-				renderCreatedEntriesPanel("payment_manage");
+				scheduleCreatedEntriesPanel("payment_manage");
 			});
 		}
 		if (el("pp-pay-history-booking-status")) {
@@ -2270,7 +2370,7 @@
 						""
 				);
 				state.historyPageByTab.payment_manage_history = 1;
-				renderCreatedEntriesPanel("payment_manage");
+				scheduleCreatedEntriesPanel("payment_manage");
 			});
 		}
 		if (el("pp-pay-history-payment-status")) {
@@ -2283,7 +2383,7 @@
 					el("pp-pay-history-payment-status").value || ""
 				);
 				state.historyPageByTab.payment_manage_history = 1;
-				renderCreatedEntriesPanel("payment_manage");
+				scheduleCreatedEntriesPanel("payment_manage");
 			});
 		}
 		wrap.querySelectorAll(".pp-view-payment-create").forEach(function (btn) {
@@ -2555,9 +2655,7 @@
 		) {
 			var updated = !!((out && out[0]) || (out && out[1]));
 			if (!updated) return;
-			if (state.currentTab !== current) return;
 			normalizePaymentAdjustments();
-			renderCurrentTab();
 		});
 	}
 
@@ -4121,231 +4219,428 @@
 	}
 
 	function renderCurrentTab() {
-		var currentTabName = String(state.currentTab || "");
-		if (currentTabName === "salary_creation" || currentTabName === "payment_manage") {
-			primeSalaryFinancialsForTab(currentTabName);
-		}
-		var headerFilterOpts = {};
-		if (
-			currentTabName === "data_entry" ||
-			currentTabName === "salary_creation" ||
-			currentTabName === "payment_manage"
-		) {
-			headerFilterOpts.ignore_date_filter = true;
-			headerFilterOpts.ignore_po_filter = true;
-			headerFilterOpts.ignore_entry_filter = true;
-		}
-		var rows = getRowsByHeaderFilters(state.rows || [], headerFilterOpts);
-		var cols = [];
-		var outRows = [];
-		var paged = null;
-		var skipColumnSearch = false;
-		ensureWorkflowCardsPosition();
-		toggleWorkflowCards();
-		toggleEmployeeSummaryDetailControl();
-		toggleEntryScreenMode();
-		refreshWorkflowEntrySelectors();
+		var focusSnap = captureFocusedControl();
+		try {
+			var currentTabName = String(state.currentTab || "");
+			if (currentTabName === "salary_creation" || currentTabName === "payment_manage") {
+				primeSalaryFinancialsForTab(currentTabName);
+			}
+			var headerFilterOpts = {};
+			if (
+				currentTabName === "data_entry" ||
+				currentTabName === "salary_creation" ||
+				currentTabName === "payment_manage"
+			) {
+				headerFilterOpts.ignore_date_filter = true;
+				headerFilterOpts.ignore_po_filter = true;
+				headerFilterOpts.ignore_entry_filter = true;
+			}
+			var rows = getRowsByHeaderFilters(state.rows || [], headerFilterOpts);
+			var cols = [];
+			var outRows = [];
+			var paged = null;
+			var skipColumnSearch = false;
+			ensureWorkflowCardsPosition();
+			toggleWorkflowCards();
+			toggleEmployeeSummaryDetailControl();
+			toggleEntryScreenMode();
+			refreshWorkflowEntrySelectors();
 
-		if (state.currentTab === "all") {
-			cols = [
-				{ fieldname: "per_piece_salary", label: "Entry No" },
-				{ fieldname: "from_date", label: "From Date" },
-				{ fieldname: "to_date", label: "To Date" },
-				{ fieldname: "po_number", label: "PO Number" },
-				{ fieldname: "delivery_note", label: "Delivery Note" },
-				{ fieldname: "name1", label: "Employee" },
-				{ fieldname: "product", label: "Product" },
-				{ fieldname: "process_type", label: "Process Type" },
-				{ fieldname: "process_size", label: "Process Size" },
-				{ fieldname: "qty", label: "Qty", numeric: true },
-				{ fieldname: "rate", label: "Rate", numeric: true },
-				{ fieldname: "amount", label: "Amount", numeric: true },
-				{ fieldname: "booked_amount", label: "Booked", numeric: true },
-				{ fieldname: "paid_amount", label: "Paid", numeric: true },
-				{ fieldname: "unpaid_amount", label: "Unpaid", numeric: true },
-				{ fieldname: "booking_status", label: "Booking Status" },
-				{ fieldname: "payment_status", label: "Payment Status" },
-				{ fieldname: "jv_entry_no", label: "Booking JV" },
-				{ fieldname: "payment_jv_no", label: "Payment JV" },
-			];
-			outRows = rows;
-			outRows.sort(function (a, b) {
-				return String(b.per_piece_salary || "").localeCompare(
-					String(a.per_piece_salary || "")
-				);
-			});
-		} else if (state.currentTab === "data_entry") {
-			renderDataEntryTab();
-			state.lastTabRender = { mode: "dom", columns: [], rows: [] };
-			filterRenderedTablesBySearch();
-			el("pp-totals").innerHTML = "";
-			renderPagination(null);
-			el("pp-msg").textContent = "Enter and save Per Piece Salary here";
-			renderCreatedEntriesPanel("data_entry");
-			refreshJVAmountsFromAdjustments();
-			refreshPaymentAmounts();
-			return;
-		} else if (state.currentTab === "salary_creation") {
-			outRows = getAdjustedEmployeeRows();
-			paged = paginateRows(outRows);
-			renderSalaryTable(paged.rows);
-			state.lastTabRender = {
-				mode: "table",
-				columns: [
+			if (state.currentTab === "all") {
+				cols = [
+					{ fieldname: "per_piece_salary", label: "Entry No" },
+					{ fieldname: "from_date", label: "From Date" },
+					{ fieldname: "to_date", label: "To Date" },
+					{ fieldname: "po_number", label: "PO Number" },
+					{ fieldname: "delivery_note", label: "Delivery Note" },
 					{ fieldname: "name1", label: "Employee" },
+					{ fieldname: "product", label: "Product" },
+					{ fieldname: "process_type", label: "Process Type" },
+					{ fieldname: "process_size", label: "Process Size" },
 					{ fieldname: "qty", label: "Qty", numeric: true },
 					{ fieldname: "rate", label: "Rate", numeric: true },
-					{ fieldname: "amount", label: "Salary Amount", numeric: true },
-					{ fieldname: "advance_balance", label: "Advance Balance", numeric: true },
-					{ fieldname: "advance_deduction", label: "Advance Deduction", numeric: true },
-					{ fieldname: "allowance", label: "Allowance", numeric: true },
-					{ fieldname: "other_deduction", label: "Other Deduction", numeric: true },
-					{ fieldname: "net_amount", label: "Net Amount", numeric: true },
-				],
-				rows: outRows,
-			};
-			filterRenderedTablesBySearch();
-			var t = getAdjustedTotals();
-			el("pp-totals").innerHTML =
-				"<span>Gross: " +
-				fmt(t.gross_amount) +
-				"</span>" +
-				"<span>Advance Deduction: " +
-				fmt(t.advance_deduction_amount) +
-				"</span>" +
-				"<span>Other Deduction: " +
-				fmt(t.other_deduction_amount) +
-				"</span>" +
-				"<span>Net Payable: " +
-				fmt(t.net_payable_amount) +
-				"</span>";
-			var msg = outRows.length + " employee row(s) for salary creation";
-			if (state.forcedEntryNo) {
-				var s = getEntrySummary(state.forcedEntryNo);
-				if (s) {
-					msg +=
-						" | Entry " +
-						state.forcedEntryNo +
-						" | Date " +
-						(s.from_date || "-") +
-						" to " +
-						(s.to_date || "-") +
-						" | Booking " +
-						s.booking_status +
-						" | Payment " +
-						s.payment_status;
-				}
-			}
-			el("pp-msg").textContent = msg;
-			renderPagination(paged);
-			renderCreatedEntriesPanel("salary_creation");
-			refreshWorkflowEntrySelectors();
-			refreshJVAmountsFromAdjustments();
-			refreshPaymentAmounts();
-			return;
-		} else if (state.currentTab === "jv_created") {
-			cols = [
-				{ fieldname: "salary_batch", label: "Batch Entry" },
-				{ fieldname: "name1", label: "Employee" },
-				{ fieldname: "booked_amount", label: "Booked Amount", numeric: true },
-				{ fieldname: "paid_amount", label: "Paid Amount", numeric: true },
-				{ fieldname: "unpaid_amount", label: "Unpaid Amount", numeric: true },
-				{ fieldname: "payment_status", label: "Payment Status" },
-			];
-			outRows = ((state.entryMeta && state.entryMeta.salaryStatusBatchRows) || []).length
-				? state.entryMeta.salaryStatusBatchRows
-				: buildSalaryStatusRows(getBookedRows());
-		} else if (state.currentTab === "payment_manage") {
-			outRows = (getPaymentRows() || []).filter(function (r) {
-				var booked = num(r && r.booked_amount);
-				var paid = num(r && r.paid_amount);
-				var unpaid = num(r && r.unpaid_amount);
-				if (!(unpaid >= 0)) unpaid = Math.max(booked - paid, 0);
-				var status = String((r && r.payment_status) || "")
-					.trim()
-					.toLowerCase();
-				var fullyPaidByAmount = booked > 0.0001 && Math.max(booked - paid, 0) <= 0.005;
-				if (unpaid <= 0.005 && (status === "paid" || fullyPaidByAmount)) return false;
-				return true;
-			});
-			paged = paginateRows(outRows);
-			renderPaymentTable(paged.rows);
-			state.lastTabRender = {
-				mode: "table",
-				columns: [
-					{ fieldname: "name1", label: "Employee" },
+					{ fieldname: "amount", label: "Amount", numeric: true },
 					{ fieldname: "booked_amount", label: "Booked", numeric: true },
 					{ fieldname: "paid_amount", label: "Paid", numeric: true },
 					{ fieldname: "unpaid_amount", label: "Unpaid", numeric: true },
-					{ fieldname: "payment_amount", label: "Payment Amount", numeric: true },
+					{ fieldname: "booking_status", label: "Booking Status" },
 					{ fieldname: "payment_status", label: "Payment Status" },
-				],
-				rows: outRows.map(function (r) {
-					return {
-						name1: r.name1 || r.employee || "",
-						booked_amount: r.booked_amount,
-						paid_amount: r.paid_amount,
-						unpaid_amount: r.unpaid_amount,
-						payment_amount: r.payment_amount,
-						payment_status: r.payment_status,
-					};
-				}),
-			};
-			filterRenderedTablesBySearch();
-			var p = getPaymentTotals();
-			el("pp-totals").innerHTML =
-				"<span>Booked: " +
-				fmt(p.booked) +
-				"</span>" +
-				"<span>Paid: " +
-				fmt(p.paid) +
-				"</span>" +
-				"<span>Unpaid: " +
-				fmt(p.unpaid) +
-				"</span>" +
-				"<span>Payment This JV: " +
-				fmt(p.payment) +
-				"</span>";
-			var pmsg = outRows.length + " employee row(s) pending payment (paid rows hidden)";
-			if (state.forcedEntryNo) {
-				var ps = getEntrySummary(state.forcedEntryNo);
-				if (ps) {
-					pmsg +=
-						" | Entry " +
-						state.forcedEntryNo +
-						" | Date " +
-						(ps.from_date || "-") +
-						" to " +
-						(ps.to_date || "-") +
-						" | Booking " +
-						ps.booking_status +
-						" | Payment " +
-						ps.payment_status;
+					{ fieldname: "jv_entry_no", label: "Booking JV" },
+					{ fieldname: "payment_jv_no", label: "Payment JV" },
+				];
+				outRows = rows;
+				outRows.sort(function (a, b) {
+					return String(b.per_piece_salary || "").localeCompare(
+						String(a.per_piece_salary || "")
+					);
+				});
+			} else if (state.currentTab === "data_entry") {
+				renderDataEntryTab();
+				state.lastTabRender = { mode: "dom", columns: [], rows: [] };
+				filterRenderedTablesBySearch();
+				el("pp-totals").innerHTML = "";
+				renderPagination(null);
+				el("pp-msg").textContent = "Enter and save Per Piece Salary here";
+				renderCreatedEntriesPanel("data_entry");
+				refreshJVAmountsFromAdjustments();
+				refreshPaymentAmounts();
+				return;
+			} else if (state.currentTab === "salary_creation") {
+				outRows = getAdjustedEmployeeRows();
+				paged = paginateRows(outRows);
+				renderSalaryTable(paged.rows);
+				state.lastTabRender = {
+					mode: "table",
+					columns: [
+						{ fieldname: "name1", label: "Employee" },
+						{ fieldname: "qty", label: "Qty", numeric: true },
+						{ fieldname: "rate", label: "Rate", numeric: true },
+						{ fieldname: "amount", label: "Salary Amount", numeric: true },
+						{ fieldname: "advance_balance", label: "Advance Balance", numeric: true },
+						{
+							fieldname: "advance_deduction",
+							label: "Advance Deduction",
+							numeric: true,
+						},
+						{ fieldname: "allowance", label: "Allowance", numeric: true },
+						{ fieldname: "other_deduction", label: "Other Deduction", numeric: true },
+						{ fieldname: "net_amount", label: "Net Amount", numeric: true },
+					],
+					rows: outRows,
+				};
+				filterRenderedTablesBySearch();
+				var t = getAdjustedTotals();
+				el("pp-totals").innerHTML =
+					"<span>Gross: " +
+					fmt(t.gross_amount) +
+					"</span>" +
+					"<span>Advance Deduction: " +
+					fmt(t.advance_deduction_amount) +
+					"</span>" +
+					"<span>Other Deduction: " +
+					fmt(t.other_deduction_amount) +
+					"</span>" +
+					"<span>Net Payable: " +
+					fmt(t.net_payable_amount) +
+					"</span>";
+				var msg = outRows.length + " employee row(s) for salary creation";
+				if (state.forcedEntryNo) {
+					var s = getEntrySummary(state.forcedEntryNo);
+					if (s) {
+						msg +=
+							" | Entry " +
+							state.forcedEntryNo +
+							" | Date " +
+							(s.from_date || "-") +
+							" to " +
+							(s.to_date || "-") +
+							" | Booking " +
+							s.booking_status +
+							" | Payment " +
+							s.payment_status;
+					}
 				}
-			}
-			el("pp-msg").textContent = pmsg;
-			renderPagination(paged);
-			renderCreatedEntriesPanel("payment_manage");
-			refreshWorkflowEntrySelectors();
-			refreshPaymentAmounts();
-			refreshJVAmountsFromAdjustments();
-			return;
-		} else if (state.currentTab === "advances") {
-			cols = [
-				{ fieldname: "name1", label: "Employee Name" },
-				{ fieldname: "employee", label: "Employee ID" },
-				{ fieldname: "branch", label: "Branch" },
-				{ fieldname: "closing_balance", label: "Closing Balance", numeric: true },
-			];
-			outRows = buildAdvanceRows(rows);
-		} else if (state.currentTab === "employee_summary") {
-			outRows = buildEmployeeSummaryReportRows(rows);
-			paged = paginateRows(outRows);
-			renderEmployeeSummaryTable(paged.rows);
-			state.lastTabRender = {
-				mode: "table",
-				columns: [
+				el("pp-msg").textContent = msg;
+				renderPagination(paged);
+				renderCreatedEntriesPanel("salary_creation");
+				refreshWorkflowEntrySelectors();
+				refreshJVAmountsFromAdjustments();
+				refreshPaymentAmounts();
+				return;
+			} else if (state.currentTab === "jv_created") {
+				cols = [
+					{ fieldname: "salary_batch", label: "Batch Entry" },
 					{ fieldname: "name1", label: "Employee" },
+					{ fieldname: "booked_amount", label: "Booked Amount", numeric: true },
+					{ fieldname: "paid_amount", label: "Paid Amount", numeric: true },
+					{ fieldname: "unpaid_amount", label: "Unpaid Amount", numeric: true },
+					{ fieldname: "payment_status", label: "Payment Status" },
+				];
+				outRows = ((state.entryMeta && state.entryMeta.salaryStatusBatchRows) || []).length
+					? state.entryMeta.salaryStatusBatchRows
+					: buildSalaryStatusRows(getBookedRows());
+			} else if (state.currentTab === "payment_manage") {
+				outRows = (getPaymentRows() || []).filter(function (r) {
+					var booked = num(r && r.booked_amount);
+					var paid = num(r && r.paid_amount);
+					var unpaid = num(r && r.unpaid_amount);
+					if (!(unpaid >= 0)) unpaid = Math.max(booked - paid, 0);
+					var status = String((r && r.payment_status) || "")
+						.trim()
+						.toLowerCase();
+					var fullyPaidByAmount = booked > 0.0001 && Math.max(booked - paid, 0) <= 0.005;
+					if (unpaid <= 0.005 && (status === "paid" || fullyPaidByAmount)) return false;
+					return true;
+				});
+				paged = paginateRows(outRows);
+				renderPaymentTable(paged.rows);
+				state.lastTabRender = {
+					mode: "table",
+					columns: [
+						{ fieldname: "name1", label: "Employee" },
+						{ fieldname: "booked_amount", label: "Booked", numeric: true },
+						{ fieldname: "paid_amount", label: "Paid", numeric: true },
+						{ fieldname: "unpaid_amount", label: "Unpaid", numeric: true },
+						{ fieldname: "payment_amount", label: "Payment Amount", numeric: true },
+						{ fieldname: "payment_status", label: "Payment Status" },
+					],
+					rows: outRows.map(function (r) {
+						return {
+							name1: r.name1 || r.employee || "",
+							booked_amount: r.booked_amount,
+							paid_amount: r.paid_amount,
+							unpaid_amount: r.unpaid_amount,
+							payment_amount: r.payment_amount,
+							payment_status: r.payment_status,
+						};
+					}),
+				};
+				filterRenderedTablesBySearch();
+				var p = getPaymentTotals();
+				el("pp-totals").innerHTML =
+					"<span>Booked: " +
+					fmt(p.booked) +
+					"</span>" +
+					"<span>Paid: " +
+					fmt(p.paid) +
+					"</span>" +
+					"<span>Unpaid: " +
+					fmt(p.unpaid) +
+					"</span>" +
+					"<span>Payment This JV: " +
+					fmt(p.payment) +
+					"</span>";
+				var pmsg = outRows.length + " employee row(s) pending payment (paid rows hidden)";
+				if (state.forcedEntryNo) {
+					var ps = getEntrySummary(state.forcedEntryNo);
+					if (ps) {
+						pmsg +=
+							" | Entry " +
+							state.forcedEntryNo +
+							" | Date " +
+							(ps.from_date || "-") +
+							" to " +
+							(ps.to_date || "-") +
+							" | Booking " +
+							ps.booking_status +
+							" | Payment " +
+							ps.payment_status;
+					}
+				}
+				el("pp-msg").textContent = pmsg;
+				renderPagination(paged);
+				renderCreatedEntriesPanel("payment_manage");
+				refreshWorkflowEntrySelectors();
+				refreshPaymentAmounts();
+				refreshJVAmountsFromAdjustments();
+				return;
+			} else if (state.currentTab === "advances") {
+				cols = [
+					{ fieldname: "name1", label: "Employee Name" },
+					{ fieldname: "employee", label: "Employee ID" },
+					{ fieldname: "branch", label: "Branch" },
+					{ fieldname: "closing_balance", label: "Closing Balance", numeric: true },
+				];
+				outRows = buildAdvanceRows(rows);
+			} else if (state.currentTab === "employee_summary") {
+				outRows = buildEmployeeSummaryReportRows(rows);
+				paged = paginateRows(outRows);
+				renderEmployeeSummaryTable(paged.rows);
+				state.lastTabRender = {
+					mode: "table",
+					columns: [
+						{ fieldname: "name1", label: "Employee" },
+						{ fieldname: "qty", label: "Qty", numeric: true },
+						{ fieldname: "rate", label: "Rate", numeric: true },
+						{ fieldname: "amount", label: "Amount", numeric: true },
+						{ fieldname: "booked_amount", label: "Booked", numeric: true },
+						{ fieldname: "unbooked_amount", label: "UnBooked", numeric: true },
+						{ fieldname: "paid_amount", label: "Paid", numeric: true },
+						{ fieldname: "unpaid_amount", label: "Unpaid", numeric: true },
+						{ fieldname: "booking_status", label: "Booking Status" },
+						{ fieldname: "payment_status", label: "Payment Status" },
+					],
+					rows: outRows,
+				};
+				filterRenderedTablesBySearch();
+				el("pp-msg").textContent = outRows.length + " row(s)";
+				renderPagination(paged);
+				var est = { qty: 0, amount: 0 };
+				outRows.forEach(function (r) {
+					est.qty += num(r.qty);
+					est.amount += num(r.amount);
+				});
+				el("pp-totals").innerHTML =
+					"<span>Total Qty: " +
+					fmt(est.qty) +
+					"</span><span>Total Amount: " +
+					fmt(est.amount) +
+					"</span>";
+				renderCreatedEntriesPanel("employee_summary");
+				refreshJVAmountsFromAdjustments();
+				refreshPaymentAmounts();
+				return;
+			} else if (state.currentTab === "salary_slip") {
+				outRows = ((state.entryMeta && state.entryMeta.salarySlipBatchRows) || []).length
+					? state.entryMeta.salarySlipBatchRows
+					: rows;
+				paged = paginateRows(outRows);
+				renderSalarySlipTable(paged.rows);
+				state.lastTabRender = { mode: "dom", columns: [], rows: [] };
+				filterRenderedTablesBySearch();
+				el("pp-msg").textContent = "Employee salary slip detail from current filters";
+				renderPagination(paged);
+				var slipTotals = { qty: 0, amount: 0 };
+				outRows.forEach(function (r) {
+					slipTotals.qty += num(r.qty);
+					slipTotals.amount += num(r.amount);
+				});
+				el("pp-totals").innerHTML =
+					"<span>Total Qty: " +
+					fmt(slipTotals.qty) +
+					"</span><span>Total Amount: " +
+					fmt(slipTotals.amount) +
+					"</span>";
+				renderCreatedEntriesPanel("salary_slip");
+				refreshJVAmountsFromAdjustments();
+				refreshPaymentAmounts();
+				return;
+			} else if (state.currentTab === "salary_slip_dc") {
+				outRows = rows;
+				paged = paginateRows(outRows);
+				renderSalarySlipByDCTable(paged.rows);
+				state.lastTabRender = { mode: "dom", columns: [], rows: [] };
+				filterRenderedTablesBySearch();
+				el("pp-msg").textContent =
+					"Delivery Note and Entry wise salary slip summary from current filters";
+				renderPagination(paged);
+				var dcTotals = { net_salary: 0 };
+				outRows.forEach(function (r) {
+					var amount = num(r.amount);
+					var adv = num(r.advance_deduction);
+					var allow = num(r.allowance);
+					var other = num(r.other_deduction);
+					var net = num(r.net_amount);
+					if (!net) net = Math.max(amount - adv + allow - other, 0);
+					dcTotals.net_salary += net;
+				});
+				el("pp-totals").innerHTML =
+					"<span>Total Net Salary: " + fmt(dcTotals.net_salary) + "</span>";
+				renderCreatedEntriesPanel("salary_slip_dc");
+				refreshJVAmountsFromAdjustments();
+				refreshPaymentAmounts();
+				return;
+			} else if (state.currentTab === "month_year_salary") {
+				cols = [
+					{ fieldname: "name1", label: "Employee" },
+					{ fieldname: "month_year", label: "Month / Year" },
+					{ fieldname: "qty", label: "Qty", numeric: true },
+					{ fieldname: "rate", label: "Rate", numeric: true },
+					{ fieldname: "amount", label: "Amount", numeric: true },
+				];
+				outRows = buildEmployeeMonthYearRows(rows);
+			} else if (state.currentTab === "month_paid_unpaid") {
+				cols = [
+					{ fieldname: "month_year", label: "Month / Year" },
+					{ fieldname: "booked_amount", label: "Booked", numeric: true },
+					{ fieldname: "paid_amount", label: "Paid", numeric: true },
+					{ fieldname: "unpaid_amount", label: "Unpaid", numeric: true },
+				];
+				outRows = buildMonthPaidUnpaidRows(rows);
+			} else if (state.currentTab === "simple_month_amount") {
+				var simpleMonths = buildSimpleMonthColumns(rows);
+				cols = [{ fieldname: "name1", label: "Employee" }];
+				simpleMonths.forEach(function (m) {
+					cols.push({
+						fieldname: monthFieldFromKey(m.key),
+						label: m.label,
+						numeric: true,
+					});
+				});
+				cols.push({ fieldname: "total_amount", label: "Total", numeric: true });
+				outRows = buildSimpleMonthRows(rows, simpleMonths);
+				outRows = filterRowsByColumns(outRows, cols);
+				skipColumnSearch = true;
+				var totalRow = { name1: "Total", total_amount: 0, _is_total: 1 };
+				simpleMonths.forEach(function (m) {
+					totalRow[monthFieldFromKey(m.key)] = 0;
+				});
+				outRows.forEach(function (r) {
+					var rowTotal = 0;
+					simpleMonths.forEach(function (m) {
+						var f = monthFieldFromKey(m.key);
+						var val = num(r[f]);
+						rowTotal += val;
+						totalRow[f] += val;
+					});
+					r.total_amount = rowTotal;
+					totalRow.total_amount += rowTotal;
+				});
+				outRows.push(totalRow);
+			} else if (state.currentTab === "product") {
+				cols = [
+					{ fieldname: "per_piece_salary", label: "Entry No", summary_link: true },
+					{ fieldname: "product", label: "Product" },
+					{ fieldname: "process_type", label: "Process" },
+					{ fieldname: "process_size", label: "Size" },
+					{ fieldname: "qty", label: "Qty", numeric: true },
+					{ fieldname: "rate", label: "Rate", numeric: true },
+					{ fieldname: "amount", label: "Amount", numeric: true },
+					{ fieldname: "unbooked_amount", label: "Unbooked", numeric: true },
+					{ fieldname: "booked_amount", label: "Booked", numeric: true },
+					{ fieldname: "paid_amount", label: "Paid", numeric: true },
+					{ fieldname: "unpaid_amount", label: "Unpaid", numeric: true },
+					{ fieldname: "booking_status", label: "Booking Status" },
+					{ fieldname: "payment_status", label: "Payment Status" },
+				];
+				outRows = buildProductSummaryDetailRows(rows || []);
+			} else if (state.currentTab === "process_product") {
+				cols = [
+					{ fieldname: "per_piece_salary", label: "Entry No", summary_link: true },
+					{ fieldname: "process_type", label: "Process" },
+					{ fieldname: "process_size", label: "Size" },
+					{ fieldname: "qty", label: "Qty", numeric: true },
+					{ fieldname: "rate", label: "Rate", numeric: true },
+					{ fieldname: "amount", label: "Amount", numeric: true },
+					{ fieldname: "unbooked_amount", label: "Unbooked", numeric: true },
+					{ fieldname: "booked_amount", label: "Booked", numeric: true },
+					{ fieldname: "paid_amount", label: "Paid", numeric: true },
+					{ fieldname: "unpaid_amount", label: "Unpaid", numeric: true },
+					{ fieldname: "booking_status", label: "Booking Status" },
+					{ fieldname: "payment_status", label: "Payment Status" },
+				];
+				outRows = buildProcessSummaryRows(rows || []);
+			} else if (state.currentTab === "per_piece_salary") {
+				cols = [
+					{ fieldname: "per_piece_salary", label: "Entry No" },
+					{ fieldname: "po_number", label: "PO Number" },
+					{ fieldname: "delivery_note", label: "Delivery Note" },
+					{ fieldname: "product", label: "Item" },
+					{ fieldname: "process_type", label: "Process" },
+					{ fieldname: "process_size", label: "Size" },
+					{ fieldname: "qty", label: "Qty", numeric: true },
+					{ fieldname: "rate", label: "Rate", numeric: true },
+					{ fieldname: "amount", label: "Amount", numeric: true },
+					{ fieldname: "booking_status", label: "Booking Status" },
+					{ fieldname: "payment_status", label: "Payment Status" },
+					{ fieldname: "jv_entry_no", label: "Salary JV No" },
+					{ fieldname: "payment_jv_no", label: "Payment JV No" },
+				];
+				outRows = buildEmployeeItemWiseReportRows(rows || []);
+			} else if (state.currentTab === "po_number") {
+				cols = [
+					{ fieldname: "po_number", label: "PO Number", po_summary_link: true },
+					{ fieldname: "po_view", label: "View", po_action: "view" },
+					{
+						fieldname: "po_print_process",
+						label: "Print Process Wise",
+						po_action: "print_process",
+					},
+					{
+						fieldname: "po_print_product",
+						label: "Print Product Wise",
+						po_action: "print_product",
+					},
 					{ fieldname: "qty", label: "Qty", numeric: true },
 					{ fieldname: "rate", label: "Rate", numeric: true },
 					{ fieldname: "amount", label: "Amount", numeric: true },
@@ -4355,366 +4650,184 @@
 					{ fieldname: "unpaid_amount", label: "Unpaid", numeric: true },
 					{ fieldname: "booking_status", label: "Booking Status" },
 					{ fieldname: "payment_status", label: "Payment Status" },
-				],
-				rows: outRows,
-			};
-			filterRenderedTablesBySearch();
-			el("pp-msg").textContent = outRows.length + " row(s)";
-			renderPagination(paged);
-			var est = { qty: 0, amount: 0 };
-			outRows.forEach(function (r) {
-				est.qty += num(r.qty);
-				est.amount += num(r.amount);
-			});
-			el("pp-totals").innerHTML =
-				"<span>Total Qty: " +
-				fmt(est.qty) +
-				"</span><span>Total Amount: " +
-				fmt(est.amount) +
-				"</span>";
-			renderCreatedEntriesPanel("employee_summary");
-			refreshJVAmountsFromAdjustments();
-			refreshPaymentAmounts();
-			return;
-		} else if (state.currentTab === "salary_slip") {
-			outRows = ((state.entryMeta && state.entryMeta.salarySlipBatchRows) || []).length
-				? state.entryMeta.salarySlipBatchRows
-				: rows;
-			paged = paginateRows(outRows);
-			renderSalarySlipTable(paged.rows);
-			state.lastTabRender = { mode: "dom", columns: [], rows: [] };
-			filterRenderedTablesBySearch();
-			el("pp-msg").textContent = "Employee salary slip detail from current filters";
-			renderPagination(paged);
-			var slipTotals = { qty: 0, amount: 0 };
-			outRows.forEach(function (r) {
-				slipTotals.qty += num(r.qty);
-				slipTotals.amount += num(r.amount);
-			});
-			el("pp-totals").innerHTML =
-				"<span>Total Qty: " +
-				fmt(slipTotals.qty) +
-				"</span><span>Total Amount: " +
-				fmt(slipTotals.amount) +
-				"</span>";
-			renderCreatedEntriesPanel("salary_slip");
-			refreshJVAmountsFromAdjustments();
-			refreshPaymentAmounts();
-			return;
-		} else if (state.currentTab === "salary_slip_dc") {
-			outRows = rows;
-			paged = paginateRows(outRows);
-			renderSalarySlipByDCTable(paged.rows);
-			state.lastTabRender = { mode: "dom", columns: [], rows: [] };
-			filterRenderedTablesBySearch();
-			el("pp-msg").textContent =
-				"Delivery Note and Entry wise salary slip summary from current filters";
-			renderPagination(paged);
-			var dcTotals = { net_salary: 0 };
-			outRows.forEach(function (r) {
-				var amount = num(r.amount);
-				var adv = num(r.advance_deduction);
-				var allow = num(r.allowance);
-				var other = num(r.other_deduction);
-				var net = num(r.net_amount);
-				if (!net) net = Math.max(amount - adv + allow - other, 0);
-				dcTotals.net_salary += net;
-			});
-			el("pp-totals").innerHTML =
-				"<span>Total Net Salary: " + fmt(dcTotals.net_salary) + "</span>";
-			renderCreatedEntriesPanel("salary_slip_dc");
-			refreshJVAmountsFromAdjustments();
-			refreshPaymentAmounts();
-			return;
-		} else if (state.currentTab === "month_year_salary") {
-			cols = [
-				{ fieldname: "name1", label: "Employee" },
-				{ fieldname: "month_year", label: "Month / Year" },
-				{ fieldname: "qty", label: "Qty", numeric: true },
-				{ fieldname: "rate", label: "Rate", numeric: true },
-				{ fieldname: "amount", label: "Amount", numeric: true },
-			];
-			outRows = buildEmployeeMonthYearRows(rows);
-		} else if (state.currentTab === "month_paid_unpaid") {
-			cols = [
-				{ fieldname: "month_year", label: "Month / Year" },
-				{ fieldname: "booked_amount", label: "Booked", numeric: true },
-				{ fieldname: "paid_amount", label: "Paid", numeric: true },
-				{ fieldname: "unpaid_amount", label: "Unpaid", numeric: true },
-			];
-			outRows = buildMonthPaidUnpaidRows(rows);
-		} else if (state.currentTab === "simple_month_amount") {
-			var simpleMonths = buildSimpleMonthColumns(rows);
-			cols = [{ fieldname: "name1", label: "Employee" }];
-			simpleMonths.forEach(function (m) {
-				cols.push({ fieldname: monthFieldFromKey(m.key), label: m.label, numeric: true });
-			});
-			cols.push({ fieldname: "total_amount", label: "Total", numeric: true });
-			outRows = buildSimpleMonthRows(rows, simpleMonths);
-			outRows = filterRowsByColumns(outRows, cols);
-			skipColumnSearch = true;
-			var totalRow = { name1: "Total", total_amount: 0, _is_total: 1 };
-			simpleMonths.forEach(function (m) {
-				totalRow[monthFieldFromKey(m.key)] = 0;
-			});
-			outRows.forEach(function (r) {
-				var rowTotal = 0;
-				simpleMonths.forEach(function (m) {
-					var f = monthFieldFromKey(m.key);
-					var val = num(r[f]);
-					rowTotal += val;
-					totalRow[f] += val;
+				];
+				outRows = groupRows(rows, ["po_number"], function (r) {
+					return {
+						po_number: r.po_number || "(Blank)",
+						qty: 0,
+						amount: 0,
+						rate: 0,
+						booked_amount: 0,
+						unbooked_amount: 0,
+						paid_amount: 0,
+						unpaid_amount: 0,
+					};
 				});
-				r.total_amount = rowTotal;
-				totalRow.total_amount += rowTotal;
-			});
-			outRows.push(totalRow);
-		} else if (state.currentTab === "product") {
-			cols = [
-				{ fieldname: "per_piece_salary", label: "Entry No", summary_link: true },
-				{ fieldname: "product", label: "Product" },
-				{ fieldname: "process_type", label: "Process" },
-				{ fieldname: "process_size", label: "Size" },
-				{ fieldname: "qty", label: "Qty", numeric: true },
-				{ fieldname: "rate", label: "Rate", numeric: true },
-				{ fieldname: "amount", label: "Amount", numeric: true },
-				{ fieldname: "unbooked_amount", label: "Unbooked", numeric: true },
-				{ fieldname: "booked_amount", label: "Booked", numeric: true },
-				{ fieldname: "paid_amount", label: "Paid", numeric: true },
-				{ fieldname: "unpaid_amount", label: "Unpaid", numeric: true },
-				{ fieldname: "booking_status", label: "Booking Status" },
-				{ fieldname: "payment_status", label: "Payment Status" },
-			];
-			outRows = buildProductSummaryDetailRows(rows || []);
-		} else if (state.currentTab === "process_product") {
-			cols = [
-				{ fieldname: "per_piece_salary", label: "Entry No", summary_link: true },
-				{ fieldname: "process_type", label: "Process" },
-				{ fieldname: "process_size", label: "Size" },
-				{ fieldname: "qty", label: "Qty", numeric: true },
-				{ fieldname: "rate", label: "Rate", numeric: true },
-				{ fieldname: "amount", label: "Amount", numeric: true },
-				{ fieldname: "unbooked_amount", label: "Unbooked", numeric: true },
-				{ fieldname: "booked_amount", label: "Booked", numeric: true },
-				{ fieldname: "paid_amount", label: "Paid", numeric: true },
-				{ fieldname: "unpaid_amount", label: "Unpaid", numeric: true },
-				{ fieldname: "booking_status", label: "Booking Status" },
-				{ fieldname: "payment_status", label: "Payment Status" },
-			];
-			outRows = buildProcessSummaryRows(rows || []);
-		} else if (state.currentTab === "per_piece_salary") {
-			cols = [
-				{ fieldname: "per_piece_salary", label: "Entry No" },
-				{ fieldname: "po_number", label: "PO Number" },
-				{ fieldname: "delivery_note", label: "Delivery Note" },
-				{ fieldname: "product", label: "Item" },
-				{ fieldname: "process_type", label: "Process" },
-				{ fieldname: "process_size", label: "Size" },
-				{ fieldname: "qty", label: "Qty", numeric: true },
-				{ fieldname: "rate", label: "Rate", numeric: true },
-				{ fieldname: "amount", label: "Amount", numeric: true },
-				{ fieldname: "booking_status", label: "Booking Status" },
-				{ fieldname: "payment_status", label: "Payment Status" },
-				{ fieldname: "jv_entry_no", label: "Salary JV No" },
-				{ fieldname: "payment_jv_no", label: "Payment JV No" },
-			];
-			outRows = buildEmployeeItemWiseReportRows(rows || []);
-		} else if (state.currentTab === "po_number") {
-			cols = [
-				{ fieldname: "po_number", label: "PO Number", po_summary_link: true },
-				{ fieldname: "po_view", label: "View", po_action: "view" },
-				{
-					fieldname: "po_print_process",
-					label: "Print Process Wise",
-					po_action: "print_process",
-				},
-				{
-					fieldname: "po_print_product",
-					label: "Print Product Wise",
-					po_action: "print_product",
-				},
-				{ fieldname: "qty", label: "Qty", numeric: true },
-				{ fieldname: "rate", label: "Rate", numeric: true },
-				{ fieldname: "amount", label: "Amount", numeric: true },
-				{ fieldname: "booked_amount", label: "Booked", numeric: true },
-				{ fieldname: "unbooked_amount", label: "UnBooked", numeric: true },
-				{ fieldname: "paid_amount", label: "Paid", numeric: true },
-				{ fieldname: "unpaid_amount", label: "Unpaid", numeric: true },
-				{ fieldname: "booking_status", label: "Booking Status" },
-				{ fieldname: "payment_status", label: "Payment Status" },
-			];
-			outRows = groupRows(rows, ["po_number"], function (r) {
-				return {
-					po_number: r.po_number || "(Blank)",
-					qty: 0,
-					amount: 0,
-					rate: 0,
-					booked_amount: 0,
-					unbooked_amount: 0,
-					paid_amount: 0,
-					unpaid_amount: 0,
-				};
-			});
-			outRows.sort(function (a, b) {
-				return String(b.po_number || "").localeCompare(String(a.po_number || ""));
-			});
-		} else if (state.currentTab === "po_detail_all") {
-			outRows = (rows || []).slice();
-			renderPoDetailPrintTab(outRows);
-			state.lastTabRender = { mode: "dom", columns: [], rows: [] };
-			filterRenderedTablesBySearch();
-			renderPagination(null);
-			var pdQty = 0;
-			var pdAmount = 0;
-			outRows.forEach(function (r) {
-				pdQty += num(r.qty);
-				pdAmount += num(r.amount);
-			});
-			el("pp-totals").innerHTML =
-				"<span>Total Qty: " +
-				fmt(pdQty) +
-				"</span><span>Total Amount: " +
-				fmt(pdAmount) +
-				"</span>";
-			el("pp-msg").textContent = outRows.length + " row(s) in PO Detail Print";
-			renderCreatedEntriesPanel(state.currentTab);
-			refreshJVAmountsFromAdjustments();
-			refreshPaymentAmounts();
-			return;
-		}
+				outRows.sort(function (a, b) {
+					return String(b.po_number || "").localeCompare(String(a.po_number || ""));
+				});
+			} else if (state.currentTab === "po_detail_all") {
+				outRows = (rows || []).slice();
+				renderPoDetailPrintTab(outRows);
+				state.lastTabRender = { mode: "dom", columns: [], rows: [] };
+				filterRenderedTablesBySearch();
+				renderPagination(null);
+				var pdQty = 0;
+				var pdAmount = 0;
+				outRows.forEach(function (r) {
+					pdQty += num(r.qty);
+					pdAmount += num(r.amount);
+				});
+				el("pp-totals").innerHTML =
+					"<span>Total Qty: " +
+					fmt(pdQty) +
+					"</span><span>Total Amount: " +
+					fmt(pdAmount) +
+					"</span>";
+				el("pp-msg").textContent = outRows.length + " row(s) in PO Detail Print";
+				renderCreatedEntriesPanel(state.currentTab);
+				refreshJVAmountsFromAdjustments();
+				refreshPaymentAmounts();
+				return;
+			}
 
-		if (!skipColumnSearch) {
-			outRows = filterRowsByColumns(outRows, cols);
-		}
-		state.lastTabRender = { mode: "table", columns: cols.slice(), rows: outRows.slice() };
-		paged = paginateRows(outRows);
-		renderTable(cols, paged.rows);
-		renderPagination(paged);
+			if (!skipColumnSearch) {
+				outRows = filterRowsByColumns(outRows, cols);
+			}
+			state.lastTabRender = { mode: "table", columns: cols.slice(), rows: outRows.slice() };
+			paged = paginateRows(outRows);
+			renderTable(cols, paged.rows);
+			renderPagination(paged);
 
-		if (state.currentTab === "jv_created") {
-			var jb = 0,
-				jp = 0,
-				ju = 0;
-			outRows.forEach(function (r) {
-				jb += num(r.booked_amount);
-				jp += num(r.paid_amount);
-				ju += num(r.unpaid_amount);
-			});
-			el("pp-totals").innerHTML =
-				"<span>Total Booked: " +
-				fmt(jb) +
-				"</span><span>Total Paid: " +
-				fmt(jp) +
-				"</span><span>Total Unpaid: " +
-				fmt(ju) +
-				"</span>";
-			el("pp-msg").textContent = outRows.length + " employee row(s) in booked JV";
-			renderCreatedEntriesPanel("jv_created");
-			refreshJVAmountsFromAdjustments();
-			refreshPaymentAmounts();
-			return;
-		}
-		if (state.currentTab === "advances") {
-			var totalAdvance = 0;
-			outRows.forEach(function (r) {
-				totalAdvance += num(r.closing_balance || r.advance_balance);
-			});
-			el("pp-totals").innerHTML = "<span>Total Closing: " + fmt(totalAdvance) + "</span>";
-			el("pp-msg").textContent = outRows.length + " employee row(s) in advances";
-			renderCreatedEntriesPanel(state.currentTab);
-			refreshJVAmountsFromAdjustments();
-			refreshPaymentAmounts();
-			return;
-		}
+			if (state.currentTab === "jv_created") {
+				var jb = 0,
+					jp = 0,
+					ju = 0;
+				outRows.forEach(function (r) {
+					jb += num(r.booked_amount);
+					jp += num(r.paid_amount);
+					ju += num(r.unpaid_amount);
+				});
+				el("pp-totals").innerHTML =
+					"<span>Total Booked: " +
+					fmt(jb) +
+					"</span><span>Total Paid: " +
+					fmt(jp) +
+					"</span><span>Total Unpaid: " +
+					fmt(ju) +
+					"</span>";
+				el("pp-msg").textContent = outRows.length + " employee row(s) in booked JV";
+				renderCreatedEntriesPanel("jv_created");
+				refreshJVAmountsFromAdjustments();
+				refreshPaymentAmounts();
+				return;
+			}
+			if (state.currentTab === "advances") {
+				var totalAdvance = 0;
+				outRows.forEach(function (r) {
+					totalAdvance += num(r.closing_balance || r.advance_balance);
+				});
+				el("pp-totals").innerHTML =
+					"<span>Total Closing: " + fmt(totalAdvance) + "</span>";
+				el("pp-msg").textContent = outRows.length + " employee row(s) in advances";
+				renderCreatedEntriesPanel(state.currentTab);
+				refreshJVAmountsFromAdjustments();
+				refreshPaymentAmounts();
+				return;
+			}
 
-		var totalQty = 0,
-			totalAmount = 0;
-		if (state.currentTab === "month_year_salary") {
+			var totalQty = 0,
+				totalAmount = 0;
+			if (state.currentTab === "month_year_salary") {
+				outRows.forEach(function (r) {
+					if (String(r.period_type || "") !== "Month") return;
+					totalQty += num(r.qty);
+					totalAmount += num(r.amount);
+				});
+				el("pp-totals").innerHTML =
+					"<span>Monthly Qty Total: " +
+					fmt(totalQty) +
+					"</span><span>Monthly Amount Total: " +
+					fmt(totalAmount) +
+					"</span>";
+				el("pp-msg").textContent =
+					outRows.length + " row(s) including month-wise and yearly totals";
+				renderCreatedEntriesPanel(state.currentTab);
+				refreshJVAmountsFromAdjustments();
+				refreshPaymentAmounts();
+				return;
+			}
+			if (state.currentTab === "month_paid_unpaid") {
+				var mb = 0,
+					mp = 0,
+					mu = 0;
+				outRows.forEach(function (r) {
+					mb += num(r.booked_amount);
+					mp += num(r.paid_amount);
+					mu += num(r.unpaid_amount);
+				});
+				el("pp-totals").innerHTML =
+					"<span>Total Booked: " +
+					fmt(mb) +
+					"</span><span>Total Paid: " +
+					fmt(mp) +
+					"</span><span>Total Unpaid: " +
+					fmt(mu) +
+					"</span>";
+				el("pp-msg").textContent =
+					outRows.length + " month row(s) in month-wise paid/unpaid report";
+				renderCreatedEntriesPanel(state.currentTab);
+				refreshJVAmountsFromAdjustments();
+				refreshPaymentAmounts();
+				return;
+			}
+			if (state.currentTab === "simple_month_amount") {
+				var simpleCols = buildSimpleMonthColumns(rows);
+				var monthTotals = {};
+				var grand = 0;
+				simpleCols.forEach(function (m) {
+					monthTotals[m.key] = 0;
+				});
+				outRows.forEach(function (r) {
+					if (r && r._is_total) return;
+					simpleCols.forEach(function (m) {
+						var amount = num(r[monthFieldFromKey(m.key)]);
+						monthTotals[m.key] += amount;
+						grand += amount;
+					});
+				});
+				var totalsHtml = "";
+				simpleCols.forEach(function (m) {
+					totalsHtml +=
+						"<span>" + esc(m.label) + ": " + fmt(monthTotals[m.key]) + "</span>";
+				});
+				totalsHtml += "<span>Total Amount: " + fmt(grand) + "</span>";
+				el("pp-totals").innerHTML = totalsHtml;
+				el("pp-msg").textContent =
+					outRows.length + " employee row(s) in simple month-wise amount report";
+				renderCreatedEntriesPanel(state.currentTab);
+				refreshJVAmountsFromAdjustments();
+				refreshPaymentAmounts();
+				return;
+			}
 			outRows.forEach(function (r) {
-				if (String(r.period_type || "") !== "Month") return;
+				if (!r || r._group_header || r._is_total) return;
 				totalQty += num(r.qty);
 				totalAmount += num(r.amount);
 			});
 			el("pp-totals").innerHTML =
-				"<span>Monthly Qty Total: " +
+				"<span>Total Qty: " +
 				fmt(totalQty) +
-				"</span><span>Monthly Amount Total: " +
+				"</span><span>Total Amount: " +
 				fmt(totalAmount) +
 				"</span>";
-			el("pp-msg").textContent =
-				outRows.length + " row(s) including month-wise and yearly totals";
+			el("pp-msg").textContent = outRows.length + " row(s)";
 			renderCreatedEntriesPanel(state.currentTab);
 			refreshJVAmountsFromAdjustments();
 			refreshPaymentAmounts();
-			return;
+		} finally {
+			restoreFocusedControl(focusSnap);
 		}
-		if (state.currentTab === "month_paid_unpaid") {
-			var mb = 0,
-				mp = 0,
-				mu = 0;
-			outRows.forEach(function (r) {
-				mb += num(r.booked_amount);
-				mp += num(r.paid_amount);
-				mu += num(r.unpaid_amount);
-			});
-			el("pp-totals").innerHTML =
-				"<span>Total Booked: " +
-				fmt(mb) +
-				"</span><span>Total Paid: " +
-				fmt(mp) +
-				"</span><span>Total Unpaid: " +
-				fmt(mu) +
-				"</span>";
-			el("pp-msg").textContent =
-				outRows.length + " month row(s) in month-wise paid/unpaid report";
-			renderCreatedEntriesPanel(state.currentTab);
-			refreshJVAmountsFromAdjustments();
-			refreshPaymentAmounts();
-			return;
-		}
-		if (state.currentTab === "simple_month_amount") {
-			var simpleCols = buildSimpleMonthColumns(rows);
-			var monthTotals = {};
-			var grand = 0;
-			simpleCols.forEach(function (m) {
-				monthTotals[m.key] = 0;
-			});
-			outRows.forEach(function (r) {
-				if (r && r._is_total) return;
-				simpleCols.forEach(function (m) {
-					var amount = num(r[monthFieldFromKey(m.key)]);
-					monthTotals[m.key] += amount;
-					grand += amount;
-				});
-			});
-			var totalsHtml = "";
-			simpleCols.forEach(function (m) {
-				totalsHtml += "<span>" + esc(m.label) + ": " + fmt(monthTotals[m.key]) + "</span>";
-			});
-			totalsHtml += "<span>Total Amount: " + fmt(grand) + "</span>";
-			el("pp-totals").innerHTML = totalsHtml;
-			el("pp-msg").textContent =
-				outRows.length + " employee row(s) in simple month-wise amount report";
-			renderCreatedEntriesPanel(state.currentTab);
-			refreshJVAmountsFromAdjustments();
-			refreshPaymentAmounts();
-			return;
-		}
-		outRows.forEach(function (r) {
-			if (!r || r._group_header || r._is_total) return;
-			totalQty += num(r.qty);
-			totalAmount += num(r.amount);
-		});
-		el("pp-totals").innerHTML =
-			"<span>Total Qty: " +
-			fmt(totalQty) +
-			"</span><span>Total Amount: " +
-			fmt(totalAmount) +
-			"</span>";
-		el("pp-msg").textContent = outRows.length + " row(s)";
-		renderCreatedEntriesPanel(state.currentTab);
-		refreshJVAmountsFromAdjustments();
-		refreshPaymentAmounts();
 	}
 
 	function loadReport() {
@@ -5144,32 +5257,27 @@
 	}
 	if (el("pp-company")) {
 		el("pp-company").addEventListener("change", function () {
-			setPageForCurrentTab(1);
-			renderCurrentTab();
+			scheduleRenderCurrentTab();
 		});
 	}
 	if (el("pp-booking-status")) {
 		el("pp-booking-status").addEventListener("change", function () {
-			setPageForCurrentTab(1);
-			renderCurrentTab();
+			scheduleRenderCurrentTab();
 		});
 	}
 	if (el("pp-payment-status")) {
 		el("pp-payment-status").addEventListener("change", function () {
-			setPageForCurrentTab(1);
-			renderCurrentTab();
+			scheduleRenderCurrentTab();
 		});
 	}
 	if (el("pp-po-number")) {
 		el("pp-po-number").addEventListener("change", function () {
-			setPageForCurrentTab(1);
-			renderCurrentTab();
+			scheduleRenderCurrentTab();
 		});
 	}
 	if (el("pp-sales-order")) {
 		el("pp-sales-order").addEventListener("change", function () {
-			setPageForCurrentTab(1);
-			renderCurrentTab();
+			scheduleRenderCurrentTab();
 		});
 	}
 	if (el("pp-entry-no")) {
@@ -5178,8 +5286,7 @@
 			state.forcedEntryNo = v;
 			if (el("pp-jv-entry-filter")) el("pp-jv-entry-filter").value = v;
 			if (el("pp-pay-entry-filter")) el("pp-pay-entry-filter").value = v;
-			setPageForCurrentTab(1);
-			renderCurrentTab();
+			scheduleRenderCurrentTab();
 		});
 	}
 	if (el("pp-jv-entry-filter")) {
@@ -5191,8 +5298,7 @@
 			if (el("pp-entry-no")) el("pp-entry-no").value = v;
 			if (el("pp-pay-entry-filter")) el("pp-pay-entry-filter").value = v;
 			if (el("pp-jv-entry-multi")) el("pp-jv-entry-multi").value = v;
-			setPageForCurrentTab(1);
-			renderCurrentTab();
+			scheduleRenderCurrentTab();
 		});
 	}
 	if (el("pp-jv-entry-multi")) {
@@ -5205,15 +5311,13 @@
 			if (el("pp-entry-no")) el("pp-entry-no").value = single;
 			if (el("pp-jv-entry-filter")) el("pp-jv-entry-filter").value = single;
 			if (el("pp-pay-entry-filter")) el("pp-pay-entry-filter").value = single;
-			setPageForCurrentTab(1);
-			renderCurrentTab();
+			scheduleRenderCurrentTab();
 		});
 	}
 	if (el("pp-jv-entry-clear")) {
 		el("pp-jv-entry-clear").addEventListener("click", function () {
 			resetEntryFiltersToAll();
-			setPageForCurrentTab(1);
-			renderCurrentTab();
+			scheduleRenderCurrentTab();
 		});
 	}
 	if (el("pp-jv-entry-add")) {
@@ -5231,8 +5335,7 @@
 			state.excludedEmployees = {};
 			state.adjustments = {};
 			if (el("pp-entry-no")) el("pp-entry-no").value = state.forcedEntryNo;
-			setPageForCurrentTab(1);
-			renderCurrentTab();
+			scheduleRenderCurrentTab();
 		});
 	}
 	if (el("pp-jv-entry-remove")) {
@@ -5254,8 +5357,7 @@
 			if (el("pp-entry-no")) el("pp-entry-no").value = state.forcedEntryNo;
 			if (el("pp-jv-entry-filter")) el("pp-jv-entry-filter").value = state.forcedEntryNo;
 			if (el("pp-pay-entry-filter")) el("pp-pay-entry-filter").value = state.forcedEntryNo;
-			setPageForCurrentTab(1);
-			renderCurrentTab();
+			scheduleRenderCurrentTab();
 		});
 	}
 	if (el("pp-jv-entry-refresh")) {
@@ -5272,7 +5374,7 @@
 				(el("pp-jv-history-to") && el("pp-jv-history-to").value) || ""
 			);
 			state.historyPageByTab.salary_creation_history = 1;
-			renderCreatedEntriesPanel("salary_creation");
+			scheduleCreatedEntriesPanel("salary_creation");
 		});
 	}
 	if (el("pp-jv-history-to")) {
@@ -5283,7 +5385,7 @@
 				el("pp-jv-history-to").value || ""
 			);
 			state.historyPageByTab.salary_creation_history = 1;
-			renderCreatedEntriesPanel("salary_creation");
+			scheduleCreatedEntriesPanel("salary_creation");
 		});
 	}
 	if (el("pp-pay-entry-filter")) {
@@ -5294,8 +5396,7 @@
 			if (el("pp-entry-no")) el("pp-entry-no").value = v;
 			if (el("pp-jv-entry-filter")) el("pp-jv-entry-filter").value = v;
 			if (el("pp-pay-entry-multi")) el("pp-pay-entry-multi").value = v;
-			setPageForCurrentTab(1);
-			renderCurrentTab();
+			scheduleRenderCurrentTab();
 		});
 	}
 	if (el("pp-pay-entry-multi")) {
@@ -5307,15 +5408,13 @@
 			if (el("pp-entry-no")) el("pp-entry-no").value = single;
 			if (el("pp-pay-entry-filter")) el("pp-pay-entry-filter").value = single;
 			if (el("pp-jv-entry-filter")) el("pp-jv-entry-filter").value = single;
-			setPageForCurrentTab(1);
-			renderCurrentTab();
+			scheduleRenderCurrentTab();
 		});
 	}
 	if (el("pp-pay-entry-clear")) {
 		el("pp-pay-entry-clear").addEventListener("click", function () {
 			resetEntryFiltersToAll();
-			setPageForCurrentTab(1);
-			renderCurrentTab();
+			scheduleRenderCurrentTab();
 		});
 	}
 	if (el("pp-pay-entry-add")) {
@@ -5332,8 +5431,7 @@
 			state.forcedEntryNo = current.length === 1 ? current[0] : "";
 			state.paymentExcludedEmployees = {};
 			if (el("pp-entry-no")) el("pp-entry-no").value = state.forcedEntryNo;
-			setPageForCurrentTab(1);
-			renderCurrentTab();
+			scheduleRenderCurrentTab();
 		});
 	}
 	if (el("pp-pay-entry-remove")) {
@@ -5354,8 +5452,7 @@
 			if (el("pp-entry-no")) el("pp-entry-no").value = state.forcedEntryNo;
 			if (el("pp-pay-entry-filter")) el("pp-pay-entry-filter").value = state.forcedEntryNo;
 			if (el("pp-jv-entry-filter")) el("pp-jv-entry-filter").value = state.forcedEntryNo;
-			setPageForCurrentTab(1);
-			renderCurrentTab();
+			scheduleRenderCurrentTab();
 		});
 	}
 	if (el("pp-pay-entry-refresh")) {
@@ -5372,7 +5469,7 @@
 				(el("pp-pay-history-to") && el("pp-pay-history-to").value) || ""
 			);
 			state.historyPageByTab.payment_manage_history = 1;
-			renderCreatedEntriesPanel("payment_manage");
+			scheduleCreatedEntriesPanel("payment_manage");
 		});
 	}
 	if (el("pp-pay-history-to")) {
@@ -5383,13 +5480,12 @@
 				el("pp-pay-history-to").value || ""
 			);
 			state.historyPageByTab.payment_manage_history = 1;
-			renderCreatedEntriesPanel("payment_manage");
+			scheduleCreatedEntriesPanel("payment_manage");
 		});
 	}
 	if (el("pp-search-any")) {
-		el("pp-search-any").addEventListener("input", function () {
-			setPageForCurrentTab(1);
-			renderCurrentTab();
+		el("pp-search-any").addEventListener("change", function () {
+			scheduleRenderCurrentTab({ delay: 120 });
 		});
 	}
 	if (el("pp-employee-summary-detail")) {
@@ -5403,8 +5499,7 @@
 			} catch (e) {
 				/* ignore storage errors */
 			}
-			setPageForCurrentTab(1);
-			renderCurrentTab();
+			scheduleRenderCurrentTab();
 		});
 	}
 	el("pp-jv-preview-btn").addEventListener("click", previewJV);

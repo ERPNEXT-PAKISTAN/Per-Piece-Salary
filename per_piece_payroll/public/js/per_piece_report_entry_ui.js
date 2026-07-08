@@ -382,8 +382,8 @@
 				var parts = [];
 				var current = String(selectedValue || "");
 				var exists = false;
-				parts.push("<select id='pp-entry-company'>");
-				parts.push("<option value=''>All Companies</option>");
+				parts.push("<select id='pp-entry-company' required>");
+				parts.push("<option value=''>Select Company</option>");
 				(companyOptions || []).forEach(function (opt) {
 					var optValue = String((opt && opt.value) || "");
 					var selected = optValue === current ? " selected" : "";
@@ -762,7 +762,7 @@
 				"<div class='pp-entry-title'><strong>Data Enter (" +
 				(editing ? "Edit Existing Per Piece Salary" : "Create Per Piece Salary") +
 				")</strong></div>" +
-				"<div class='pp-entry-subtitle'>PO Number is mandatory. Use Edit controls to fix draft entry mistakes.</div>" +
+				"<div class='pp-entry-subtitle'>Company and PO Number are mandatory. Use Edit controls to fix draft entry mistakes.</div>" +
 				"<div class='pp-entry-section pp-entry-section-filters'>" +
 				"<div class='pp-entry-section-head'>Section 1: Filters And Controls</div>" +
 				"<div class='pp-jv-grid' style='margin-top:10px;'>" +
@@ -775,7 +775,7 @@
 				"<label>To Date <input type='date' id='pp-entry-to-date' value='" +
 				esc(state.entryMeta.to_date || "") +
 				"'></label>" +
-				"<label>Company " +
+				"<label>Company * " +
 				companySelectHtml(state.entryMeta.company || "") +
 				"</label>" +
 				"<label>Employee " +
@@ -1167,21 +1167,17 @@
 				});
 			var deliveryNoteInput = el("pp-entry-delivery-note");
 			if (deliveryNoteInput) {
-				deliveryNoteInput.addEventListener("input", function () {
-					state.entryMeta.delivery_note = normalizeDeliveryNoteValue(
-						deliveryNoteInput.value || ""
-					);
-					scheduleDeliveryNoteSearch(deliveryNoteInput.value || "");
-				});
 				deliveryNoteInput.addEventListener("change", function () {
 					var normalized = normalizeDeliveryNoteValue(deliveryNoteInput.value || "");
 					state.entryMeta.delivery_note = normalized;
 					deliveryNoteInput.value = normalized;
+					scheduleDeliveryNoteSearch(normalized);
 				});
 				deliveryNoteInput.addEventListener("blur", function () {
 					var normalized = normalizeDeliveryNoteValue(deliveryNoteInput.value || "");
 					state.entryMeta.delivery_note = normalized;
 					deliveryNoteInput.value = normalized;
+					scheduleDeliveryNoteSearch(normalized);
 				});
 				if (!(state.entryMeta.deliveryNoteOptions || []).length) searchDeliveryNotes("");
 			}
@@ -1266,37 +1262,11 @@
 			});
 
 			wrap.querySelectorAll(".pp-entry-qty").forEach(function (input) {
-				input.addEventListener("keydown", function (ev) {
-					if (ev.key !== "Tab") return;
-					ev.preventDefault();
+				input.addEventListener("change", function () {
 					var idx = parseInt(input.getAttribute("data-idx") || "0", 10);
 					if (state.entryRows[idx]) state.entryRows[idx].qty = whole(input.value);
-					var qtyInputs = Array.prototype.slice.call(
-						wrap.querySelectorAll(".pp-entry-qty")
-					);
-					var currentIndex = qtyInputs.indexOf(input);
-					if (currentIndex < 0) return;
-					var nextIndex = ev.shiftKey ? currentIndex - 1 : currentIndex + 1;
-					if (nextIndex < 0) nextIndex = 0;
-					if (nextIndex >= qtyInputs.length) nextIndex = qtyInputs.length - 1;
-					state.entryMeta.focus_qty_index = nextIndex;
-					renderDataEntryTab();
 				});
 			});
-
-			if (
-				state.entryMeta.focus_qty_index !== undefined &&
-				state.entryMeta.focus_qty_index !== null
-			) {
-				var focusIndex = parseInt(state.entryMeta.focus_qty_index, 10);
-				state.entryMeta.focus_qty_index = null;
-				var qtyInputs = Array.prototype.slice.call(wrap.querySelectorAll(".pp-entry-qty"));
-				var target = qtyInputs[focusIndex];
-				if (target) {
-					target.focus();
-					target.select();
-				}
-			}
 
 			wrap.querySelectorAll(".pp-entry-edit-doc").forEach(function (btn) {
 				btn.addEventListener("click", function () {
@@ -1645,6 +1615,15 @@
 					"PO Number Required",
 					"Enter PO Number before saving."
 				);
+				return;
+			}
+			if (
+				!String(company || "").trim() ||
+				["All", "All Companies", "Select Company"].indexOf(String(company || "").trim()) >=
+					0
+			) {
+				showResult(result, "error", "Company Required", "Select Company before saving.");
+				if (el("pp-entry-company")) el("pp-entry-company").focus();
 				return;
 			}
 			var hasManualProductRows = (state.entryRows || []).some(function (r) {
