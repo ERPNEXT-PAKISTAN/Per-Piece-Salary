@@ -2394,6 +2394,19 @@
 				showPaymentEntrySummary(jvName, false, entryScope);
 			});
 		});
+		wrap.querySelectorAll(".pp-open-payment-create").forEach(function (btn) {
+			btn.addEventListener("click", function () {
+				var jvName = btn.getAttribute("data-jv") || "";
+				if (!jvName) return;
+				var filter = el("pp-pay-entry-filter");
+				if (filter) {
+					filter.value = jvName;
+					filter.dispatchEvent(new Event("change", { bubbles: true }));
+				}
+				state.currentTab = "payment_manage";
+				scheduleRenderCurrentTab();
+			});
+		});
 		wrap.querySelectorAll(".pp-print-payment-create").forEach(function (btn) {
 			btn.addEventListener("click", function () {
 				var jvName = btn.getAttribute("data-jv") || "";
@@ -3435,6 +3448,12 @@
 				"</span>" +
 				"</div>";
 			html +=
+				"<div style='margin:10px 0 14px;display:flex;gap:8px;flex-wrap:wrap;'>" +
+				"<button type='button' class='btn btn-sm btn-primary pp-load-payment-panel' data-entry='" +
+				esc(target) +
+				"'>Load in Payment Panel</button>" +
+				"</div>";
+			html +=
 				"<table class='pp-table'><thead><tr><th>Employee</th><th>Entry Number</th><th>Net Salary</th><th>Paid Before</th><th>Unpaid Before</th><th>Payment Amount</th><th>Paid After</th><th>Unpaid After</th><th>Status</th></tr></thead><tbody>";
 			rows.forEach(function (r) {
 				totalBooked += num(r.net_salary);
@@ -3484,6 +3503,22 @@
 				"</td><td></td><td></td><td></td></tr>";
 			html += "</tbody></table>";
 			setSummaryModal("Payment Entry Detail", target, html);
+			var loadBtn = el("pp-summary-content")
+				? el("pp-summary-content").querySelector(".pp-load-payment-panel")
+				: null;
+			if (loadBtn) {
+				loadBtn.addEventListener("click", function () {
+					var entry = String(loadBtn.getAttribute("data-entry") || "").trim();
+					if (!entry) return;
+					var filter = el("pp-pay-entry-filter");
+					if (filter) {
+						filter.value = entry;
+						filter.dispatchEvent(new Event("change", { bubbles: true }));
+					}
+					state.currentTab = "payment_manage";
+					scheduleRenderCurrentTab();
+				});
+			}
 			if (printNow) {
 				setTimeout(function () {
 					printSummaryModal();
