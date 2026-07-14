@@ -324,6 +324,32 @@
 			wrap.innerHTML = html;
 		}
 
+		function bindEnterTabNavigation(wrap, selector) {
+			if (!wrap) return;
+			wrap.querySelectorAll(selector).forEach(function (input) {
+				input.addEventListener("keydown", function (ev) {
+					if (ev.key !== "Tab" && ev.key !== "Enter") return;
+					var cells = Array.prototype.slice.call(wrap.querySelectorAll(selector));
+					var currentIndex = cells.indexOf(input);
+					if (currentIndex < 0) return;
+					var nextIndex = ev.shiftKey ? currentIndex - 1 : currentIndex + 1;
+					if (nextIndex < 0) nextIndex = 0;
+					if (nextIndex >= cells.length) nextIndex = cells.length - 1;
+					if (!cells[nextIndex] || cells[nextIndex] === input) return;
+					ev.preventDefault();
+					window.setTimeout(function () {
+						try {
+							cells[nextIndex].focus();
+							if (typeof cells[nextIndex].select === "function")
+								cells[nextIndex].select();
+						} catch (e) {
+							/* ignore focus errors */
+						}
+					}, 0);
+				});
+			});
+		}
+
 		function renderSalaryTable(rows) {
 			var wrap = el("pp-table-wrap");
 			if (!wrap) return;
@@ -525,29 +551,8 @@
 					refreshJVAmountsFromAdjustments();
 				}
 				input.addEventListener("change", onAdjustInput);
-				input.addEventListener("keydown", function (ev) {
-					if (ev.key !== "Tab" && ev.key !== "Enter") return;
-					var cells = Array.prototype.slice.call(wrap.querySelectorAll(".pp-adj-input"));
-					var currentIndex = cells.indexOf(input);
-					if (currentIndex < 0) return;
-					if (totalRefreshTimer) window.clearTimeout(totalRefreshTimer);
-					onAdjustInput();
-					var nextIndex = ev.shiftKey ? currentIndex - 1 : currentIndex + 1;
-					if (nextIndex < 0) nextIndex = 0;
-					if (nextIndex >= cells.length) nextIndex = cells.length - 1;
-					if (cells[nextIndex]) {
-						ev.preventDefault();
-						window.setTimeout(function () {
-							try {
-								cells[nextIndex].focus();
-								cells[nextIndex].select();
-							} catch (e) {
-								/* ignore focus errors */
-							}
-						}, 0);
-					}
-				});
 			});
+			bindEnterTabNavigation(wrap, ".pp-adj-input");
 		}
 
 		function renderEmployeeSummaryTable(rows) {
@@ -1315,6 +1320,7 @@
 				}
 				input.addEventListener("change", onPayInput);
 			});
+			bindEnterTabNavigation(wrap, ".pp-pay-amount");
 		}
 
 		function setJVAmounts(debit, credit, gross) {
