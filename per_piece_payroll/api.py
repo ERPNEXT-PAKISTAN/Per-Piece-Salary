@@ -3013,6 +3013,7 @@ def get_per_piece_payment_entries(entry_no: str | None = None, limit: int = 50):
 		filters=filters,
 		fields=[
 			"name",
+			"docstatus",
 			"posting_date",
 			"company",
 			"journal_entry",
@@ -3056,12 +3057,15 @@ def get_per_piece_payment_entries(entry_no: str | None = None, limit: int = 50):
 
 	for d in docs:
 		jv = str(d.get("journal_entry") or "").strip()
+		docstatus = int(d.get("docstatus") or 0)
 		if not jv:
 			stored = str(d.get("jv_status") or "").strip()
 			d["jv_status"] = stored if stored in {"Draft", "Posted", "Cancelled"} else ""
-			if flt(d.get("total_payment_amount")) > 0:
+			if flt(d.get("total_payment_amount")) > 0 and docstatus == 1:
 				d["jv_status"] = "Cancelled"
 			elif not d["jv_status"] or d["jv_status"] == "Posted":
+				d["jv_status"] = "Draft"
+			elif d["jv_status"] == "Cancelled" and docstatus == 0:
 				d["jv_status"] = "Draft"
 		else:
 			ds = int(jv_status_map.get(jv, 0))
