@@ -137,13 +137,17 @@
 					return {
 						employee: String((r && r.employee) || ""),
 						unpaid_amount: num((r && r.unpaid_amount) || 0),
+						payment_amount: num((r && r.payment_amount) || r.unpaid_amount || 0),
 					};
 				});
 			}
 			(basisRows || buildPaymentEmployeeRows(getPaymentSourceRows())).forEach(function (r) {
 				var key = r.employee || "";
-				var amount = whole(r.unpaid_amount);
-				next[key] = { payment_amount: amount, unpaid_amount: num(r.unpaid_amount) };
+				var amount = whole(r.payment_amount != null ? r.payment_amount : r.unpaid_amount);
+				next[key] = {
+					payment_amount: amount,
+					unpaid_amount: num(r.unpaid_amount),
+				};
 			});
 			state.paymentAdjustments = next;
 		}
@@ -189,7 +193,9 @@
 						var key = emp || "";
 						var adj = state.paymentAdjustments[key] || {};
 						var pay = whole(adj.payment_amount);
-						if (pay > unpaid) pay = whole(unpaid);
+						if (!pay) pay = whole((r && r.payment_amount) || unpaid);
+						if (pay > booked && booked > 0) pay = whole(booked);
+						if (pay > unpaid && unpaid > 0) pay = whole(unpaid);
 						return {
 							employee: emp,
 							name1: (r && r.name1) || "",

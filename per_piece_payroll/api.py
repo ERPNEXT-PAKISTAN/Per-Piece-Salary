@@ -2676,6 +2676,19 @@ def get_payment_entry_basis(entry_no: str):
 	cleanup_cancelled_jv_links(entry_no=entry)
 	# IMPORTANT: keep this API read-only.
 	# Do not recalculate/rebuild financial splits during Payment tab load.
+	payment_doc = None
+	payment_docstatus = None
+	payment_doc_jv_status = ""
+	try:
+		if frappe.db.exists("Per Piece Payment Entry", entry):
+			payment_doc = frappe.get_doc("Per Piece Payment Entry", entry)
+			payment_docstatus = int(payment_doc.docstatus or 0)
+			payment_doc_jv_status = str(getattr(payment_doc, "jv_status", "") or "").strip()
+	except Exception:
+		payment_doc = None
+		payment_docstatus = None
+		payment_doc_jv_status = ""
+	reprocess_cancelled_payment = payment_doc_jv_status == "Cancelled" or payment_docstatus == 0
 
 	summary_rows = []
 	# Batch-first read path:
@@ -2686,6 +2699,27 @@ def get_payment_entry_basis(entry_no: str):
 		batch_name = str(
 			frappe.db.get_value("Per Piece Salary", {"name": entry}, "salary_batch") or ""
 		).strip()
+	if not batch_name and payment_doc:
+		try:
+			salary_entries = json.loads(str(payment_doc.get("salary_entries_json") or "[]"))
+		except Exception:
+			salary_entries = []
+		if not isinstance(salary_entries, list):
+			salary_entries = []
+		salary_entries = [str(x or "").strip() for x in salary_entries if str(x or "").strip()]
+		if salary_entries and frappe.db.has_column("Per Piece Salary", "salary_batch"):
+			batches = []
+			for row in frappe.get_all(
+				"Per Piece Salary",
+				filters={"name": ["in", salary_entries]},
+				fields=["salary_batch"],
+				limit_page_length=5000,
+			):
+				batch = str((row or {}).get("salary_batch") or "").strip()
+				if batch and batch not in batches:
+					batches.append(batch)
+			if len(batches) == 1:
+				batch_name = batches[0]
 	if batch_name and frappe.db.exists("DocType", "Per Piece Salary Batch Summary Row"):
 		batch_summary_rows = frappe.get_all(
 			"Per Piece Salary Batch Summary Row",
@@ -2711,13 +2745,20 @@ def get_payment_entry_basis(entry_no: str):
 		if batch_summary_rows:
 			summary_rows = []
 			for r in batch_summary_rows:
+				net_salary = round(max(flt((r or {}).get("net_salary")), 0.0), 2)
 				paid_amount = round(max(flt((r or {}).get("paid_amount")), 0.0), 2)
 				unpaid_amount = round(max(flt((r or {}).get("unpaid_amount")), 0.0), 2)
+				if reprocess_cancelled_payment:
+					paid_amount = 0.0
+					unpaid_amount = net_salary
 				status = (
 					"Paid" if unpaid_amount <= 0.005 else ("Partly Paid" if paid_amount > 0.005 else "Unpaid")
 				)
-				if unpaid_amount <= 0.005 and status == "Paid":
+				if not reprocess_cancelled_payment and unpaid_amount <= 0.005 and status == "Paid":
 					continue
+				payment_amount = net_salary
+				if payment_amount <= 0.005:
+					payment_amount = unpaid_amount
 				summary_rows.append(
 					{
 						"employee": r.get("employee"),
@@ -2730,6 +2771,7 @@ def get_payment_entry_basis(entry_no: str):
 						"booked_amount": r.get("net_salary"),
 						"paid_amount": paid_amount,
 						"unpaid_amount": unpaid_amount,
+						"payment_amount": payment_amount,
 						"payment_status": status,
 					}
 				)
