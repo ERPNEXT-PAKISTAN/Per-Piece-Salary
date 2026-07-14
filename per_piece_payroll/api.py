@@ -154,6 +154,10 @@ def rebuild_salary_batch(batch_name: str) -> dict:
 		batch_doc.total_net_salary = 0
 		batch_doc.total_paid_amount = 0
 		batch_doc.total_unpaid_amount = 0
+		if frappe.db.has_column("Per Piece Salary Batch", "payment_jv_no"):
+			batch_doc.payment_jv_no = ""
+		if frappe.db.has_column("Per Piece Salary Batch", "payment_status"):
+			batch_doc.payment_status = "Unpaid"
 		batch_doc.save(ignore_permissions=True)
 		return {"ok": True, "batch": batch, "entries": 0}
 
@@ -185,6 +189,22 @@ def rebuild_salary_batch(batch_name: str) -> dict:
 		limit_page_length=200000,
 		order_by="parent asc, idx asc",
 	)
+	payment_links: list[str] = []
+	if entry_names:
+		payment_rows = frappe.get_all(
+			"Per Piece",
+			filters={
+				"parent": ["in", entry_names],
+				"parenttype": "Per Piece Salary",
+				"parentfield": "perpiece",
+			},
+			fields=["payment_jv_no"],
+			limit_page_length=200000,
+		)
+		for r in payment_rows or []:
+			jv_no = str((r or {}).get("payment_jv_no") or "").strip()
+			if jv_no and jv_no not in payment_links:
+				payment_links.append(jv_no)
 	if not summary_rows:
 		# Fallback for older data where salary_summary_rows were not yet generated.
 		perpiece_rows = frappe.get_all(
@@ -320,6 +340,16 @@ def rebuild_salary_batch(batch_name: str) -> dict:
 	batch_doc.total_net_salary = round(tot_net, 2)
 	batch_doc.total_paid_amount = round(tot_paid, 2)
 	batch_doc.total_unpaid_amount = round(tot_unpaid, 2)
+	if frappe.db.has_column("Per Piece Salary Batch", "payment_jv_no"):
+		batch_doc.payment_jv_no = ", ".join(payment_links)
+	if frappe.db.has_column("Per Piece Salary Batch", "payment_status"):
+		batch_doc.payment_status = (
+			"Paid"
+			if tot_unpaid <= 0 and tot_paid > 0
+			else "Partly Paid"
+			if tot_paid > 0 and tot_unpaid > 0
+			else "Unpaid"
+		)
 	batch_doc.save(ignore_permissions=True)
 	return {"ok": True, "batch": batch, "entries": len(entry_names)}
 
@@ -626,6 +656,8 @@ def get_salary_batch_entries(batch_name: str):
 				"company",
 				"posting_date",
 				"remarks",
+				"payment_jv_no",
+				"payment_status",
 				"total_salary_amount",
 				"total_allowance",
 				"total_advance_deduction",
