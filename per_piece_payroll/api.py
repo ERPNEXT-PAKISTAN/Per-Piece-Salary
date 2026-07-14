@@ -2068,6 +2068,33 @@ def _append_payment_ref_text(existing: str, jv_name: str, amount: float) -> str:
 	return existing_txt + ";;" + ref
 
 
+def _remove_payment_ref_text(existing: str, jv_name: str) -> str:
+	jv = str(jv_name or "").strip()
+	if not jv:
+		return str(existing or "").strip()
+	parts = []
+	for chunk in str(existing or "").split(";;"):
+		part = str(chunk or "").strip()
+		if not part:
+			continue
+		ref_jv = part.split("::", 1)[0].strip()
+		if ref_jv == jv:
+			continue
+		parts.append(part)
+	return ";;".join(parts)
+
+
+def _first_payment_ref_jv(existing: str) -> str:
+	for chunk in str(existing or "").split(";;"):
+		part = str(chunk or "").strip()
+		if not part or "::" not in part:
+			continue
+		ref_jv = part.split("::", 1)[0].strip()
+		if ref_jv:
+			return ref_jv
+	return ""
+
+
 def _force_link_payment_jv_to_paid_rows(
 	entry_names: list[str] | tuple[str] | str | None,
 	before_paid_map: dict[str, float] | None,
@@ -2657,6 +2684,8 @@ def get_payment_entry_basis(entry_no: str):
 				status = (
 					"Paid" if unpaid_amount <= 0.005 else ("Partly Paid" if paid_amount > 0.005 else "Unpaid")
 				)
+				if unpaid_amount <= 0.005 and status == "Paid":
+					continue
 				summary_rows.append(
 					{
 						"employee": r.get("employee"),
@@ -3064,10 +3093,70 @@ def recalculate_selected_entries(entry_nos=None, entry_no=None):
 def cancel_per_piece_salary_payment_jv(**kwargs):
 	jv = kwargs.get("journal_entry")
 	names = _get_entries_for_jv(jv, payment=True)
+	payment_entry_name = str(
+		frappe.db.get_value("Per Piece Payment Entry", {"journal_entry": str(jv or "").strip()}, "name") or ""
+	).strip()
 	out = _run_legacy_api_script(CANCEL_PAYMENT_JV_SERVER_SCRIPT, kwargs)
 	jv_name = str(jv or "").strip()
+	if payment_entry_name and frappe.db.exists("Per Piece Payment Entry", payment_entry_name):
+		doc = frappe.get_doc("Per Piece Payment Entry", payment_entry_name)
+		for row in doc.get("rows") or []:
+			row_name = str(row.get("salary_row") or "").strip()
+			if not row_name:
+				continue
+			cancel_amount = max(flt(row.get("payment_amount")), 0.0)
+			if cancel_amount <= 0:
+				continue
+			cur = (
+				frappe.db.get_value(
+					"Per Piece",
+					row_name,
+					[
+						"paid_amount",
+						"booked_amount",
+						"amount",
+						"net_amount",
+						"payment_jv_no",
+						"payment_refs",
+						"payment_line_remark",
+					],
+					as_dict=True,
+				)
+				or {}
+			)
+			booked = max(
+				flt(cur.get("booked_amount")),
+				flt(cur.get("net_amount")),
+				flt(cur.get("amount")),
+				0.0,
+			)
+			paid_before = max(flt(cur.get("paid_amount")), 0.0)
+			paid_after = max(paid_before - cancel_amount, 0.0)
+			unpaid_after = max(booked - paid_after, 0.0)
+			if unpaid_after <= 0.005 and booked > 0:
+				status = "Paid"
+			elif paid_after > 0.005:
+				status = "Partly Paid"
+			else:
+				status = "Unpaid"
+			cur_refs = str(cur.get("payment_refs") or "")
+			new_refs = _remove_payment_ref_text(cur_refs, jv_name)
+			cur_pay_jv = str(cur.get("payment_jv_no") or "").strip()
+			new_pay_jv = cur_pay_jv
+			if cur_pay_jv == jv_name:
+				new_pay_jv = _first_payment_ref_jv(new_refs)
+			update_data = {
+				"paid_amount": round(paid_after, 2),
+				"unpaid_amount": round(unpaid_after, 2),
+				"payment_status": status,
+				"payment_refs": new_refs,
+				"payment_jv_no": new_pay_jv,
+			}
+			if not new_refs:
+				update_data["payment_line_remark"] = ""
+			frappe.db.set_value("Per Piece", row_name, update_data, update_modified=False)
 	if jv_name and frappe.db.exists("DocType", "Per Piece Payment Entry"):
-		update_data = {"journal_entry": ""}
+		update_data = {}
 		if frappe.db.has_column("Per Piece Payment Entry", "jv_status"):
 			update_data["jv_status"] = "Cancelled"
 		frappe.db.set_value(
@@ -3171,7 +3260,7 @@ def cleanup_cancelled_jv_links(entry_nos=None, entry_no=None) -> dict:
 		if not name or not je:
 			continue
 		if jv_state.get(je, 0) != 1:
-			update_data = {"journal_entry": ""}
+			update_data = {}
 			if frappe.db.has_column("Per Piece Payment Entry", "jv_status"):
 				update_data["jv_status"] = "Cancelled"
 			frappe.db.set_value("Per Piece Payment Entry", name, update_data, update_modified=False)
