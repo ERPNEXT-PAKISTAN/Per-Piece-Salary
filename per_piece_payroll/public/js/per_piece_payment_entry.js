@@ -1,10 +1,15 @@
 frappe.ui.form.on("Per Piece Payment Entry", {
 	refresh(frm) {
+		frm.dashboard.clear_headline();
 		if (Number(frm.doc.docstatus || 0) !== 0) {
 			return;
 		}
 
 		if (String(frm.doc.jv_status || "") === "Cancelled") {
+			frm.dashboard.set_headline(
+				__("This payment entry was cancelled. Use Reprocess Payment to create the JV again."),
+				"orange"
+			);
 			frm.add_custom_button(__("Reprocess Payment"), () => {
 				frappe.confirm(
 					__("Reset this payment entry to Draft so it can be posted again?"),
@@ -27,6 +32,11 @@ frappe.ui.form.on("Per Piece Payment Entry", {
 					}
 				);
 			});
+		} else {
+			frm.dashboard.set_headline(
+				__("This payment entry is ready for posting."),
+				"blue"
+			);
 		}
 	},
 });
