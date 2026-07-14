@@ -110,6 +110,18 @@
 				});
 		}
 
+		function getPaymentSourceRows() {
+			var batchRows =
+				(state &&
+					state.entryMeta &&
+					Array.isArray(state.entryMeta.salaryStatusBatchRows) &&
+					state.entryMeta.salaryStatusBatchRows.length &&
+					state.entryMeta.salaryStatusBatchRows) ||
+				null;
+			if (batchRows) return batchRows;
+			return getBookedRows();
+		}
+
 		function normalizePaymentAdjustments() {
 			var next = {};
 			var selected = getSelectedEntryNosForTab("payment_manage");
@@ -128,7 +140,7 @@
 					};
 				});
 			}
-			(basisRows || buildPaymentEmployeeRows(getBookedRows())).forEach(function (r) {
+			(basisRows || buildPaymentEmployeeRows(getPaymentSourceRows())).forEach(function (r) {
 				var key = r.employee || "";
 				var amount = whole(r.unpaid_amount);
 				next[key] = { payment_amount: amount, unpaid_amount: num(r.unpaid_amount) };
@@ -151,7 +163,7 @@
 					return { employee: String((r && r.employee) || "") };
 				});
 			}
-			(basisRows || buildPaymentEmployeeRows(getBookedRows())).forEach(function (r) {
+			(basisRows || buildPaymentEmployeeRows(getPaymentSourceRows())).forEach(function (r) {
 				var key = r.employee || "";
 				if (state.paymentExcludedEmployees[key]) next[key] = true;
 			});
@@ -191,7 +203,7 @@
 					.filter(isPaymentOpenRow);
 			}
 
-			return buildPaymentEmployeeRows(getBookedRows())
+			return buildPaymentEmployeeRows(getPaymentSourceRows())
 				.map(function (r) {
 					var key = r.employee || "";
 					var adj = state.paymentAdjustments[key] || {};
@@ -637,6 +649,7 @@
 		return {
 			getUnpostedRows: getUnpostedRows,
 			getBookedRows: getBookedRows,
+			getPaymentSourceRows: getPaymentSourceRows,
 			buildPaymentEmployeeRows: buildPaymentEmployeeRows,
 			normalizePaymentAdjustments: normalizePaymentAdjustments,
 			normalizePaymentExcludedEmployees: normalizePaymentExcludedEmployees,

@@ -2627,58 +2627,51 @@ def get_payment_entry_basis(entry_no: str):
 		batch_name = str(
 			frappe.db.get_value("Per Piece Salary", {"name": entry}, "salary_batch") or ""
 		).strip()
-	if batch_name and frappe.db.exists("DocType", "Per Piece Salary Batch Entry"):
-		entry_count = frappe.db.count(
-			"Per Piece Salary Batch Entry",
-			{"parent": batch_name, "parenttype": "Per Piece Salary Batch", "parentfield": "entries"},
+	if batch_name and frappe.db.exists("DocType", "Per Piece Salary Batch Summary Row"):
+		batch_summary_rows = frappe.get_all(
+			"Per Piece Salary Batch Summary Row",
+			filters={
+				"parent": batch_name,
+				"parenttype": "Per Piece Salary Batch",
+				"parentfield": "summary_rows",
+			},
+			fields=[
+				"employee",
+				"employee_name",
+				"salary_amount",
+				"allowance",
+				"advance_deduction",
+				"other_deduction",
+				"net_salary",
+				"paid_amount",
+				"unpaid_amount",
+			],
+			order_by="idx asc",
+			limit_page_length=5000,
 		)
-		if entry_count == 1 and frappe.db.exists("DocType", "Per Piece Salary Batch Summary Row"):
-			batch_summary_rows = frappe.get_all(
-				"Per Piece Salary Batch Summary Row",
-				filters={
-					"parent": batch_name,
-					"parenttype": "Per Piece Salary Batch",
-					"parentfield": "summary_rows",
-				},
-				fields=[
-					"employee",
-					"employee_name",
-					"salary_amount",
-					"allowance",
-					"advance_deduction",
-					"other_deduction",
-					"net_salary",
-					"paid_amount",
-					"unpaid_amount",
-				],
-				order_by="idx asc",
-				limit_page_length=5000,
-			)
-			if batch_summary_rows:
-				summary_rows = []
-				for r in batch_summary_rows:
-					paid_amount = round(max(flt((r or {}).get("paid_amount")), 0.0), 2)
-					unpaid_amount = round(max(flt((r or {}).get("unpaid_amount")), 0.0), 2)
-					status = (
-						"Paid"
-						if unpaid_amount <= 0.005
-						else ("Partly Paid" if paid_amount > 0.005 else "Unpaid")
-					)
-					summary_rows.append(
-						{
-							"employee": r.get("employee"),
-							"employee_name": r.get("employee_name"),
-							"salary_amount": r.get("salary_amount"),
-							"allowance": r.get("allowance"),
-							"advance_deduction": r.get("advance_deduction"),
-							"other_deduction": r.get("other_deduction"),
-							"net_salary": r.get("net_salary"),
-							"booked_amount": r.get("net_salary"),
-							"paid_amount": paid_amount,
-							"unpaid_amount": unpaid_amount,
-							"payment_status": status,
-						}
-					)
+		if batch_summary_rows:
+			summary_rows = []
+			for r in batch_summary_rows:
+				paid_amount = round(max(flt((r or {}).get("paid_amount")), 0.0), 2)
+				unpaid_amount = round(max(flt((r or {}).get("unpaid_amount")), 0.0), 2)
+				status = (
+					"Paid" if unpaid_amount <= 0.005 else ("Partly Paid" if paid_amount > 0.005 else "Unpaid")
+				)
+				summary_rows.append(
+					{
+						"employee": r.get("employee"),
+						"employee_name": r.get("employee_name"),
+						"salary_amount": r.get("salary_amount"),
+						"allowance": r.get("allowance"),
+						"advance_deduction": r.get("advance_deduction"),
+						"other_deduction": r.get("other_deduction"),
+						"net_salary": r.get("net_salary"),
+						"booked_amount": r.get("net_salary"),
+						"paid_amount": paid_amount,
+						"unpaid_amount": unpaid_amount,
+						"payment_status": status,
+					}
+				)
 	if frappe.db.exists("DocType", "Per Piece Salary Summary Row"):
 		if not summary_rows:
 			summary_rows = frappe.get_all(
