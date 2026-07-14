@@ -3135,6 +3135,29 @@ def get_per_piece_payment_entry_detail(payment_entry: str):
 
 
 @frappe.whitelist()
+def reopen_per_piece_payment_entry(payment_entry: str):
+	name = str(payment_entry or "").strip()
+	if not name:
+		frappe.throw("Payment entry is required.")
+	if not frappe.db.exists("Per Piece Payment Entry", name):
+		frappe.throw("Payment entry not found.")
+	doc = frappe.get_doc("Per Piece Payment Entry", name)
+	if int(doc.docstatus or 0) != 0:
+		frappe.throw("Only draft payment entries can be reopened for reprocessing.")
+	doc.journal_entry = ""
+	if frappe.db.has_column("Per Piece Payment Entry", "jv_status"):
+		doc.jv_status = "Draft"
+	doc.save(ignore_permissions=True)
+	frappe.db.commit()
+	return {
+		"ok": True,
+		"name": name,
+		"jv_status": "Draft",
+		"journal_entry": "",
+	}
+
+
+@frappe.whitelist()
 def recalculate_selected_entries(entry_nos=None, entry_no=None):
 	names: list[str] = []
 	names.extend(_parse_entry_names(entry_nos))

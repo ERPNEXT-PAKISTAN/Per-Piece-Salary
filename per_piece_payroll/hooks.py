@@ -45,6 +45,7 @@ required_apps = ["erpnext", "hrms"]
 # include js in doctype views
 doctype_js = {
 	"Per Piece Salary": "public/js/per_piece_salary_auto_load.js",
+	"Per Piece Payment Entry": "public/js/per_piece_payment_entry.js",
 	"Salary Slip": "public/js/salary_slip.js",
 }
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
