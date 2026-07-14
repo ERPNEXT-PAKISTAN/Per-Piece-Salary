@@ -709,10 +709,18 @@ def _create_payment_entry_snapshot(
 		for d in frappe.get_all(
 			"Per Piece Salary",
 			filters={"name": ["in", entry_list]},
-			fields=["name", "company"],
+			fields=["name", "company", "salary_batch"],
 			limit_page_length=5000,
 		)
 	}
+	batch_names = sorted(
+		{
+			str((parent_docs.get(name) or {}).get("salary_batch") or "").strip()
+			for name in entry_list
+			if str((parent_docs.get(name) or {}).get("salary_batch") or "").strip()
+		}
+	)
+	single_batch = batch_names[0] if len(batch_names) == 1 else ""
 	json_entries = json.dumps(entry_list, separators=(",", ":"))
 	existing_name = frappe.db.get_value(
 		"Per Piece Payment Entry",
@@ -727,6 +735,10 @@ def _create_payment_entry_snapshot(
 		doc = frappe.get_doc("Per Piece Payment Entry", existing_name)
 		doc.posting_date = frappe.utils.nowdate()
 		doc.salary_entries_json = json_entries
+		if hasattr(doc, "salary_entry"):
+			doc.salary_entry = entry_list[0] if len(entry_list) == 1 else ""
+		if hasattr(doc, "salary_batch"):
+			doc.salary_batch = single_batch
 		doc.journal_entry = str(jv_name or "").strip()
 		doc.jv_status = "Posted" if str(jv_name or "").strip() else "Draft"
 		doc.remarks = str(remarks or "").strip()
@@ -735,6 +747,10 @@ def _create_payment_entry_snapshot(
 		doc = frappe.new_doc("Per Piece Payment Entry")
 		doc.posting_date = frappe.utils.nowdate()
 		doc.salary_entries_json = json_entries
+		if hasattr(doc, "salary_entry"):
+			doc.salary_entry = entry_list[0] if len(entry_list) == 1 else ""
+		if hasattr(doc, "salary_batch"):
+			doc.salary_batch = single_batch
 		doc.journal_entry = str(jv_name or "").strip()
 		doc.jv_status = "Posted" if str(jv_name or "").strip() else "Draft"
 		doc.remarks = str(remarks or "").strip()
@@ -806,7 +822,85 @@ def _create_payment_entry_snapshot(
 		doc.save(ignore_permissions=True)
 	else:
 		doc.insert(ignore_permissions=True)
+	if frappe.db.has_column("Per Piece Salary", "last_payment_entry"):
+		for entry_name in entry_list:
+			frappe.db.set_value(
+				"Per Piece Salary", entry_name, "last_payment_entry", doc.name, update_modified=False
+			)
+	if single_batch and frappe.db.has_column("Per Piece Salary Batch", "last_payment_entry"):
+		frappe.db.set_value(
+			"Per Piece Salary Batch", single_batch, "last_payment_entry", doc.name, update_modified=False
+		)
 	return str(doc.name)
+
+
+def sync_existing_payment_entry_links(limit: int | None = None) -> dict:
+	if not frappe.db.exists("DocType", "Per Piece Payment Entry"):
+		return {"ok": True, "payment_entries_updated": 0, "salary_rows_linked": 0, "batches_linked": 0}
+
+	docs = frappe.get_all(
+		"Per Piece Payment Entry",
+		fields=["name", "salary_entries_json"],
+		order_by="modified asc, creation asc",
+		limit_page_length=max(int(limit or 50000), 1),
+	)
+	updated = 0
+	salary_links = 0
+	batch_links = 0
+	for d in docs or []:
+		name = str((d or {}).get("name") or "").strip()
+		if not name:
+			continue
+		try:
+			entry_list = json.loads(str((d or {}).get("salary_entries_json") or "[]"))
+		except Exception:
+			entry_list = []
+		if not isinstance(entry_list, list):
+			entry_list = []
+		entry_list = [str(x or "").strip() for x in entry_list if str(x or "").strip()]
+		if not entry_list:
+			continue
+
+		batch_names = sorted(
+			{
+				str((r or {}).get("salary_batch") or "").strip()
+				for r in frappe.get_all(
+					"Per Piece Salary",
+					filters={"name": ["in", entry_list]},
+					fields=["salary_batch"],
+					limit_page_length=5000,
+				)
+				if str((r or {}).get("salary_batch") or "").strip()
+			}
+		)
+		update_data = {}
+		if frappe.db.has_column("Per Piece Payment Entry", "salary_entry"):
+			update_data["salary_entry"] = entry_list[0] if len(entry_list) == 1 else ""
+		if frappe.db.has_column("Per Piece Payment Entry", "salary_batch"):
+			update_data["salary_batch"] = batch_names[0] if len(batch_names) == 1 else ""
+		if update_data:
+			frappe.db.set_value("Per Piece Payment Entry", name, update_data, update_modified=False)
+			updated += 1
+
+		if frappe.db.has_column("Per Piece Salary", "last_payment_entry"):
+			for entry_name in entry_list:
+				frappe.db.set_value(
+					"Per Piece Salary", entry_name, "last_payment_entry", name, update_modified=False
+				)
+				salary_links += 1
+		if len(batch_names) == 1 and frappe.db.has_column("Per Piece Salary Batch", "last_payment_entry"):
+			frappe.db.set_value(
+				"Per Piece Salary Batch", batch_names[0], "last_payment_entry", name, update_modified=False
+			)
+			batch_links += 1
+
+	frappe.db.commit()
+	return {
+		"ok": True,
+		"payment_entries_updated": updated,
+		"salary_rows_linked": salary_links,
+		"batches_linked": batch_links,
+	}
 
 
 @frappe.whitelist()
@@ -2691,36 +2785,28 @@ def get_payment_entry_basis(entry_no: str):
 	reprocess_cancelled_payment = payment_doc_jv_status == "Cancelled" or payment_docstatus == 0
 
 	summary_rows = []
-	# Batch-first read path:
-	# If this entry belongs to a batch that contains only this entry,
-	# payment basis should come from batch summary rows (master totals).
+	# Single-entry payment must stay scoped to the selected salary entry.
+	# Batch summary rows are valid only when that batch itself contains exactly
+	# one linked salary entry, otherwise they leak unrelated unpaid amounts.
 	batch_name = ""
 	if frappe.db.has_column("Per Piece Salary", "salary_batch"):
 		batch_name = str(
 			frappe.db.get_value("Per Piece Salary", {"name": entry}, "salary_batch") or ""
 		).strip()
-	if not batch_name and payment_doc:
-		try:
-			salary_entries = json.loads(str(payment_doc.get("salary_entries_json") or "[]"))
-		except Exception:
-			salary_entries = []
-		if not isinstance(salary_entries, list):
-			salary_entries = []
-		salary_entries = [str(x or "").strip() for x in salary_entries if str(x or "").strip()]
-		if salary_entries and frappe.db.has_column("Per Piece Salary", "salary_batch"):
-			batches = []
-			for row in frappe.get_all(
-				"Per Piece Salary",
-				filters={"name": ["in", salary_entries]},
-				fields=["salary_batch"],
-				limit_page_length=5000,
-			):
-				batch = str((row or {}).get("salary_batch") or "").strip()
-				if batch and batch not in batches:
-					batches.append(batch)
-			if len(batches) == 1:
-				batch_name = batches[0]
-	if batch_name and frappe.db.exists("DocType", "Per Piece Salary Batch Summary Row"):
+	batch_entry_count = 0
+	if batch_name and frappe.db.exists("DocType", "Per Piece Salary Batch Entry"):
+		batch_entry_count = int(
+			frappe.db.count(
+				"Per Piece Salary Batch Entry",
+				{
+					"parent": batch_name,
+					"parenttype": "Per Piece Salary Batch",
+					"parentfield": "entries",
+				},
+			)
+			or 0
+		)
+	if batch_name and batch_entry_count == 1 and frappe.db.exists("DocType", "Per Piece Salary Batch Summary Row"):
 		batch_summary_rows = frappe.get_all(
 			"Per Piece Salary Batch Summary Row",
 			filters={

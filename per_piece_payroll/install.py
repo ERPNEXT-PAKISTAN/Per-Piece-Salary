@@ -24,6 +24,7 @@ LEGACY_CLIENT_SCRIPTS = (
 
 def after_install() -> None:
 	ensure_payment_doctypes()
+	_sync_existing_payment_links()
 	apply()
 	ensure_workspace()
 	cleanup_legacy_ui_scripts()
@@ -37,11 +38,21 @@ def before_migrate() -> None:
 
 def after_migrate() -> None:
 	ensure_payment_doctypes()
+	_sync_existing_payment_links()
 	apply()
 	ensure_workspace()
 	cleanup_legacy_ui_scripts()
 	normalize_overtime_type_link_meta()
 	normalize_daily_overtime_client_scripts()
+
+
+def _sync_existing_payment_links() -> None:
+	try:
+		from per_piece_payroll.api import sync_existing_payment_entry_links
+
+		sync_existing_payment_entry_links()
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Per Piece Payment Entry Link Sync Failed")
 
 
 def _sanitize_conflicting_custom_field_fixtures() -> None:
@@ -441,6 +452,16 @@ def ensure_payment_doctypes() -> None:
 			{"label": "Total Unpaid Amount", "fieldtype": "Float", "precision": "2", "read_only": 1},
 		)
 		_upsert_field(
+			doc,
+			"last_payment_entry",
+			{
+				"label": "Last Payment Entry",
+				"fieldtype": "Link",
+				"options": "Per Piece Payment Entry",
+				"read_only": 1,
+			},
+		)
+		_upsert_field(
 			doc, "entries_section", {"label": "Linked Salary Entries", "fieldtype": "Section Break"}
 		)
 		_upsert_field(
@@ -479,6 +500,7 @@ def ensure_payment_doctypes() -> None:
 		if not frappe.db.exists("DocType", "Per Piece Salary"):
 			return
 		_delete_custom_field_if_exists("Per Piece Salary", "salary_batch")
+		_delete_custom_field_if_exists("Per Piece Salary", "last_payment_entry")
 		doc = frappe.get_doc("DocType", "Per Piece Salary")
 		_upsert_field(
 			doc,
@@ -487,6 +509,16 @@ def ensure_payment_doctypes() -> None:
 				"label": "Salary Batch",
 				"fieldtype": "Link",
 				"options": "Per Piece Salary Batch",
+			},
+		)
+		_upsert_field(
+			doc,
+			"last_payment_entry",
+			{
+				"label": "Last Payment Entry",
+				"fieldtype": "Link",
+				"options": "Per Piece Payment Entry",
+				"read_only": 1,
 			},
 		)
 		doc.save(ignore_permissions=True)
@@ -525,6 +557,26 @@ def ensure_payment_doctypes() -> None:
 			doc,
 			"salary_entries_json",
 			{"label": "Salary Entries JSON", "fieldtype": "Small Text", "read_only": 1},
+		)
+		_upsert_field(
+			doc,
+			"salary_entry",
+			{
+				"label": "Salary Entry",
+				"fieldtype": "Link",
+				"options": "Per Piece Salary",
+				"read_only": 1,
+			},
+		)
+		_upsert_field(
+			doc,
+			"salary_batch",
+			{
+				"label": "Salary Batch",
+				"fieldtype": "Link",
+				"options": "Per Piece Salary Batch",
+				"read_only": 1,
+			},
 		)
 		_upsert_field(
 			doc,
@@ -640,9 +692,9 @@ def ensure_payment_doctypes() -> None:
 	ensure_batch_child_entry()
 	ensure_batch_child_summary()
 	ensure_batch_parent()
-	ensure_salary_batch_link_field()
 	ensure_child()
 	ensure_parent()
+	ensure_salary_batch_link_field()
 	frappe.db.commit()
 
 

@@ -4310,7 +4310,21 @@
 					);
 				});
 			} else if (state.currentTab === "data_entry") {
-				renderDataEntryTab();
+				try {
+					renderDataEntryTab();
+				} catch (dataEntryErr) {
+					console.error(dataEntryErr);
+					var wrap = el("pp-table-wrap");
+					if (wrap) {
+						wrap.innerHTML =
+							"<div class='pp-entry-card'><div class='pp-entry-title'><strong>Data Entry</strong></div><div class='pp-entry-subtitle' style='color:#b91c1c;'>Failed to render Data Entry tab. Reload the page once. If the problem persists, the latest console error has been logged.</div></div>";
+					}
+					var result = el("pp-jv-result");
+					if (result) {
+						result.style.color = "#b91c1c";
+						result.textContent = errText(dataEntryErr);
+					}
+				}
 				state.lastTabRender = { mode: "dom", columns: [], rows: [] };
 				filterRenderedTablesBySearch();
 				el("pp-totals").innerHTML = "";

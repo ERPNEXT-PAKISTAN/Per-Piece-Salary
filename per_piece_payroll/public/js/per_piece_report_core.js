@@ -5,6 +5,7 @@
 		rows: [],
 		columns: [],
 		filterOptions: {
+			companies: [],
 			employees: [],
 			item_groups: [],
 			products: [],

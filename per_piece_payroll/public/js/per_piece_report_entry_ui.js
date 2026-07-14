@@ -73,6 +73,8 @@
 		function renderDataEntryTab() {
 			var wrap = el("pp-table-wrap");
 			if (!wrap) return;
+			if (!state.filterOptions) state.filterOptions = {};
+			if (!state.entryMeta) state.entryMeta = {};
 			if (!state.entryMeta.from_date) state.entryMeta.from_date = defaultDateWindow().from;
 			if (!state.entryMeta.to_date) state.entryMeta.to_date = defaultDateWindow().to;
 			if (state.entryMeta.po_number === undefined) state.entryMeta.po_number = "";

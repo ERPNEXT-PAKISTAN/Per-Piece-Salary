@@ -111,6 +111,12 @@
 		}
 
 		function getPaymentSourceRows() {
+			var selected = getSelectedEntryNosForTab("payment_manage");
+			if (selected.length) {
+				// Explicit selected entries must win over batch-wide cached totals.
+				// Otherwise a subset of one batch shows the whole batch unpaid amount.
+				return getBookedRows();
+			}
 			var batchRows =
 				(state &&
 					state.entryMeta &&
